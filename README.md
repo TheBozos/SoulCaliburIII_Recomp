@@ -30,12 +30,23 @@ Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on 
 
 ## Status
 
-**Playable from start to finish in automated tests, now in human testing.** The port runs on PS2Recomp's native
+**Playable.** Every mode has been played through with scripted input, and a human played long sessions on
+2026-11-01 ("it's playable"). The port runs on PS2Recomp's native
 target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules recompiled, the IOP and the SPU2 on the wall clock, the frame loop and the movies on real time. Fights run at about
 60 frames per second on a Ryzen 7 7800X3D, with music and voices. Every mode has been played through with scripted input: Tales
 of Souls to the credits, Chronicles of the Sword battles on the field map, World Competition, Soul Arena, Museum,
 Character Creation, Shop and Options, with saves loaded back after a restart. The game runs its own `rand`: the
 15-bit stub it used to be bound to made every random pick 0.
+
+Known issues from that play session, being worked on: the analog sticks feel oversensitive (no deadzone yet), some
+menu animations blink faster than on a PS2 (main menu, Single Player Modes; the main menu's water may be fast too,
+to be measured against PCSX2 at the same frame rate), and a purple overlay shows on some frames at the end of a
+loading screen or a screen change.
+
+**Now: removing the last of the emulation.** The goal, set by the project's owner for every PS2Recomp port, is no
+emulated PS2 hardware at all, not even a small part, and never kept because it is faster: no GS front end or GS
+memory, no GIF or VIF packet read, no VU or SPU2 model, frames on the PC's clock. Twisted Metal: Black's port reached
+it first and SC3 follows its route (see [Emulation left](#emulation-left) and the [function map](#function-map)).
 
 | Milestone | |
 |---|:---:|
@@ -49,13 +60,18 @@ Character Creation, Shop and Options, with saves loaded back after a restart. Th
 | Chronicles of the Sword: story, field map, battles | ✅ |
 | Memory card: save and load | ✅ |
 | Random picks (the game's own `rand`) | ✅ |
-| Long play sessions by a human | 🔧 |
+| Long play sessions by a human | ✅ |
 | Native GS renderer (OpenGL), recompiled IOP modules, IOP and SPU2 on the wall clock | ✅ |
 | Higher internal resolution (`PS2X_GS_SCALE`) | ✅ |
 | Frame loop on the native FramePacer | ✅ |
 | VU1 microprograms on the native sandbox, no emulated VU1 | ✅ |
 | VU1 and VU0 microprograms in C++, no VU emulation left | ✅ |
 | VU1 programs drawn from their computation: no GIF packets, no GS register replay | ✅ |
+| Analog deadzone, menu animation speed, transition overlay (play-session reports) | 🔧 |
+| Sound mixed natively at libsd's API, no SPU2 emulation | 🔧 |
+| Textures and meshes from offline packs of your disc, 2D drawn in C++ | 🔧 |
+| No GS front end, GS DMA and VIF left unread | ⏳ |
+| Windows build (MSYS2 UCRT64) | 🔧 |
 | Widescreen | ⏳ |
 
 ✅ works · 🔧 in progress · ⏳ not reached yet
@@ -116,12 +132,29 @@ What still models the PS2 rather than doing the job natively, in the order the p
 | 2. GS front end and the native back end's GS model | ⏳ | The GL back end keeps GS memory, its swizzled layouts, CLUT loads, the texture buffer model, page coherence between targets and memory, and shows the frame by reading DISPFB. Everything SC3 sends besides the VU1 3D goes through the GS front end's state machine: 2D, menus, HUD, the frame copies and post passes, the shadow volumes. |
 | 3. VIF and DMA | ⏳ | VIF1 still unpacks the game's packets into VU memory and the DMA chains are walked as the DMAC would; the programs read their input from there, not from the game's data directly. |
 | 4. VU0 | 🔧 | The microprograms (VCALLMS) run as C++ lifted the same way (microcode semantics); the VU0 macro-mode instructions in the EE code are recompiled one by one. |
-| 5. Sound | ⏳ | The SPU2 is emulated (voices, ADMA, mixing), on the host's clock; the game's IRX modules are recompiled but run on the emulated IOP kernel. Movie soundtracks are host audio. |
+| 5. Sound | 🔧 | The SPU2 is emulated (voices, ADMA, mixing), on the host's clock; the game's IRX modules are recompiled but run on the emulated IOP kernel. Movie soundtracks are host audio. In progress: libsd's exports taken over by PS2Recomp's native mixer (the one Dark Cloud and Twisted Metal: Black use) and the SPU2 absent. |
 | 6. Vblank | 🔧 | Frames and movies are paced on real time (FramePacer, the frame end and ADXM's vsync wait answered by the override), but the vblank and GS interrupts are still raised on EE time and the game's handlers run on them. |
 
 ✅ done · 🔧 partly · ⏳ to do
 
+The plan to clear rows 1 to 3 and the GS front end, in order, each step leaving the game playable and checked
+picture by picture against the current path: textures, then materials, from offline packs converted from your own
+disc (the game stores both only as ready-made GS and VIF data; the packs stay in the build tree, never in the
+repository); meshes from a pack at the game's per-object hooks, with the vertex programs as plain C++; the 2D
+builders rewritten in C++ from their MIPS; shadow volumes as a stencil pass, the glow chain as a native post effect,
+the sun's depth probe read from the native depth buffer; movies as native pictures; then the frame's end written to
+the game natively (SC3 waits on the GS's FINISH every frame, unlike TMB), so the GS DMA and VIF0 can be left unread;
+then no GS front end at all.
+
 ### Function map
+
+<p align="center"><img src="docs/native-map.svg" width="100%" alt="Function map: 1056 of 12910 functions still touch emulation"></p>
+
+<sub>2026-11-01: 1,056 of 12,910 EE functions still touch emulation (122 directly, 934 through calls), 91.5%
+emulation-free by this count. The count misses most of the remaining work: the builders that only fill packet
+buffers look clean, since what reads those buffers is the emulated DMA and GS. It drops as the milestones above turn
+them into native code.</sub>
+
 
 `scripts/func_map.py` draws every EE function of the ELF as one square, in address order, coloured by how far it
 is from running without emulation: native C++ (game overrides, VU program ports), recompiled and clean, touching
