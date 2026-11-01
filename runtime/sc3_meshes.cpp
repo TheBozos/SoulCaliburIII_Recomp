@@ -115,6 +115,7 @@ namespace sc3
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
             uint64_t chainParts = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
+            uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
@@ -136,6 +137,10 @@ namespace sc3
             bool requestPending = false;
             Header header;
             Material material;
+            // ALPHA_1 / TEST_1 as the materials the game sent left them, in the order it sent them (every part's, native or
+            // not): what a material without its own write draws with.
+            uint64_t gameAlpha = 0, gameTest = 0;
+            bool gameAlphaKnown = false, gameTestKnown = false;
             bool headerOnVu1 = true, materialOnVu1 = true; // VU1 holds the header / material the game sent last
             struct Clip
             {
@@ -782,6 +787,10 @@ namespace sc3
                 {
                     m.known = true;
                     s.material = m;
+                    if (m.setsAlpha)
+                        s.gameAlpha = m.alpha, s.gameAlphaKnown = true;
+                    if (m.setsTest)
+                        s.gameTest = m.test, s.gameTestKnown = true;
                 }
                 else
                     s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, m.qwc};
@@ -892,10 +901,14 @@ namespace sc3
             MeshBatch batch;
             batch.gs = true;
             batch.gsMaterial = material;
-            batch.setsAlpha = s.material.setsAlpha;
-            batch.alpha = s.material.alpha;
-            batch.setsTest = s.material.setsTest;
-            batch.test = s.material.test;
+            batch.setsAlpha = s.material.setsAlpha || s.gameAlphaKnown;
+            batch.alpha = s.material.setsAlpha ? s.material.alpha : s.gameAlpha;
+            batch.setsTest = s.material.setsTest || s.gameTestKnown;
+            batch.test = s.material.setsTest ? s.material.test : s.gameTest;
+            if (!s.material.setsAlpha)
+                ++(s.gameAlphaKnown ? s.stats.inheritedAlpha : s.stats.unknownAlpha);
+            if (!s.material.setsTest)
+                ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
             toTriangles(prim, out, batch.gsTriangles);
             s.stats.triangles += batch.gsTriangles.size() / 3u;
             draw.batches.push_back(std::move(batch));
@@ -1222,6 +1235,11 @@ namespace sc3
                          static_cast<unsigned long long>(t.clippedDropped));
             if (!left.empty())
                 std::fprintf(stderr, "[sc3:mesh] routines left to VU1:%s\n", left.c_str());
+            if (t.inheritedAlpha + t.inheritedTest + t.unknownAlpha + t.unknownTest != 0u)
+                std::fprintf(stderr, "[sc3:mesh] native parts whose material sets no ALPHA %llu (no earlier one %llu), no TEST %llu (no earlier one %llu)\n",
+                             static_cast<unsigned long long>(t.inheritedAlpha + t.unknownAlpha), static_cast<unsigned long long>(t.unknownAlpha),
+                             static_cast<unsigned long long>(t.inheritedTest + t.unknownTest), static_cast<unsigned long long>(t.unknownTest));
+            t.inheritedAlpha = t.inheritedTest = t.unknownAlpha = t.unknownTest = 0;
             if (!misses.empty())
                 std::fprintf(stderr, "[sc3:mesh] texture places with no pack texture (left to VU1):%s\n", misses.c_str());
             if (s.mode == Mode::Check)
