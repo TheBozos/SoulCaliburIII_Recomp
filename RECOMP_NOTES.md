@@ -611,31 +611,47 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   PS2Recomp mesh pack (`build/sc3_2d.pack`, `.leaves`), and for each page the texture the leaf's own uploads write,
   played into the offline GS memory model of `scripts/sc3_texture_pack.py` and decoded at its used size into
   `build/sc3_2d_textures.pack` (PS2XTEX1, one file per leaf, the records' numbers as registers 0x101 / 0x102 of the
-  block). 4,647 leaves, 4,454 with page textures, 470 MB.
+  block; each other CLUT block the file uploads as register 0x103 = CBP << 32 | record, for draws that pick another
+  CLUT with TEX2). The 11 texture files inside the ELF (the font at 0x4763B0, the menu icons at 0x4AF170, nine more
+  from 0x473E60) are converted from the user's SLUS_212.16 as `elf/<address>`, as the game has them before 0x118E18
+  relocates their pointers; the runtime binds them at install at their fixed address.
 - At run time (`SC3_NATIVE_2D=1`, `=check`, or `=@<file>` following the file's first line; `SC3_2D_PACK`): leaves
   are bound at sceCdRead as for the meshes. A rewritten builder draws its primitives from the game's variables as
-  `Renderer::drawGsKeyed` batches (sprites as two triangles) with the page's TEX0 / TEX1 / CLAMP from the pack and its
-  texture from the 2D texture pack, ALPHA_2 from the game's table, TEST_2 from the context where it lands
-  (`GsMaterial::testFromTarget`), and links in C++ a two-quadword marker into the bucket the game would (a CNT with QWC 0
-  whose upper 64 bits carry the key, then the NEXT to the bucket's old head, at the frame heap's next place): no
-  scratchpad packet, SPR DMA or GIF packet. The GIF channel finds the marker (PS2Recomp `setGifChainMarkGate`) and the
-  GS front end draws the key's batches between the packets around it. A call whose file, page or texture is missing
-  goes to the game's packet, counted.
-- Rewritten: 0x1388E8 (the labels: the menus' text in the Free Training pause, Mode Select; 0x28-byte items, two
-  passes by page, sprites into bucket 0x1FF2), 0x124C80 (a Gouraud-shaded blended triangle, through 0x120978's modes 1
-  to 3; mode 0, the GIF list, stays the game's).
-- `check`: the game's packets built and drawn, each rewritten call's sprites compared word for word (colour, ST,
-  XYZ) with the packet it linked. Regress route: about 500,000 label sprites, all equal but 19 colours in one stretch
-  of the pause menu; about 10 % of the calls differ in their count of visible sprites (open).
+  `Renderer::drawGsKeyed` batches (sprites and lines by their two vertices, drawn by the GS renderer as the GS draws
+  them) with the page's TEX0 / TEX1 / CLAMP from the pack and its texture from the 2D texture pack, ALPHA_2 from the
+  game's values, TEST_2 from the context where it lands (`GsMaterial::testFromTarget`), registers the batches, then
+  links in C++ a marker where the game would have linked its packet: into an OT bucket (a CNT with QWC 0 whose upper
+  64 bits carry the key, then the NEXT to the bucket's old head, at the frame heap's next place) or appended to the
+  in-order GIF list (the CNT alone at *(0x5BE708), the list's count *(*(0x5BE710)) one more), and switches the
+  scratchpad's packet half as the game's insertions do: no scratchpad packet, SPR DMA or GIF packet. The GIF channel
+  finds the marker (PS2Recomp `setGifChainMarkGate`) and the GS front end draws the key's batches between the packets
+  around it. Batches go in before the marker: the GIF list can be read while the frame is still being built. A call
+  whose file, page or texture is missing goes to the game's packet, counted.
+- Rewritten: 0x1388E8 (labels: 0x28-byte items, two passes by page, sprites into bucket 0x1FF2), 0x124C80 (a
+  Gouraud-shaded blended triangle through 0x120978, every mode), 0x11EA80 (the text renderer: the state at 0x468540,
+  the call frame on the guest stack as the game's, glyph runs 0x11E160, measure 0x11E740, flushes 0x11E898 /
+  0x11E9B0, placement 0x11E068, TEX2_2 / ALPHA_2 writes 0x11DF40 / 0x11DFC8 with the packet's bookkeeping kept as
+  offsets so packets end where the game's do; the control codes 0x23..0x25 go to the game's formatter 0x11CBC8, game
+  logic that builds no packet), 0x123340 (untextured sprite; mode 0 stays the game's: the textured strips 0x1134A0 that
+  follow it in the GIF list draw with the ALPHA_2 its packet leaves), 0x1223D0 (antialiased line), 0x1280F8 (menu
+  icons), the screen-effect layer 0x12C690 / 0x12C7E0 (the background behind the 3D: a sky and a ground band split at
+  the projected horizon, opaque, Z written 0, context 1; a rolled camera and mode 1 stay the game's). The once-a-frame
+  uploads of the font (0x11FCF0), the labels' file (0x138860) and the icons (0x128080) are dropped while those draws are
+  native.
+- Calling game code from C++: a recompiled function returns to the dispatcher at a call when an EE checkpoint is due
+  (`ctx->pc` the callee), so a call that must finish runs to its return (`runToReturn`: `lookupFunction(ctx->pc)` until
+  the return address with the caller's stack pointer). SC3 keeps stacks and packets in the scratchpad: every guest
+  access goes through `guest()`. Conversions saturate as the EE's (`ps2FpuCvtWS`: no NaN or infinity on the EE).
+- `check`: the game's packets built and drawn, each rewritten call compared word for word with the packet it linked
+  (the text: every A+D write and glyph of every packet, and the text state's words after the call; the native run on
+  restored registers and the formatter's globals). Regress route: text 678,385 calls / 707,096 glyphs, labels 843,740
+  sprites, quads, lines and icons, all equal.
 - `[sc3:2d]` every 250 frames: GIF chain markers read, leaves bound, pages without a texture, per builder calls /
-  native / left to the game / GIF quadwords the game still built, and the census of 2D packets the game still builds
-  by (return address > insertion function): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode
-  Select and pause stills off / on. Pause menu with the labels and triangles native (about 34 triangles and 4 label
-  batches a frame drawn at their markers): below its blinking first line 76.8 dB against the game's packets (largest
-  difference 2); the Mode Select stills move on their own (animated backdrop, 27 dB between two stills off).
-- Still the game's on the pause menu: the text 0x11EA80 (glyph runs 0x11E160, flushed by 0x11E898 / 0x11E9B0 through
-  the insertion function at text state + 0x48), 0x115600, the 0x10FE50 family (through 0x110D78), the dimmed backdrop
-  0x12C7E0, and the state packets (0x11FCF0 the font's uploads, 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET).
+  native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
+  still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
+  included): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on.
+- Still the game's on the pause menu: 0x1134A0 (textured triangle strips inserted through the table at 0x467510),
+  0x110E50 (object sprites, VU0), 0x115600 (an upload and TEXFLUSH), 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET.
 
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
