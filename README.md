@@ -31,7 +31,7 @@ Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on 
 ## Status
 
 **Playable from start to finish in automated tests, now in human testing.** The port runs on PS2Recomp's native
-target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules recompiled, the IOP and the SPU2 on the wall clock, the frame loop and the movies on real time. Fights run at about
+target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules recompiled, the IOP on the wall clock, the sound on a native mixer (no SPU2), the frame loop and the movies on real time. Fights run at about
 60 frames per second on a Ryzen 7 7800X3D, with music and voices. Every mode has been played through with scripted input: Tales
 of Souls to the credits, Chronicles of the Sword battles on the field map, World Competition, Soul Arena, Museum,
 Character Creation, Shop and Options, with saves loaded back after a restart. The game runs its own `rand`: the
@@ -43,14 +43,15 @@ Character Creation, Shop and Options, with saves loaded back after a restart. Th
 | Boot: EE kernel, the game's own IOP modules, CD reads from the disc files | ✅ |
 | Logos and movies (CRI Sofdec, decoded on the host) | ✅ |
 | Title screen, menus, character and stage select | ✅ |
-| Music and voices (CRI ADX on the game's own `CRI_ADXI.IRX`, SPU2) | ✅ |
+| Music and voices (CRI ADX on the game's own `CRI_ADXI.IRX`, PS2Recomp's native mixer) | ✅ |
 | Fights at 58-60 fps (VU1 on its own thread) | ✅ |
 | Tales of Souls, World Competition, Soul Arena, Museum, Shop | ✅ |
 | Chronicles of the Sword: story, field map, battles | ✅ |
 | Memory card: save and load | ✅ |
 | Random picks (the game's own `rand`) | ✅ |
 | Long play sessions by a human | 🔧 |
-| Native GS renderer (OpenGL), recompiled IOP modules, IOP and SPU2 on the wall clock | ✅ |
+| Native GS renderer (OpenGL), recompiled IOP modules, IOP on the wall clock | ✅ |
+| Native audio: libsd taken over at its API, no SPU2 emulation | ✅ |
 | Higher internal resolution (`PS2X_GS_SCALE`) | ✅ |
 | Frame loop on the native FramePacer | ✅ |
 | VU1 microprograms on the native sandbox, no emulated VU1 | ✅ |
@@ -62,9 +63,9 @@ Character Creation, Shop and Options, with saves loaded back after a restart. Th
 
 ### Native target
 
-The port runs on the native target the other PS2Recomp ports use. It pins PS2Recomp's `sc3/windows` branch, the
-`sc3/native-vu1` integration branch (`native/renderer` plus the SC3 fixes below, on their way into `native/renderer`)
-with the Windows build fix.
+The port runs on the native target the other PS2Recomp ports use. It pins PS2Recomp's `sc3/native-audio` branch:
+`sc3/windows` (the `sc3/native-vu1` integration branch, `native/renderer` plus the SC3 fixes below, with the Windows
+fixes) and `native/renderer`'s native audio, with libsd's whole table native and the mixer on the IOP's clock.
 
 - **Native GS renderer**: PS2Recomp's GS back end translates the GS stream into OpenGL draws (`GSNativeBackend`),
   on its own model of GS memory (see the emulation left, below). SC3 needed these
@@ -74,10 +75,13 @@ with the Windows build fix.
   for the character shadows: blends with COLCLAMP off keeping the low 8 bits (the shadow volumes count by wrapping
   past white), a colour buffer read as Z in the Z format's block order, and untextured draws at their own colour.
 - **Higher internal resolution**: `PS2X_GS_SCALE=2` draws at 1280x896. The screenshots above come from it.
-- **IOP modules recompiled**: `scripts/iop_recomp.sh` turns the eight IRX modules into native code (813 functions,
-  none left to the interpreter); `PS2X_IOP_NATIVE=0` interprets them again.
-- **SPU2 on the wall clock** by default (`PS2X_SPU2_WALLCLOCK=1` in the scripts), with an AutoDMA fix so the ADX
-  stream gets each half's interrupt in time, and kept within 512 samples of the IOP clock.
+- **IOP modules recompiled**: `scripts/iop_recomp.sh` turns the eight IRX modules into native code (921 functions,
+  through their jump tables, none left to the interpreter: 0 instructions interpreted on the regress route);
+  `PS2X_IOP_NATIVE=0` interprets them again. Rerun it after updating PS2Recomp.
+- **Native audio** by default: every libsd call the sound modules make (CRI_ADXI's ADX stream through the sound
+  data input, NUSOUND's banks, voices and reverb, SDRDRV's remote calls from the EE) acts on PS2Recomp's native
+  mixer, mixed on the IOP's clock. There is no SPU2: no sound RAM, never scheduled, 0 register or DMA accesses
+  (`[audio] native mixer:` every 10 s says so). `SC3_NATIVE_AUDIO=0` puts the emulated SPU2 back, as a diagnostic.
 - **IOP on the wall clock** by default (`PS2X_IOP_WALLCLOCK=1`, set by the game override; `=0` puts it back on the
   EE cycles the game accounts): its timers, vblank interrupts and sound driver ticks follow real time, at no cost in
   fps (59.8 capped, 58.6 with the fight uncapped, against 59.3 and 57.8 on the EE clock).
@@ -117,7 +121,7 @@ What still models the PS2 rather than doing the job natively, in the order the p
 | 2. GS front end and the native back end's GS model | ⏳ | The GL back end keeps GS memory, its swizzled layouts, CLUT loads, the texture buffer model, page coherence between targets and memory, and shows the frame by reading DISPFB. Everything SC3 sends besides the VU1 3D goes through the GS front end's state machine: 2D, menus, HUD, the frame copies and post passes, the shadow volumes. |
 | 3. VIF and DMA | ⏳ | VIF1 still unpacks the game's packets into VU memory and the DMA chains are walked as the DMAC would; the programs read their input from there, not from the game's data directly. |
 | 4. VU0 | 🔧 | The microprograms (VCALLMS) run as C++ lifted the same way (microcode semantics); the VU0 macro-mode instructions in the EE code are recompiled one by one. |
-| 5. Sound | ⏳ | The SPU2 is emulated (voices, ADMA, mixing), on the host's clock; the game's IRX modules are recompiled but run on the emulated IOP kernel. Movie soundtracks are host audio. |
+| 5. Sound | 🔧 | No SPU2: libsd is taken over at its API by PS2Recomp's native mixer (voices, envelopes, reverb, the ADX stream's input), LIBSD's own SPU2 bus set-up replaced. The game's IRX modules are recompiled but still run on PS2Recomp's IOP kernel (threads, semaphores, interrupts, timers, SIF), and the pads and memory cards still go through SIO2MAN to the modelled SIO2. Movie soundtracks are host audio. |
 | 6. Vblank | 🔧 | Frames and movies are paced on real time (FramePacer, the frame end and ADXM's vsync wait answered by the override), but the vblank and GS interrupts are still raised on EE time and the game's handlers run on them. |
 
 ✅ done · 🔧 partly · ⏳ to do
@@ -139,7 +143,7 @@ disc files ──► Ghidra (headless, EE) + ps2_analyzer + recomp/*_hints.txt �
              VU1/VU0 microcode in the ELF ──► ps2_vu_aot ──► C++ (generated/vu1/) ──► vu1_lift.py ──► C++ (generated/vu1port/)
                                            │
    PS2Recomp runtime: EE kernel HLE · DMAC · GIF/GS · VIF/VU0/VU1 ─┼─► ps2EntryRunner
-   PS2Recomp IOP:     the game's own IRX, recompiled (generated/iop/) or interpreted · SPU2 · SIO2
+   PS2Recomp IOP:     the game's own IRX, recompiled (generated/iop/) or interpreted · native mixer (libsd) · SIO2
 ```
 
 - The ELF has no symbols. Ghidra maps the functions; `scripts/find_code_pointers.py` adds those reached only through
@@ -154,7 +158,7 @@ disc files ──► Ghidra (headless, EE) + ps2_analyzer + recomp/*_hints.txt �
   mixer, the renderer and timing choices, and diagnostic tracers.
 
 The runtime is the `PS2Recomp/` git submodule: [boubou666/PS2Recomp](https://github.com/boubou666/PS2Recomp), branch
-`sc3/windows` (`native/renderer` plus SC3's fixes, the VU program hooks and the Windows build fix), the fork shared with the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The
+`sc3/native-audio` (`native/renderer` plus SC3's fixes, the VU program hooks, the Windows fixes and native audio), the fork shared with the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The
 Third Age* and *Drakengard* recompilations; the port builds on the same runtime as the others.
 The top-level `CMakeLists.txt` builds its runtime, swaps its placeholder function table for the generated one and
 links the generated code, `runtime/` and the compiled VU1 microcode into `ps2EntryRunner`. Every fix made for this
@@ -244,6 +248,8 @@ player 2:
 | `PS2X_GS_SCALE=<n>` | Internal resolution multiplier of the native GS back end |
 | `PS2X_IOP_NATIVE=0` | Interpret the IRX modules instead of running their recompiled code |
 | `PS2X_IOP_WALLCLOCK=0` | Run the IOP on the EE cycles the game accounts instead of the host's clock |
+| `SC3_NATIVE_AUDIO=0` | Run libsd on the emulated SPU2 instead of the native mixer (diagnostic) |
+| `PS2X_AUDIO_RECORD=<wav>` | Record the sound output, whichever mixes it |
 | `SC3_NATIVE_VU1=0` | Run the VU1 microprograms on the emulated VU1 instead of in C++ |
 | `SC3_NATIVE_VU1_PORT=0\|check` | Run the VU1 programs on the native sandbox (the AOT microcode on PS2Recomp's interpreter) instead of in C++, or both, compared |
 | `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,…>` | Keep those entries on the sandbox |
@@ -280,7 +286,7 @@ player 2:
 
 | Path | Contents |
 |---|---|
-| `PS2Recomp/` | The recompiler and runtime (git submodule, boubou666/PS2Recomp branch `sc3/windows`) |
+| `PS2Recomp/` | The recompiler and runtime (git submodule, boubou666/PS2Recomp branch `sc3/native-audio`) |
 | `CMakeLists.txt` | Builds the runtime with the generated code and the game overrides linked in |
 | `recomp/` | Recompiler config (`sc3.toml`), the VU programs to lift (`vu1_lift_spec.json`), the Ghidra function map and the entry-point hint lists |
 | `runtime/` | Game override module (`sc3_overrides.cpp`), the native VU1 hooks (`sc3_native.cpp`), the VU1 program ports' entry table (`sc3_vu1_programs.cpp`), the VU0 hook (`sc3_vu0.cpp`), B:0x1388 by hand (`sc3_vu1_port.cpp`) |

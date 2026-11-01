@@ -63,6 +63,34 @@ sets up the following.
   58.24 fps. The SPU2 stays within 512 samples of the IOP clock (PS2Recomp e749e57):
   regress route 17355 transfers, 24 empty halves, 58.24 fps, 6918 frames of silence (`gap=`, mostly while loading)
   in 189 s. SC3's movie soundtracks are host audio mixed into the output; the game never streams PCM on core 0.
+- **Native audio by default** (`PS2X_NATIVE_AUDIO=1`, set by a static initializer of the override before the
+  runtime constructs the IOP; `SC3_NATIVE_AUDIO=0` keeps the emulated SPU2 above as a diagnostic). The sound
+  modules import libsd's exports (CRI_ADXI 10, NUSOUND 13, SDRDRV 26: libsd's whole table for the EE's remote
+  calls); no module touches the SPU2 or its DMA channels outside LIBSD. PS2Recomp's native libsd takes each one over
+  at module load except sceSdNote2Pitch / sceSdPitch2Note (arithmetic, left recompiled): voice and core parameters,
+  switches, addresses on the native mixer's 48 voices, banks uploaded into its 2 MB sound memory, libsd's reverb
+  presets, and CRI's ADX stream through the sound data input (`sceSdBlockTrans(1, 0x10, 0x66910, 0x1000)`: a 4 KiB
+  ring, two halves of 256 samples, the transfer handler at each half, sceSdBlockTransStatus read by CRI's PSM thread
+  to know which half to give back to the decoder). LIBSD's own start still set up the SPU2 bus (SSBUS address and
+  delay, DPCR's SPU2 channels, LIBSD.IRX+0x1550): the override replaces that function with one that does nothing
+  (`overrideModuleFunction` on LIBSD's file hash). Every native run logs `SPU2 absent: register accesses 0, DMA
+  register accesses 0, samples mixed 0, advances 0`, and `[iop:hw]` 0 instructions interpreted and 1 hardware
+  register access in the whole run (SIO2MAN's start). Three fork fixes were needed for the 4 KiB ring, which TMB's
+  24 KiB movie buffer never exercised: the mixer used to run in the audio device's callback, 1024 frames at once,
+  so every half of the ring was signalled in one go and CRI could not refill one before it played again (76% of the
+  title music's samples equal to those 1024 earlier); it now mixes on the IOP's clock within 512 samples of it,
+  into a queue the device takes from. Its input is taken a block (256 samples) ahead of what plays, as libsd's
+  transfer fills the SPU2's input, and a half is signalled once its last block is taken. And CRI's PSM thread
+  (priority 39, the same as the busy ADX thread 10, which keeps the CPU until it blocks) often read the status after
+  the mixer had taken the next half, saw the half bit unchanged and gave nothing back: each signalled half is now
+  kept and the next status read answers it (the reads saw the bit change at 2000 of 2000 signals, 1258 to 1818
+  before). Checked by recording (`PS2X_AUDIO_RECORD`) the regress route three times on each path: 0.0-0.7 dB per
+  10 s between the paths (median 0.08-0.10), log-spectrum cosine 0.980-0.999 (run to run on one path: 0.977-0.998,
+  0.30-0.62 dB), the same 18-19 silent seconds; 120 s from boot with the movies (logos, intro, title, attract)
+  within 0.03 dB, cosine 0.992-0.999. Regress route capped: 59.97, 60.00, 59.93 fps against 60.02, 59.92, 59.87;
+  the fight uncapped: 58.40 and 57.17 against 57.12 and 55.83.
+  One run in three still repeated a stale half now and then in the menus (3-14% of a second's samples in 20
+  seconds; 0 in the other two runs and on the emulated SPU2).
 - **IOP on the wall clock by default** (`PS2X_IOP_WALLCLOCK=1`, set by the override unless already set; `=0` puts the
   IOP back on the EE cycles the game accounts). Its timers, vblank interrupts and the sound drivers' ticks follow real
   time. It used to cost 4 to 7 fps: the runtime read the host clock at every `EeScheduler::accountCycles`, and
