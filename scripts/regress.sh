@@ -50,6 +50,7 @@
 #                     pause_hide_<entry>.png, and pause_hide.txt: each one's imgdiff against pause.png
 #   SC3_ELF             game ELF (default: game/SLUS_212.16 of this repo)
 #   SC3_TEXTURE_PACK    the texture pack (default: build/sc3_textures.pack of this repo, when there is one)
+#   SC3_MESH_PACK       the mesh pack (default: build/sc3_meshes.pack of this repo, when there is one)
 #   PS2X_SPU2_WALLCLOCK default 1, as scripts/run.sh
 set -euo pipefail
 export PS2X_SPU2_WALLCLOCK="${PS2X_SPU2_WALLCLOCK:-1}"
@@ -114,6 +115,9 @@ if [ -n "${REGRESS_FIGHT_FRAME_CAP:-}" ]; then
 fi
 if [ -z "${SC3_TEXTURE_PACK+x}" ] && [ -f "$root/build/sc3_textures.pack" ]; then
     export SC3_TEXTURE_PACK="$root/build/sc3_textures.pack"
+fi
+if [ -z "${SC3_MESH_PACK+x}" ] && [ -f "$root/build/sc3_meshes.pack" ]; then
+    export SC3_MESH_PACK="$root/build/sc3_meshes.pack"
 fi
 texpack_switch=
 if [ -n "${REGRESS_TEXPACK_AB:-}" ] && [ "${REGRESS_TEXPACK_AB}" != 0 ]; then

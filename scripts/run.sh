@@ -6,6 +6,7 @@ source "$(dirname "$0")/common.sh"
 export PS2X_SPU2_WALLCLOCK="${PS2X_SPU2_WALLCLOCK:-1}"
 BIN="$GAME_BUILD/PS2Recomp/ps2xRuntime/ps2EntryRunner"
 [ -n "${SC3_TEXTURE_PACK+x}" ] || [ ! -f "$TEXTURE_PACK" ] || export SC3_TEXTURE_PACK="$TEXTURE_PACK"
+[ -n "${SC3_MESH_PACK+x}" ] || [ ! -f "$MESH_PACK" ] || export SC3_MESH_PACK="$MESH_PACK"
 [ -x "$BIN" ] || { echo "missing $BIN, run scripts/build_runtime.sh first"; exit 1; }
 [ -f "$ELF" ] || { echo "missing $ELF, run scripts/extract_iso.sh first"; exit 1; }
 exec "$BIN" "$ELF" "$@"

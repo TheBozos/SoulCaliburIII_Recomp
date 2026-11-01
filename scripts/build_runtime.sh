@@ -16,3 +16,6 @@ case "$(uname -s)" in MINGW* | MSYS*) "$ROOT/scripts/stage_dlls.sh" "$GAME_BUILD
 if [ ! -f "$TEXTURE_PACK" ] && [ -f "$GAME_DIR/ROOT.OLK" ]; then
     "${PYTHON:-python3}" -I "$ROOT/scripts/sc3_texture_pack.py" "$GAME_DIR" "$TEXTURE_PACK"
 fi
+if [ ! -f "$MESH_PACK" ] && [ -f "$GAME_DIR/ROOT.OLK" ]; then
+    "${PYTHON:-python3}" -I "$ROOT/scripts/sc3_mesh_pack.py" "$GAME_DIR" "$MESH_PACK"
+fi
