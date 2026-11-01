@@ -136,7 +136,7 @@ namespace sc3
             bool requestPending = false;
             Header header;
             Material material;
-            bool vu1Current = true; // VU1 holds the header and material the game sent last (the last part with them ran there)
+            bool headerOnVu1 = true, materialOnVu1 = true; // VU1 holds the header / material the game sent last
             struct Clip
             {
                 uint32_t flags = 0, address = 0, qwc = 0;
@@ -754,13 +754,14 @@ namespace sc3
         void selfContained(uint32_t flags)
         {
             State &s = g_state;
-            if (sp32(0x368u) == 0u)
+            if (!s.headerOnVu1 && sp32(0x368u) == 0u)
                 spSet(0x368u, flags);
-            if (sp32(0x36Cu) == 0u && s.material.address != 0u)
+            if (!s.materialOnVu1 && sp32(0x36Cu) == 0u && s.material.address != 0u)
             {
                 spSet(0x36Cu, s.material.address);
                 spSet(0x370u, s.material.qwc);
             }
+            s.headerOnVu1 = s.materialOnVu1 = true;
         }
 
         void noteState(uint32_t flags, uint32_t jump)
@@ -917,7 +918,7 @@ namespace sc3
             const uint32_t routine = flags & 0xFFFFu;
             ++s.stats.parts;
             Shade mode;
-            const bool header = sp32(0x368u) != 0u;
+            const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, routine >> 3);
             if (s.frames == g_traceFrame)
                 std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
@@ -950,7 +951,10 @@ namespace sc3
                 return false;
             writePlaceholder(ctx, runtime, draw.mark);
             queueDraw(std::move(draw));
-            s.vu1Current = false;
+            if (header)
+                s.headerOnVu1 = false;
+            if (materialSent)
+                s.materialOnVu1 = false;
             ++s.stats.native;
             return true;
         }
@@ -965,7 +969,6 @@ namespace sc3
             }
             ++g_state.stats.leftToVu1;
             selfContained(getRegU32(ctx, 6));
-            g_state.vu1Current = true;
             callOriginal(kRawPart, rdram, ctx, runtime);
         }
 
@@ -1038,7 +1041,7 @@ namespace sc3
                 ctx->pc = ra;
                 return;
             }
-            if (!s.vu1Current) // VU1 would run it with registers no part sent it
+            if (!s.headerOnVu1 || !s.materialOnVu1) // VU1 would run it with registers no part sent it
             {
                 ++s.stats.clippedDropped;
                 ctx->pc = ra;
@@ -1076,7 +1079,6 @@ namespace sc3
                              sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
             selfContained(flags);
             noteState(flags, (flags & 0xFFFFu) >> 3);
-            s.vu1Current = true;
             callOriginal(kChainPart, rdram, ctx, runtime);
         }
 
