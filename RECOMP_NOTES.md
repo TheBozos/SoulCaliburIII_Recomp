@@ -127,9 +127,11 @@ callbacks: a started player blocks the main thread in `sceMpegGetPicture`. So pl
 - all ten `mwPlyStart*` entry points are replaced. `mwPlyStartAfs` / `mwPlyStartAfsLp` on AFS partition 1
   (`MOVIE.AFS`) start an FFmpeg decoder (`SfdPlayer`) on that SFD file for the handle; any other start reports
   its end straight away;
-- **full-screen movies** (width >= 512: logos, THX, opening, intro, attract) replace the GS output through the
-  runtime's presentation override, and their ADX soundtrack is mixed into the SPU2 output, whose length is the
-  movie clock;
+- **full-screen movies** (width >= 512: logos, THX, opening, intro, attract) are the native renderer's held
+  backdrop (`Renderer::setBackdrop`), set from the SPU2 mixer at each new picture of the movie clock and cleared when
+  the movie ends; their ADX soundtrack is mixed into the SPU2 output, whose length is the movie clock. The game makes
+  no picture upload for them (its frame object stays empty). `SC3_NATIVE_MOVIES=0`, or a GS renderer without the
+  native renderer, replaces the presented frame through the runtime's presentation override instead;
 - **smaller movies** (menu previews, 128x96 and 256x192) are handed to the game by `mwPlyGetCurFrm` (0x3AB630) as
   IPU CSC output, RGBA32 16x16 macroblocks column by column, written into the player's unused work area (handle
   +0x20, the SFD handle at +0x3C marks its end). Alpha movies (handle +8 == 3) carry their alpha as the luma of
@@ -139,6 +141,26 @@ callbacks: a started player blocks the main thread in `sceMpegGetPicture`. So pl
   the decoder, which is how Start skips a movie;
 - **movie task end** (0x218600): a task that never started playing ended without clearing the movie job's
   "playing" word (scratchpad 0x70000030 -> +8), so the job waited forever; the override clears it.
+
+- **Sofdec's decoder set-up** (0x3c25b0, per player handle, and its library init 0x3c2500) runs without libmpeg
+  or the IPU: `sceMpegInit`, `sceMpegCreate` and the four `sceMpegAddCallback` only report success (nothing reads
+  their results back, libmpeg is never fed), and the IPU context Sofdec saves for a later restore (0x3c2020: the
+  toIPU / fromIPU DMA registers, IPU_CTRL, IPU_BP) is the idle one, written without reading the IPU. Before, each
+  handle's set-up ran the runtime's MPEG HLE (whose `sceMpegCreate` also writes another game's addresses,
+  0x1717bc and 0x171800.., into SC3's memory) and read the IPU three times.
+
+Small movies are drawn by the game itself: the movie task 0x217f78 (flag 0x20, all the menu previews seen) copies
+`mwPlyGetCurFrm`'s macroblocks through the scratchpad and sends them as 16x16 GIF image transfers (0x2174c0 ->
+0x216e60, channel 2) into the texture a sprite task (0x2161a0, update 0x216060) draws through the menu sprite
+builder 0x11f700 -> 0x11ea80. A native path needs that builder native (M4): the host picture then goes to it as a
+keyed texture at 0x2174c0, and the macroblock write and the upload go away. Flag 1 (0x217e28 into a texture's
+pixels, then 0x118b68) and the full-screen 0x217458 were not reached.
+
+`[sc3:movies]`, one line per movie when it stops: its pictures against the wall clock and the movie clock, the
+game's picture uploads (0x217458, 0x2174c0, 0x217e28), the GS image transfers, the IPU register and FIFO accesses
+and the libmpeg / libipu / IPU context calls while it played. `SC3_MOVIE_CAPTURE_EVERY=<n>` with
+`PS2X_CAPTURE_WINDOW_DIR`: the window showing every n-th picture of a full-screen movie as `movie_<file>_<n>.png`,
+to compare two ways of showing it picture for picture (`scripts/imgdiff.py`).
 
 `PS2X_SC3_NO_MOVIES=1` skips the one-shot movies only. Screens built on a looping movie wait for its frames: the
 Tales of Souls loading screen before the last episodes stayed on a white NOW LOADING when those were skipped too.
