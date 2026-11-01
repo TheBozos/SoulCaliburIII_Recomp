@@ -46,6 +46,7 @@ namespace sc3
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kRawPartKind = 1u;
         constexpr uint32_t kChainPartKind = 2u;
+        constexpr uint32_t kVuBlockKind = 3u;
         constexpr uint32_t kTagRegs = 0x100u;
         constexpr uint32_t kSkipPartList = 0x0C290019u;
 
@@ -140,6 +141,8 @@ namespace sc3
             Material material;
             // ALPHA_1 / TEST_1 as the materials the game sent left them, in the order it sent them (every part's, native or
             // not): what a material without its own write draws with.
+            // The bone matrices 0x10A4E8 last sent VU1 (scratchpad 0x350 / 0x354 / 0x358), by VU address / 4.
+            float bones[256][16] = {};
             uint64_t gameAlpha = 0, gameTest = 0;
             bool gameAlphaKnown = false, gameTestKnown = false;
             bool headerOnVu1 = true, materialOnVu1 = true; // VU1 holds the header / material the game sent last
@@ -169,6 +172,7 @@ namespace sc3
         std::string g_routinesPath, g_routinesSpec;
         std::vector<uint32_t> g_routines;
         uint64_t g_traceFrame = ~0ull;
+        bool g_skinning = false; // SC3_NATIVE_SKINNING=1: B:0x1388 chain parts too (unfinished: the run stops at character select)
         std::string g_traceRequest; // SC3_MESH_TRACE=@file: the frame after the file appears (it is removed)
 
         void parseRoutines(const std::string &spec)
@@ -994,6 +998,102 @@ namespace sc3
             return true;
         }
 
+        // B:0x1388 in plain C++. A vertex in its block: per bone influence a position quadword (x, y, z, weight) and a
+        // normal quadword (x, y, z, the VU address of the bone's matrix, bit 15 on the last influence), then the texture
+        // coordinates (w: the vertex flags) and the colour. Position and normal are the influences' sum through their bone
+        // matrices, the position then through the header's matrix; the shading is A:0x1AB8's (three lights and the
+        // highlight); the XYZF word's bit 15 when the guard test fails or the flags are not 0, plus the header's vi3.
+        bool skinBlock(const Header &h, const uint8_t *data, uint32_t qwords, uint32_t tag[4], std::vector<Out> &out)
+        {
+            State &s = g_state;
+            const auto word = [&](uint32_t q, int lane) { uint32_t w; std::memcpy(&w, data + 16u * q + 4u * static_cast<uint32_t>(lane), 4); return w; };
+            const auto flt = [&](uint32_t q, int lane) { float f; std::memcpy(&f, data + 16u * q + 4u * static_cast<uint32_t>(lane), 4); return f; };
+            if (qwords < 1u)
+                return false;
+            for (int i = 0; i < 4; ++i)
+                tag[i] = word(0, i);
+            const int count = static_cast<int16_t>(tag[0] & 0xFFFFu) - static_cast<int16_t>(h.q[17][0] & 0xFFFFu);
+            if (count <= 0)
+                return false;
+            out.clear();
+            uint32_t q = 1u;
+            bool outside[3] = {false, false, false};
+            const uint32_t vi3 = h.q[17][3] & 0xFFFFu;
+            for (int k = 0; k < count; ++k)
+            {
+                float pos[4] = {0, 0, 0, 0}, nrm[4] = {0, 0, 0, 0};
+                for (int influence = 0;; ++influence)
+                {
+                    if (q + 2u > qwords || influence > 16)
+                        return false;
+                    const uint32_t pointer = word(q + 1u, 3) & 0xFFFFu;
+                    const float *m = s.bones[(pointer & 0x3FFu) >> 2];
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        pos[c] = pos[c] + m[c] * flt(q, 0) + m[4 + c] * flt(q, 1) + m[8 + c] * flt(q, 2) + m[12 + c] * flt(q, 3);
+                        nrm[c] = nrm[c] + m[c] * flt(q + 1u, 0) + m[4 + c] * flt(q + 1u, 1) + m[8 + c] * flt(q + 1u, 2);
+                    }
+                    q += 2u;
+                    if (pointer & 0x8000u)
+                        break;
+                }
+                if (q + 2u > qwords)
+                    return false;
+                const uint32_t flags = word(q, 3) & 0xFFFFu;
+                const float st[2] = {flt(q, 0), flt(q, 1)};
+                const float colour[4] = {flt(q + 1u, 0), flt(q + 1u, 1), flt(q + 1u, 2), flt(q + 1u, 3)};
+                q += 2u;
+                float p[4];
+                for (int c = 0; c < 4; ++c)
+                    p[c] = h.f(0, c) * pos[0] + h.f(1, c) * pos[1] + h.f(2, c) * pos[2] + h.f(3, c);
+                float l[4];
+                for (int i = 0; i < 4; ++i)
+                    l[i] = h.f(4, i) * nrm[0] + h.f(5, i) * nrm[1] + h.f(6, i) * nrm[2];
+                float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
+                e[1] = std::min(e[1], h.f(16, 1));
+                Out o;
+                for (int i = 0; i < 4; ++i)
+                {
+                    const float lit = h.f(12, i) + h.f(8, i) * std::max(l[0], 0.0f) + h.f(9, i) * std::max(l[1], 0.0f) + h.f(10, i) * std::max(l[2], 0.0f);
+                    const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
+                    o.rgba[i] = ftoi(std::min(lit * colour[i] + highlight * 128.0f, h.f(16, 0)), 1.0f);
+                }
+                const float qv = 1.0f / p[3];
+                const float position[4] = {p[0] * qv, p[1] * qv, p[2] * qv, p[3]};
+                float g[3];
+                for (int i = 0; i < 3; ++i)
+                    g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(13, i)) * h.f(14, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * h.f(14, i))));
+                outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
+                const bool clipped = outside[0] || outside[1] || outside[2];
+                for (int i = 0; i < 3; ++i)
+                    o.xyz[i] = ftoi(position[i], 16.0f);
+                o.s = st[0] * h.f(18, 0) * qv;
+                o.t = st[1] * h.f(18, 1) * qv;
+                o.q = qv;
+                o.w = (((((clipped ? 1u : 0u) | flags) + 0x7FFFu) & 0x8000u) + vi3) & 0xFFFFu;
+                out.push_back(o);
+            }
+            return true;
+        }
+
+        // Check mode: the lifted program B on the same block, bones and header.
+        void checkSkinned(const Header &h, uint32_t routine, const uint8_t *data, uint32_t qwords, const std::vector<Out> &out)
+        {
+            State &s = g_state;
+            uint8_t *vu = s.checkMemory.data();
+            std::memset(vu, 0, s.checkMemory.size());
+            for (uint32_t i = 0; i < 256u; ++i)
+                std::memcpy(vu + 64u * i, s.bones[i], 64u);
+            constexpr uint32_t kTop = 0x200u;
+            std::memcpy(vu + kTop * 16u, data, std::min<size_t>(16u * qwords, 0x1ADu * 16u));
+            Header setup = h;
+            setup.q[17][1] = 0u;
+            setup.q[17][2] = routine >> 3;
+            for (int i = 0; i < 19; ++i)
+                std::memcpy(vu + (kTop + 0x1ADu + static_cast<uint32_t>(i)) * 16u, setup.q[i], 16u);
+            compareKicks(routine, h, out, kProgramB, 0x10u, kTop);
+        }
+
         void queueDraw(Sc3Draw &&draw)
         {
             State &s = g_state;
@@ -1159,6 +1259,54 @@ namespace sc3
             ctx->pc = ra;
         }
 
+        // A program B chain part with B:0x1388 (skinned bodies): its blocks from the pack, the bones the game sent.
+        bool drawSkinnedPart(R5900Context *ctx, PS2Runtime *runtime, uint32_t list, uint32_t flags, bool header, bool materialSent)
+        {
+            State &s = g_state;
+            const uint32_t routine = flags & 0xFFFFu;
+            if (routine != 0x1388u || !routineAllowed(0x11388u) || (flags & (kFlagShineA | kFlagShineB)) || (header && setupOf(flags) != 0x10u) ||
+                !s.header.valid || s.header.shine)
+                return false;
+            packs::LoadedImages::Image image;
+            const packs::MeshObject *chain = nullptr;
+            if (s.loaded.find(list, image) && image.file)
+                chain = image.file->object(list - image.base);
+            const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
+            if (!batches || batches->size < 8u)
+                return false;
+            const size_t n = batches->size / 8u;
+            std::vector<Sc3Draw> draws(n);
+            for (size_t i = 0; i < n; ++i)
+            {
+                uint32_t entry[2];
+                std::memcpy(entry, batches->data + 8u * i, 8);
+                const packs::MeshObject *object = image.file->object(entry[0]);
+                const packs::MeshSection *block = object && object->kind == kVuBlockKind ? object->section(packs::fourcc("SC3B")) : nullptr;
+                if (!block || object->attribute<uint32_t>(0) != entry[1] * 16u)
+                    return false;
+                uint32_t tag[4];
+                std::vector<Out> out;
+                if (!skinBlock(s.header, block->data, block->size / 16u, tag, out))
+                    return false;
+                if (s.mode == Mode::Check)
+                    checkSkinned(s.header, routine, block->data, block->size / 16u, out);
+                if (!drawVertices(routine, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0]}, draws[i], &out))
+                    return false;
+            }
+            writePlaceholder(ctx, runtime, draws[0].mark);
+            for (size_t i = 1; i < draws.size(); ++i)
+                spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draws[i].mark));
+            for (Sc3Draw &draw : draws)
+                queueDraw(std::move(draw));
+            if (header)
+                s.headerOnVu1 = false;
+            if (materialSent)
+                s.materialOnVu1 = false;
+            ++s.stats.chainNative;
+            s.stats.chainBatches += n;
+            return true;
+        }
+
         // A chain part (0x10A4E8): the list the game CALLs, a REF to a block of VU data and an MSCAL of the part's routine per
         // batch, from the pack. A program A part whose blocks are all rigid parts the pack knows is drawn like raw parts, one
         // draw a batch.
@@ -1166,8 +1314,10 @@ namespace sc3
         {
             State &s = g_state;
             const uint32_t routine = flags & 0xFFFFu;
+            if (!(flags & kFlagProgramA))
+                return g_skinning && drawSkinnedPart(ctx, runtime, list, flags, header, materialSent);
             Shade mode;
-            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) ||
+            if (!routineShade(routine, mode) || !routineAllowed(routine) ||
                 (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
                 s.header.shine != mode.environment)
                 return false;
@@ -1213,6 +1363,26 @@ namespace sc3
             return true;
         }
 
+        // The bone matrices 0x10A4E8 sends with a part: matrix i (i < scratchpad 0x358) from 0x350 + 64 * byte[0x354 + i]
+        // to VU address 4i, where later parts without bones still find them.
+        void noteBones()
+        {
+            State &s = g_state;
+            const uint32_t base = sp32(0x350u);
+            if (base == 0u)
+                return;
+            const uint32_t count = sp32(0x358u), indices = sp32(0x354u);
+            for (uint32_t i = 0; i < count && i < 256u; ++i)
+            {
+                const uint32_t index = (peek32(indices + i) >> (8u * ((indices + i) & 3u))) & 0xFFu;
+                for (uint32_t w = 0; w < 16u; ++w)
+                {
+                    const uint32_t bits = peek32(base + 64u * index + 4u * w);
+                    std::memcpy(&s.bones[i][w], &bits, 4);
+                }
+            }
+        }
+
         void chainPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
@@ -1223,6 +1393,7 @@ namespace sc3
                              sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
             const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, (flags & 0xFFFFu) >> 3);
+            noteBones();
             const uint32_t ra = getRegU32(ctx, 31);
             if (drawChainPart(ctx, runtime, list, flags, header, materialSent))
             {
@@ -1476,6 +1647,8 @@ namespace sc3
             else
                 parseRoutines(routines);
         }
+        if (const char *skinning = std::getenv("SC3_NATIVE_SKINNING"); skinning && *skinning == '1')
+            g_skinning = true;
         if (const char *trace = std::getenv("SC3_MESH_TRACE"); trace && *trace)
         {
             if (*trace == '@')
