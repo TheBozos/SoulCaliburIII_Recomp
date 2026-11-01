@@ -134,7 +134,7 @@ fi
 mesh_switch=
 if [ "${REGRESS_MESH_AB:-0}" != 0 ]; then
     mesh_switch=$out/mesh.switch
-    echo 0xd8,0x2b0,0xc18,0x1558,0x1730,0xa48,0x1d28 > "$mesh_switch"
+    echo 0xd8,0x2b0,0xc18,0x1558,0x1730,0xa48,0x1d28,0x1ab8,0x1f00 > "$mesh_switch"
     export SC3_NATIVE_MESHES="${SC3_NATIVE_MESHES:-1}" SC3_NATIVE_MESHES_ROUTINES="@$mesh_switch"
 fi
 hide_ee_file=

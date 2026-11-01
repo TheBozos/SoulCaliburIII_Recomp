@@ -45,6 +45,7 @@ namespace sc3
         constexpr uint32_t kScratchpad = 0x70000000u;
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kRawPartKind = 1u;
+        constexpr uint32_t kChainPartKind = 2u;
         constexpr uint32_t kTagRegs = 0x100u;
         constexpr uint32_t kSkipPartList = 0x0C290019u;
 
@@ -114,7 +115,7 @@ namespace sc3
         struct Stats
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
-            uint64_t chainParts = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
+            uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
@@ -463,6 +464,9 @@ namespace sc3
         struct Shade
         {
             bool lit = false, fog = false, scroll = false, environment = false;
+            // A:0x1AB8: three lights (vf20-22) and, instead of a fourth, a highlight from the fourth normal lane
+            // (vf24-26.w) offset by vf15.zw, clamped, scaled by vf16.zw (w at most vf16.y) and added as vf23 * 128.
+            bool highlight = false;
         };
 
         bool routineShade(uint32_t routine, Shade &shade)
@@ -476,6 +480,8 @@ namespace sc3
             case 0x1730u: shade = {false, false, true}; return true;
             case 0xA48u: shade = {false, true, false}; return true;
             case 0x1D28u: shade = {false, true, false, true}; return true;
+            case 0x1AB8u: shade = {true, false, false, false, true}; return true;
+            case 0x1F00u: shade = {false, false, false, true}; return true;
             default: return false;
             }
         }
@@ -490,7 +496,7 @@ namespace sc3
 
         // A:0x1D28 after A:0x1C80 (0x10AFE8's header): texture coordinates from the normal plus the position times
         // vf20 through vf25-27 (an environment map), one colour for all (vf21's words), fogged.
-        void shadeEnvironment(const Header &h, const std::vector<In> &in, std::vector<Out> &out)
+        void shadeEnvironment(const Header &h, bool fog, const std::vector<In> &in, std::vector<Out> &out)
         {
             out.resize(in.size());
             bool outside[3] = {false, false, false};
@@ -523,8 +529,13 @@ namespace sc3
                     o.rgba[i] = static_cast<int32_t>(h.q[10][i]);
                 for (int i = 0; i < 3; ++i)
                     o.xyz[i] = ftoi(position[i], 16.0f);
-                const float fog = std::max(std::min(g[3], h.f(9, 0)), h.f(9, 1));
-                o.w = ((((clipped ? 0x8000u : 0u) | v.flags) & 0x8000u) + (static_cast<uint32_t>(ftoi(fog, 16.0f)) & 0xFFFFu)) & 0xFFFFu;
+                if (fog)
+                {
+                    const float f = std::max(std::min(g[3], h.f(9, 0)), h.f(9, 1));
+                    o.w = ((((clipped ? 0x8000u : 0u) | v.flags) & 0x8000u) + (static_cast<uint32_t>(ftoi(f, 16.0f)) & 0xFFFFu)) & 0xFFFFu;
+                }
+                else
+                    o.w = ((clipped ? 0x8000u : 0u) | v.flags) & 0xFFFFu;
             }
         }
 
@@ -532,7 +543,7 @@ namespace sc3
         {
             if (mode.environment)
             {
-                shadeEnvironment(h, in, out);
+                shadeEnvironment(h, mode.fog, in, out);
                 return;
             }
             out.resize(in.size());
@@ -558,6 +569,22 @@ namespace sc3
                 {
                     for (int i = 0; i < 4; ++i)
                         c[i] = v.colour[i] * h.f(12, i);
+                }
+                else if (mode.highlight)
+                {
+                    float l[4];
+                    for (int i = 0; i < 4; ++i)
+                        l[i] = h.f(4, i) * v.normal[0] + h.f(5, i) * v.normal[1] + h.f(6, i) * v.normal[2];
+                    for (int i = 0; i < 3; ++i)
+                        l[i] = std::max(l[i], 0.0f);
+                    float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
+                    e[1] = std::min(e[1], h.f(16, 1));
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const float lit = h.f(12, i) + h.f(8, i) * l[0] + h.f(9, i) * l[1] + h.f(10, i) * l[2];
+                        const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
+                        c[i] = std::min(lit * v.colour[i] + highlight * 128.0f, h.f(16, 0));
+                    }
                 }
                 else
                 {
@@ -661,6 +688,8 @@ namespace sc3
 
         // The setup always runs (A:0x10 with the header the C++ used, jumping to the part's routine): the lifted program's
         // registers then hold what the C++ read, whichever part last sent a header.
+        void compareKicks(uint32_t routine, const Header &h, const std::vector<Out> &out, uint32_t program, uint32_t pc, uint32_t top = 0u);
+
         void checkPart(const Header &h, uint32_t routine, const uint32_t tag[4], const std::vector<In> &in, const std::vector<Out> &out)
         {
             State &s = g_state;
@@ -682,15 +711,22 @@ namespace sc3
                 for (int qd = 0; qd < 4; ++qd)
                     put(1u + 4u * static_cast<uint32_t>(k) + static_cast<uint32_t>(qd), w + 4 * qd);
             }
+            compareKicks(routine, h, out, kProgramA, pc);
+        }
+
+        void compareKicks(uint32_t routine, const Header &h, const std::vector<Out> &out, uint32_t program, uint32_t pc, uint32_t top)
+        {
+            State &s = g_state;
+            uint8_t *vu = s.checkMemory.data();
             CheckKick kick;
-            runVu1Program(kProgramA, pc, s.checkState, vu, 0u, 0u,
+            runVu1Program(program, pc, s.checkState, vu, top, top,
                           [](void *user, const uint8_t *packet, uint32_t bytes)
                           { static_cast<CheckKick *>(user)->packets.emplace_back(packet, packet + bytes); },
                           &kick);
             ++s.stats.checked;
             const std::vector<uint8_t> *vertices = nullptr;
             for (const std::vector<uint8_t> &p : kick.packets)
-                if (p.size() >= 16u + 48u * in.size() && p.size() >= 16u)
+                if (p.size() >= 16u + 48u * out.size() && p.size() >= 16u)
                 {
                     uint64_t hi;
                     std::memcpy(&hi, p.data() + 8, 8);
@@ -857,7 +893,8 @@ namespace sc3
 
         // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
         // the header and material the game sent last. False: nothing drawn, the reason counted.
-        bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw)
+        bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
+                          const std::vector<Out> *shaded = nullptr)
         {
             State &s = g_state;
             const uint32_t prim = (tag[1] >> 15) & 0x7FFu;
@@ -892,9 +929,14 @@ namespace sc3
                 }
             }
             std::vector<Out> out;
-            shade(s.header, mode, in, out);
-            if (s.mode == Mode::Check)
-                checkPart(s.header, routine, tag, in, out);
+            if (shaded)
+                out = *shaded;
+            else
+            {
+                shade(s.header, mode, in, out);
+                if (s.mode == Mode::Check)
+                    checkPart(s.header, routine, tag, in, out);
+            }
             draw.screenSpace = true;
             draw.file = source.file;
             draw.offset = source.offset;
@@ -1117,16 +1159,78 @@ namespace sc3
             ctx->pc = ra;
         }
 
+        // A chain part (0x10A4E8): the list the game CALLs, a REF to a block of VU data and an MSCAL of the part's routine per
+        // batch, from the pack. A program A part whose blocks are all rigid parts the pack knows is drawn like raw parts, one
+        // draw a batch.
+        bool drawChainPart(R5900Context *ctx, PS2Runtime *runtime, uint32_t list, uint32_t flags, bool header, bool materialSent)
+        {
+            State &s = g_state;
+            const uint32_t routine = flags & 0xFFFFu;
+            Shade mode;
+            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) ||
+                (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
+                s.header.shine != mode.environment)
+                return false;
+            packs::LoadedImages::Image image;
+            const packs::MeshObject *chain = nullptr;
+            if (s.loaded.find(list, image) && image.file)
+                chain = image.file->object(list - image.base);
+            const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
+            if (!batches || batches->size < 8u)
+                return false;
+            struct Batch
+            {
+                std::vector<In> in;
+                uint32_t tag[4];
+                uint32_t offset;
+            };
+            std::vector<Batch> parts(batches->size / 8u);
+            for (size_t i = 0; i < parts.size(); ++i)
+            {
+                uint32_t entry[2];
+                std::memcpy(entry, batches->data + 8u * i, 8);
+                const packs::MeshObject *object = image.file->object(entry[0]);
+                if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != entry[1] * 16u ||
+                    !readVertices(*object, parts[i].in, parts[i].tag))
+                    return false;
+                parts[i].offset = entry[0];
+            }
+            std::vector<Sc3Draw> draws(parts.size());
+            for (size_t i = 0; i < parts.size(); ++i)
+                if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset}, draws[i]))
+                    return false;
+            writePlaceholder(ctx, runtime, draws[0].mark);
+            for (size_t i = 1; i < draws.size(); ++i)
+                spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draws[i].mark));
+            for (Sc3Draw &draw : draws)
+                queueDraw(std::move(draw));
+            if (header)
+                s.headerOnVu1 = false;
+            if (materialSent)
+                s.materialOnVu1 = false;
+            ++s.stats.chainNative;
+            s.stats.chainBatches += parts.size();
+            return true;
+        }
+
         void chainPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
-            const uint32_t flags = getRegU32(ctx, 5);
+            const uint32_t list = getRegU32(ctx, 4) & PS2_RAM_MASK, flags = getRegU32(ctx, 5);
             ++s.stats.chainParts;
             if (s.frames == g_traceFrame)
-                std::fprintf(stderr, "[sc3:mesh] trace chain %#x flags %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", getRegU32(ctx, 4), flags,
+                std::fprintf(stderr, "[sc3:mesh] trace chain %#x flags %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", list, flags,
                              sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
-            selfContained(flags);
+            const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, (flags & 0xFFFFu) >> 3);
+            const uint32_t ra = getRegU32(ctx, 31);
+            if (drawChainPart(ctx, runtime, list, flags, header, materialSent))
+            {
+                ctx->pc = ra;
+                return;
+            }
+            ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | (flags & 0xFFFFu)];
+            selfContained(flags);
             callOriginal(kChainPart, rdram, ctx, runtime);
         }
 
@@ -1262,13 +1366,14 @@ namespace sc3
             }
             std::fprintf(stderr,
                          "[sc3:mesh] 250 frames: raw parts %llu, drawn natively %llu (%llu triangles), left to VU1 %llu (routine not native %llu, "
-                         "not in the pack %llu, no material %llu, no pack texture %llu); chain parts left to VU1 %llu; draws submitted %llu at %llu kicks; "
+                         "not in the pack %llu, no material %llu, no pack texture %llu); chain parts %llu (drawn natively %llu, %llu batches); draws submitted %llu at %llu kicks; "
                          "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu; clipped strips %llu (native %llu, "
                          "VU1 %llu, not drawn %llu)\n",
                          static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
                          static_cast<unsigned long long>(t.leftToVu1), static_cast<unsigned long long>(t.unsupported),
                          static_cast<unsigned long long>(t.notInPack), static_cast<unsigned long long>(t.noMaterial),
                          static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.chainParts),
+                         static_cast<unsigned long long>(t.chainNative), static_cast<unsigned long long>(t.chainBatches),
                          static_cast<unsigned long long>(t.drawsSubmitted), static_cast<unsigned long long>(t.kicks),
                          static_cast<unsigned long long>(t.marks.exchange(0)), static_cast<unsigned long long>(t.marksOutOfOrder.exchange(0)),
                          static_cast<unsigned long long>(t.marksUnknown.exchange(0)), static_cast<unsigned long long>(t.bound),
@@ -1289,6 +1394,7 @@ namespace sc3
                              "unit, %llu without a vertex packet\n",
                              static_cast<unsigned long long>(t.checked), static_cast<unsigned long long>(t.checkExact),
                              static_cast<unsigned long long>(t.checkVertexDiffs), static_cast<unsigned long long>(t.checkCountDiffs));
+            t.chainNative = t.chainBatches = 0;
             t.parts = t.native = t.triangles = t.leftToVu1 = t.unsupported = t.notInPack = t.noMaterial = t.noTexture = t.chainParts = 0;
             t.drawsSubmitted = t.kicks = t.checked = t.checkExact = t.checkVertexDiffs = t.checkCountDiffs = 0;
             t.clipped = t.clippedNative = t.clippedToVu1 = t.clippedDropped = 0;
