@@ -261,6 +261,9 @@ player 2:
 | `SC3_NATIVE_VU1_PORT=0\|check` | Run the VU1 programs on the native sandbox (the AOT microcode on PS2Recomp's interpreter) instead of in C++, or both, compared |
 | `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,…>` | Keep those entries on the sandbox |
 | `SC3_NATIVE_VU1_DIRECT=0\|check\|@file` | Draw the C++ programs from their GIF packets (parsed, their register writes replayed on the GS) instead of directly, or both, compared; `@file` reads 0 / 1 / check at each frame end |
+| `SC3_NATIVE_MESHES=1\|check` | The stage's rigid parts drawn natively from the offline mesh pack (`build/sc3_meshes.pack`, made by `scripts/sc3_mesh_pack.py` from your disc) at the game's part builder; needs the texture pack on (`SC3_TEXTURE_PACK_MODE=keep`); `check` compares each part with the lifted VU1 program. Opt-in, in progress: see RECOMP_NOTES |
+| `SC3_TEXTURE_PACK_MODE=1\|keep\|@file` | Direct draws textured from the offline texture pack (`build/sc3_textures.pack`, made by `scripts/sc3_texture_pack.py` from your disc), the uploads it covers left out (`keep`: still sent); a diagnostic for now, see RECOMP_NOTES |
+| `SC3_HIDE_EE=<addr,…>`, `SC3_TRACE_LOAD=1`, `SC3_TRACE_FRAMES=<frame>,<n>`, `SC3_TRACE_OT=1`, `SC3_RECORD_FRAME=<frame>` | Census: game functions returned at entry, file loads, one frame's batches / texture uploads / sync points / direct draws, ordering-table insertions, one frame's builder calls with their state and memory dumps (`SC3_RECORD_DIR`) |
 | `SC3_NATIVE_VU0=0\|check` | Run the VU0 microprograms on PS2Recomp's interpreter instead of in C++, or both, compared (`SC3_NATIVE_VU0_LOG`, `SC3_NATIVE_VU0_RECORD` as for VU1) |
 | `SC3_NATIVE_VU1_LOG=1` | Every 5 s, MSCALs by entry, the direct draws' counts; a line lists any without a C++ port |
 | `SC3_NATIVE_VU1_RECORD=<file>` | Record sampled sandbox runs per entry (and, with `=check`, runs whose port differs) for `sc3_tests` (`SC3_VU1_TRACE`) |

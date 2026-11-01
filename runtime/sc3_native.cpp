@@ -1,5 +1,7 @@
 #include "sc3_native.h"
 #include "sc3_draw_sink.h"
+#include "sc3_meshes.h"
+#include "sc3_textures.h"
 #include "sc3_vu1_port.h"
 
 #include "ps2_runtime.h"
@@ -189,6 +191,8 @@ namespace sc3
                 ++s.stats.calls[entry];
             s.portNext = false;
             s.recordNext = false;
+            if (nativeMeshesOn()) // its groups are the native meshes' alone
+                return Vu1StreamAdapter::Choice::Vu1;
             if (!s.hidden.empty() && s.hidden.contains(s.names[program], pc))
             {
                 ++s.stats.hidden;
@@ -679,6 +683,7 @@ namespace sc3
                     followPortFile();
                     followDirectFile();
                     report();
+                    packFrameEnd();
                     Vu1StreamAdapter::instance().frameEnd();
                 };
                 if (g_state.onVif1Thread)
@@ -750,6 +755,11 @@ namespace sc3
         config.screen = screen();
         config.choose = choose;
         config.draw = drawPort;
+        config.drawDirect = [](Vu1StreamAdapter &, const uint32_t *packet, size_t qwords)
+        {
+            packNoteDirect(packet, qwords);
+            return false;
+        };
         if (const char *port = std::getenv("SC3_NATIVE_VU1_PORT"); port && *port == '@')
         {
             s.portPath = port + 1;

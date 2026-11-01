@@ -452,6 +452,124 @@ with `SC3_NATIVE_VU1_DIRECT=0` for the packets):
 | this branch, packets | 60.03, 60.03 | 60.72, 60.45 |
 | this branch, direct draws | 60.05, 60.00 | 62.62, 62.42 |
 
+#### Native meshes (`scripts/sc3_mesh_pack.py`, `runtime/sc3_meshes.cpp`, opt-in)
+
+The 3D drawn from the game's part builders and an offline mesh pack instead of from the VIF1 stream (no-GS plan, M2 and
+M3). Found with `SC3_RECORD_FRAME` (census): a fight frame calls 0x10A178 312 times (the stage: a REF to the part's raw
+VIF data, flags in a2 whose low 16 bits are the routine, program A when bit 0x40000 is set) and 0x10A4E8 145 times
+(fighters and weapons: a CALL to a DMA chain whose own MSCALs run 0x1388, 0x15E8, 0x1AB8, ...). Before a part the game
+leaves in the scratchpad what goes with it: 0x368 (a header to send: 0x10AD18 copies the renderer's matrices, lights,
+fog and guard band from scratchpad 0x100-0x340, 19 quadwords to VU TOP + 0x1AD, the setup at 0x10 loads them into
+vf14-vf31 and jumps to the routine), 0x36C / 0x370 (the material A+D block to REF to TOP + 0x19F), 0x350-0x358 (bone
+matrices and their indices), 0x384 / 0x388 (the microprogram upload when the program changes). Parts without a header
+or material keep the registers and GS state of the last one. Leaves are read whole by sceCdRead and relocated in place
+(pointers + the sub-entry's base); a material's TEX0 / MIPTBP get the texture ring's TBP / CBP at run time, so
+materials and texture keys are taken from the disc's values.
+
+- `scripts/sc3_mesh_pack.py` (stdlib, `python3 -I`, all cores, about 10 s): every raw part of every leaf (its tag
+  UNPACK, then V2-32 ST, V4-32 / S-32 colour, V4-32 position with the vertex flags in w, V3-32 normal, four quadwords a
+  vertex) as an object of PS2Recomp's generic mesh pack at its offset in the leaf, the exact words in section `SC3V`;
+  every A+D block as a register block (with the GIF tag's REGS word, the texture's used size, as register 0x100);
+  `build/sc3_meshes.leaves` maps pack files to ROOT.OLK. 1,647 leaves, 102,839 parts, 434 MB. Checked against the
+  recorded frame: the 312 parts at their offsets with the qwc the game passes, the 45 material blocks found.
+- At run time (`SC3_NATIVE_MESHES=1`, needs `SC3_TEXTURE_PACK_MODE` on, `keep` for now): leaves are bound
+  (`LoadedImages`, size and CRC32) when sceCdRead has read them whole; 0x10A178 (and 0x109990, whose `j 0x10A178`
+  skips the table) draws a part of A's routines 0xD8 (lit, fogged), 0x2B0 (lit), 0xC18 (unlit), 0x1558 (unlit, fogged,
+  scrolled) and 0x1730 (unlit, scrolled) in plain C++ from the pack's vertices, the header (0x10AD18's copies rewritten
+  in C++, kept like the VU's registers), the pack's material and the texture pack (the latest upload group CALLed
+  before the part: 0x104AF0 runs a batch's texture CALL right before its draws). The routines' meaning, from their
+  microcode: position through vf28-31, Q = 1 / w, STQ = ST times vf14 (plus vf24.xy when scrolled) times Q; lit
+  colour vf19 + vf20-23 times max(vf24-26 . n, 0), times the vertex colour, clamped at vf16.x, else the colour times
+  vf19; guard band (xyz / w + vf17) times vf18 against 1 over the last three vertices for ADC; fog F from
+  (vf17.w + w) times vf18.w clamped to vf15.y..vf15.x, else the vertex's own F. Floats read as the VU reads them (an
+  exponent of 255 is the largest finite value: the header carries such words) and products saturate.
+- No VIF packet is built for a native part: the scratchpad packet gets a CNT with a VIF MARK (and the program upload
+  when the game asked for one, for parts left to VU1). Its draw joins a `MeshViewList` as the game links the packet
+  (0x10F8B8: the VIF1 list, in order; 0x10D9A0 / 0x10DC90: an ordering-table bucket); at the frame kick 0x10F098 the
+  list is submitted through `MeshSubmitter` (GS-form batches, PS2Recomp `sc3/nogs-m3`), each draw a group, and the
+  VIF1 interpreter places each group in the GS stream at its MARK (`setVif1MarkGate`), so the native 3D sorts with
+  the 2D, shadows and glow the GS front end still draws until M4-M7. A part not drawn natively stays on VU1, its
+  header and material sent (scratchpad 0x368 / 0x36C set) since the native parts before it sent theirs to no one; with
+  native meshes on, the VU1 programs' C++ ports are off so that the groups are numbered by the MARKs alone.
+- `[sc3:mesh]` every 250 frames: parts drawn natively and their triangles, parts left to VU1 by cause (routine not
+  native yet, not in the pack, no material, no pack texture: the texture places listed by TBP / PSM / CBP), chain parts
+  left to VU1, MARKs reached, out of the list's order, unknown; leaves bound. `SC3_NATIVE_MESHES=check` also runs each
+  native part's routine (through its setup with the same header) on the lifted program and compares the vertices.
+
+State (2026-11-01), Free Training, three runs: about 98 % of the raw parts native (295 of 302 a fight frame; A:0xA48
+and A:0x1D28 left, 2 each), about 6,900 triangles a frame; every MARK reached in the list's order (0 out of order, 0 unknown); every material and
+texture found in the packs. Check against the lifted programs: positions, colours, STQ and ADC agree, F agrees since the
+VU float reading; what differs is rounding (the VU truncates, the C++ rounds to nearest): Z off by 1-4 sixteenths at
+depths past a million, X / Y a few ulps on vertices far outside the screen, STQ in the sixth digit; no part bit-equal
+because of that. Open: with 0x1558 / 0x1730 native, VU1 faults about once a frame on a part left to it (a reserved
+instruction at pc 0x1718, code memory that is neither A nor B there), and two of three runs stopped before the pause;
+the fighters and weapons (0x10A4E8's chains: B:0x1388 skinning, B:0x15E8, A:0x1AB8, A:0x1F00 and the shine setups)
+are not native yet, nor the VIF0 part lists (0x10B3F0). Off by default until those are done and the route is clean.
+
+#### Texture pack (`scripts/sc3_texture_pack.py`, `runtime/sc3_textures.cpp`)
+
+The direct draws took their textures from the GL back end's model of GS memory, filled by the game's uploads through
+the GS front end. SC3's textures exist on the disc only as prebuilt GS uploads inside ROOT.OLK's models; they are now
+converted offline from the user's disc, and a direct draw binds its texture from the pack.
+
+How the game uploads (found with `SC3_TRACE_FRAMES` and the load tracers below): each model's command list, run by
+0x104af0, CALLs texture CALL lists of that model (command 2; 3 through the OT; 20 an upload chain picked from a table
+by a float: animated textures). A list is a run of DMA CALL tags into upload units ended by RET; a unit is a CNT with
+GIF A+D BITBLTBUF / TRXPOS / TRXREG / TRXDIR and an IMAGE tag, then a REF to the texels, uploaded as PSMCT32 blocks
+and sampled as T8 / T4 with CT32 CLUTs. The CALLs and the GIF side's SIGNAL 1 go into the GIF list, the VIF1 side's
+SIGNAL 2 into the VIF1 list (a DIRECT); the two halves of the texture area (TBP 0x2c40 and 0x3800) alternate, so a TBP
+is no identity. The game reads a leaf of ROOT.OLK whole with CRI's file layer (sceCdRead from 0x3ffad0) and relocates
+it in place; a model's DMA addresses are relative to its own header (03 04 04 00), at a leaf's start (cdata) or
+inside a container leaf (characters, stages). A material's GIF tag keeps the texture's used size in its spare REGS
+bits (bits 32-47 width, 48-63 height); its TEX0 often selects more (TW 10 for a 128 x 64 texture).
+
+The converter (stdlib Python, `python3 -I`, all cores; run by `scripts/build_runtime.sh` when there is no pack yet)
+walks ROOT.OLK's sub-archives to their leaves and each leaf to its models, plays each CALL list's uploads into a model
+of GS memory (offline only; PSMCT32 / PSMT8 / PSMT4 layouts from PS2Recomp's tables), notes which list entry wrote each
+byte, and keeps every material texture of the model whose texels and CLUT the list wrote, at its used size: its
+indices (or CT32 texels) and its palette (CT32, index order, alpha 0x80 = 1.0). It writes PS2Recomp's generic texture
+pack (`PS2XTEX1`, `tools/native_pack/texture.py`; one file per CALL list, named `<leaf>@<list offset>`) and SC3's key
+index beside it (`build/sc3_textures.keys`: where each list sits in ROOT.OLK, its entries and whether every texture
+their uploads feed is in the pack, and which records a TEX0 and used size select). On the regress route's disc:
+12,267 lists, 37,131 CALL entries, 73,122 records (textures and palettes), 559 MB; 213 upload shapes it does not
+convert (short IMAGE data, T4 uploads, chains without an end) keep their GS uploads.
+
+At run time (only on the native GS renderer):
+
+- Where leaves load: ROOT.OLK's sector from the game's first index request (0x150418, a byte position) and the
+  sceCdRead serving it; every later sceCdRead into RDRAM maps its buffer to its ROOT.OLK bytes.
+- Texture CALLs: 0x10f808 called from command 2 or 20, 0x10d9a0 from command 3 or 20. The target comes from the
+  game's command list (its word, or the table entry its float picks, `cvt.w.s` as the EE does), through the load map
+  to the pack's entry. With every texture of the entry in the pack, its CALL is not appended to the GIF list (0x10f808's
+  bookkeeping without its copy: the scratchpad half flips as it would), so the GS front end never reads those uploads.
+  The OT variants still send theirs. Each CALL also records its segment of the GIF / VIF1 handshake (the game's GIF
+  sync points before it, 0x10f9d0 with id 1).
+- The frame kick 0x10f098 hands the frame's groups to the VIF1 thread; each frame end there takes the next frame's.
+- On the VIF1 thread, the DIRECTs the stream carries give the game's own SIGNAL 2 sync points; a textured direct draw
+  takes the texture its TEX0 and used size select from the latest group that has it among those whose segment the
+  stream has reached, as the GS would sample it then, and hands it to `Renderer::drawGs` (`GsMaterial::texture`,
+  PS2Recomp `sc3/nogs-m1`): the GL back end binds it instead of decoding GS memory and loads no CLUT. A draw without
+  one samples GS memory as before and is counted by TEX0.
+- `[sc3:packets]` and `[sc3:gs]` every 250 frames: texture uploads called, from the pack (left out, sent), not in
+  the pack, and the GS image transfers the GS front end still reads from GIF packets (`GS::imageTransfers`); direct
+  draws textured from the pack or from GS memory, the most frequent misses by TBP, PSM and CBP.
+
+`SC3_TEXTURE_PACK=<file>` names the pack (the scripts pass `build/sc3_textures.pack` when it exists);
+`SC3_TEXTURE_PACK_MODE=1` uses it (off by default: see the state below), `=keep` draws from it with the game's uploads
+still sent, `=@file` reads 0 / keep / 1 every 16 frames (`REGRESS_TEXPACK_AB`). `PS2X_NATIVE_TEXTURE_CHECK=1`, with the uploads
+sent, compares each pack texture with the texture cache's decode of GS memory where its TEX0 points (meaningful only
+where the TBP is not reused within the frame: the cache sees the frame's uploads in DMA order).
+
+State (2026-11-01): off by default, a diagnostic switch. Pause still of the Free Training fight with the pack on and
+the covered uploads left out: 22.4 dB against a 32.3 dB floor of two stills without it; the counters show most direct
+draws in the pause finding no pack texture (8,000 from the pack, 228,750 from GS memory per 250 frames), so with their
+uploads left out they sample stale GS memory. What is missing is a draw's place among the upload groups: the direct
+draws come from the VIF1 stream (the game's OT reorders the stage parts against the order the CALLs were built in),
+and the GS-order position used here (the game's SIGNAL 2 in the VIF1 stream's DIRECTs, a GIF packet read, acceptable
+only as this diagnostic) does not match the groups' segments in the pause. With the 3D drawn from the game's
+per-object hooks (M3: 0x104af0's commands run in order, a batch's texture CALL right before its draws) the group is
+known at the hook and none of this is needed.
+
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
 VU0 runs SC3's math library as microcode (`VCALLMS` from about 15 EE functions): one program, the 172 pairs
@@ -473,6 +591,13 @@ interpreter. 0x18 and 0x438 never ran, in those modes or in the ones above.
   full (240) and the opponent's (0x4D36A4) to 1, so the next scripted hit wins. Used to play Tales of Souls to
   the credits with scripted input.
 - `PS2X_SC3_TRACE_ENTRY=<addr,...>`: registers, a few stack slots, Timer0 and the EE cycle at each entry.
+- `SC3_HIDE_EE=<addr,...>` (`runtime/sc3_census.cpp`): those game functions return at entry (diagnosis);
+  `=@file` with `SC3_HIDE_EE_ALL=<the candidates>` reads the list every 16 frames. `REGRESS_PAUSE_HIDE_EE` takes one
+  pause still per function (`pause_hide_ee.txt`).
+- `SC3_TRACE_LOAD=1`: the file requests (0x150418), sceCdRead calls and copies of 4 KB or more (0x42d2ac);
+  `SC3_TRACE_OT=1`: ordering-table insertions per caller every 300 frames; `SC3_TRACE_FRAMES=<frame>,<count>`: for
+  those frames (counted at the frame kick 0x10f098), the batches (0x104af0), texture CALL targets, sync points, the GS
+  interrupt handler's SIGNAL counts and each direct draw's TEX0 and material tag.
 - `PS2X_SC3_TRACE_OBJ=<fn>:<off,...>`: the words at those offsets of the object in `$a0` whenever they change
   (state machines such as the Art Gallery task, state at +0x130).
 - `PS2X_SC3_RATE=<addr,...>`: calls per 60 vsyncs of each function.
