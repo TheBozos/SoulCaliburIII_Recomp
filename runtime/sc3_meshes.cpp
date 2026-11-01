@@ -39,6 +39,9 @@ namespace sc3
         constexpr uint32_t kPacketFlush = 0x0010F8B8u;
         constexpr uint32_t kOtInsertDepth = 0x0010D9A0u;
         constexpr uint32_t kOtInsertFixed = 0x0010DC90u;
+        constexpr uint32_t kClipper = 0x0010B970u;
+        constexpr uint32_t kClipEmit = 0x0010B7E0u;
+        constexpr uint32_t kClipVertexStride = 0x50u;
         constexpr uint32_t kScratchpad = 0x70000000u;
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kRawPartKind = 1u;
@@ -112,6 +115,7 @@ namespace sc3
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
             uint64_t chainParts = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
+            uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
             std::map<uint64_t, uint64_t> textureMisses;
@@ -132,6 +136,12 @@ namespace sc3
             bool requestPending = false;
             Header header;
             Material material;
+            bool vu1Current = true; // VU1 holds the header and material the game sent last (the last part with them ran there)
+            struct Clip
+            {
+                uint32_t flags = 0, address = 0, qwc = 0;
+                bool valid = false;
+            } clip;
             MeshViewList<Sc3Draw> building{8192};
             std::vector<size_t> unflushed; // indices into the draws since the last packet flush
             std::vector<Sc3Draw> pendingDraws;
@@ -779,11 +789,10 @@ namespace sc3
         // The placeholder the part leaves in the game's VIF1 list: a MARK where its draws belong (the GS stream's place
         // for them while the rest of the frame still goes through the GS front end), and the microprogram upload the
         // game asked for (parts left to VU1 after it need it).
-        void writePlaceholder(R5900Context *ctx, PS2Runtime *runtime, uint16_t mark)
+        // Room for that many quadwords in the scratchpad packet, flushed as the game's builders flush it when full.
+        uint32_t reserve(R5900Context *ctx, PS2Runtime *runtime, uint32_t qwords)
         {
             State &s = g_state;
-            const bool program = sp32(0x384u) != 0u;
-            const uint32_t qwords = program ? 2u : 1u;
             uint32_t cursor = sp32(0x378u);
             if (sp32(0x374u) + sp32(0x18u) - 0x10u < cursor + qwords * 16u)
             {
@@ -795,6 +804,22 @@ namespace sc3
                 spSet(0x378u, cursor);
                 spSet(0x374u, cursor);
             }
+            return cursor;
+        }
+
+        uint32_t writeMark(uint32_t cursor, uint16_t mark)
+        {
+            poke32(cursor, 0x10000000u);
+            poke32(cursor + 4u, 0u);
+            poke32(cursor + 8u, 0x07000000u | mark);
+            poke32(cursor + 12u, 0u);
+            return cursor + 16u;
+        }
+
+        void writePlaceholder(R5900Context *ctx, PS2Runtime *runtime, uint16_t mark)
+        {
+            const bool program = sp32(0x384u) != 0u;
+            uint32_t cursor = reserve(ctx, runtime, program ? 2u : 1u);
             if (program)
             {
                 poke32(cursor, 0x30000000u | sp32(0x388u));
@@ -803,11 +828,7 @@ namespace sc3
                 poke32(cursor + 12u, 0u);
                 cursor += 16u;
             }
-            poke32(cursor, 0x10000000u);
-            poke32(cursor + 4u, 0u);
-            poke32(cursor + 8u, 0x07000000u | mark);
-            poke32(cursor + 12u, 0u);
-            cursor += 16u;
+            cursor = writeMark(cursor, mark);
             spSet(0x378u, cursor);
             spSet(0x384u, 0u);
             spSet(0x368u, 0u);
@@ -925,6 +946,7 @@ namespace sc3
                 return false;
             writePlaceholder(ctx, runtime, draw.mark);
             queueDraw(std::move(draw));
+            s.vu1Current = false;
             ++s.stats.native;
             return true;
         }
@@ -939,7 +961,87 @@ namespace sc3
             }
             ++g_state.stats.leftToVu1;
             selfContained(getRegU32(ctx, 6));
+            g_state.vu1Current = true;
             callOriginal(kRawPart, rdram, ctx, runtime);
+        }
+
+        // 0x1088A0 drains the parts deferred for clipping against the near plane: each one's raw data goes to the scratchpad,
+        // 0x10B970 clips it on the EE and 0x10B7E0 sends the clipped strip with the part's routine and no header or material
+        // (the VU keeps those of the last part). Its loop's s0 is one entry past the part's {flags, address, qwc}.
+        void clipper(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t entry = getRegU32(ctx, 16) - 0x10u;
+            s.clip.flags = peek32(entry);
+            s.clip.address = peek32(entry + 4u) & PS2_RAM_MASK;
+            s.clip.qwc = peek32(entry + 8u);
+            s.clip.valid = s.clip.flags == getRegU32(ctx, 4);
+            callOriginal(kClipper, rdram, ctx, runtime);
+            s.clip.valid = false;
+        }
+
+        bool drawClipped(R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t vertices = getRegU32(ctx, 4), count = getRegU32(ctx, 5), flags = getRegU32(ctx, 7);
+            const uint32_t routine = flags & 0xFFFFu;
+            Shade mode;
+            if (!s.clip.valid || flags != s.clip.flags || !(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) ||
+                !s.header.valid || s.header.shine != mode.environment)
+                return false;
+            packs::LoadedImages::Image image;
+            const packs::MeshObject *object = nullptr;
+            if (s.loaded.find(s.clip.address, image) && image.file)
+                object = image.file->object(s.clip.address - image.base);
+            std::vector<In> in;
+            uint32_t tag[4];
+            if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != s.clip.qwc * 16u || !readVertices(*object, in, tag))
+                return false;
+            tag[0] = (tag[0] & 0xFFFF8000u) | count;
+            in.resize(count);
+            for (uint32_t k = 0; k < count; ++k)
+            {
+                float w[16];
+                const uint32_t at = vertices + k * kClipVertexStride;
+                for (uint32_t i = 0; i < 16u; ++i)
+                {
+                    const uint32_t word = peek32(at + i * 4u);
+                    std::memcpy(&w[i], &word, 4);
+                }
+                In &v = in[k];
+                v.st[0] = w[0], v.st[1] = w[1];
+                std::memcpy(v.colour, w + 4, 16);
+                std::memcpy(v.position, w + 8, 12);
+                std::memcpy(&v.flags, w + 11, 4);
+                std::memcpy(v.normal, w + 12, 12);
+            }
+            Sc3Draw draw;
+            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address}, draw))
+                return false;
+            spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draw.mark));
+            queueDraw(std::move(draw));
+            return true;
+        }
+
+        void clipEmit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t ra = getRegU32(ctx, 31);
+            ++s.stats.clipped;
+            if (drawClipped(ctx, runtime))
+            {
+                ++s.stats.clippedNative;
+                ctx->pc = ra;
+                return;
+            }
+            if (!s.vu1Current) // VU1 would run it with registers no part sent it
+            {
+                ++s.stats.clippedDropped;
+                ctx->pc = ra;
+                return;
+            }
+            ++s.stats.clippedToVu1;
+            callOriginal(kClipEmit, rdram, ctx, runtime);
         }
 
         // 0x109990 ends in `j 0x10A178`, a direct call that bypasses the table: the same choice made here.
@@ -970,6 +1072,7 @@ namespace sc3
                              sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
             selfContained(flags);
             noteState(flags, (flags & 0xFFFFu) >> 3);
+            s.vu1Current = true;
             callOriginal(kChainPart, rdram, ctx, runtime);
         }
 
@@ -1099,7 +1202,8 @@ namespace sc3
             std::fprintf(stderr,
                          "[sc3:mesh] 250 frames: raw parts %llu, drawn natively %llu (%llu triangles), left to VU1 %llu (routine not native %llu, "
                          "not in the pack %llu, no material %llu, no pack texture %llu); chain parts left to VU1 %llu; draws submitted %llu at %llu kicks; "
-                         "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu\n",
+                         "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu; clipped strips %llu (native %llu, "
+                         "VU1 %llu, not drawn %llu)\n",
                          static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
                          static_cast<unsigned long long>(t.leftToVu1), static_cast<unsigned long long>(t.unsupported),
                          static_cast<unsigned long long>(t.notInPack), static_cast<unsigned long long>(t.noMaterial),
@@ -1107,7 +1211,9 @@ namespace sc3
                          static_cast<unsigned long long>(t.drawsSubmitted), static_cast<unsigned long long>(t.kicks),
                          static_cast<unsigned long long>(t.marks.exchange(0)), static_cast<unsigned long long>(t.marksOutOfOrder.exchange(0)),
                          static_cast<unsigned long long>(t.marksUnknown.exchange(0)), static_cast<unsigned long long>(t.bound),
-                         static_cast<unsigned long long>(t.boundBad));
+                         static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.clipped),
+                         static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedToVu1),
+                         static_cast<unsigned long long>(t.clippedDropped));
             if (!left.empty())
                 std::fprintf(stderr, "[sc3:mesh] routines left to VU1:%s\n", left.c_str());
             if (!misses.empty())
@@ -1119,6 +1225,7 @@ namespace sc3
                              static_cast<unsigned long long>(t.checkVertexDiffs), static_cast<unsigned long long>(t.checkCountDiffs));
             t.parts = t.native = t.triangles = t.leftToVu1 = t.unsupported = t.notInPack = t.noMaterial = t.noTexture = t.chainParts = 0;
             t.drawsSubmitted = t.kicks = t.checked = t.checkExact = t.checkVertexDiffs = t.checkCountDiffs = 0;
+            t.clipped = t.clippedNative = t.clippedToVu1 = t.clippedDropped = 0;
             t.routinesLeft.clear();
             t.textureMisses.clear();
         }
@@ -1209,6 +1316,8 @@ namespace sc3
         wrap(runtime, kRawPart, rawPart);
         wrap(runtime, kRawPartTail, rawPartTail);
         wrap(runtime, kChainPart, chainPart);
+        wrap(runtime, kClipper, clipper);
+        wrap(runtime, kClipEmit, clipEmit);
         wrap(runtime, kPacketFlush, packetFlush);
         wrap(runtime, kOtInsertDepth, otInsertDepth);
         wrap(runtime, kOtInsertFixed, otInsertFixed);
