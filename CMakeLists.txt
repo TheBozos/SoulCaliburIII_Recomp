@@ -9,6 +9,7 @@ set(PS2X_BUILD_ANALYZER OFF CACHE BOOL "" FORCE)
 set(PS2X_BUILD_TEST OFF CACHE BOOL "" FORCE)
 set(PS2X_BUILD_STUDIO OFF CACHE BOOL "" FORCE)
 set(PS2X_ENABLE_AGRESSIVE_LOGS OFF CACHE BOOL "Enable very verbose/agressive PS2 runtime logs")
+set(PS2X_APP_TITLE "Soulcalibur III" CACHE STRING "" FORCE)
 
 add_subdirectory(PS2Recomp)
 
