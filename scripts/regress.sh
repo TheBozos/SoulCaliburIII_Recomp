@@ -42,6 +42,12 @@
 #                     pause_texpack_off.png a little after pause.png (pause_texpack_floor_psnr), then the pack switched
 #                     on (keep: its textures drawn, the game's uploads still sent) for pause_texpack.png
 #                     (pause_texpack_psnr, against pause.png)
+#   REGRESS_NATIVE_2D_AB=1
+#                     the run with the native 2D off (SC3_NATIVE_2D=@file, SC3_2D_PACK); in Mode Select menu_2d_off.png
+#                     and menu_2d_off2.png a little later (menu_2d_floor_psnr), then the native 2D switched on for
+#                     menu_2d.png (menu_2d_psnr, against menu_2d_off.png) and off again; in the pause menu
+#                     pause_2d_off.png a little after pause.png (pause_2d_floor_psnr), then on for pause_2d.png
+#                     (pause_2d_psnr, against pause.png)
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -51,6 +57,7 @@
 #   SC3_ELF             game ELF (default: game/SLUS_212.16 of this repo)
 #   SC3_TEXTURE_PACK    the texture pack (default: build/sc3_textures.pack of this repo, when there is one)
 #   SC3_MESH_PACK       the mesh pack (default: build/sc3_meshes.pack of this repo, when there is one)
+#   SC3_2D_PACK         the 2D material pack (default: build/sc3_2d.pack of this repo, when there is one)
 #   PS2X_SPU2_WALLCLOCK default 1, as scripts/run.sh
 set -euo pipefail
 export PS2X_SPU2_WALLCLOCK="${PS2X_SPU2_WALLCLOCK:-1}"
@@ -86,7 +93,7 @@ frames=$out/frames
 shots=$out/shots
 log=$out/run.log
 input=$out/pad_input.txt
-rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
+rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_2d*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
 : > "$input"
 native_switch=
@@ -118,6 +125,15 @@ if [ -z "${SC3_TEXTURE_PACK+x}" ] && [ -f "$root/build/sc3_textures.pack" ]; the
 fi
 if [ -z "${SC3_MESH_PACK+x}" ] && [ -f "$root/build/sc3_meshes.pack" ]; then
     export SC3_MESH_PACK="$root/build/sc3_meshes.pack"
+fi
+if [ -z "${SC3_2D_PACK+x}" ] && [ -f "$root/build/sc3_2d.pack" ]; then
+    export SC3_2D_PACK="$root/build/sc3_2d.pack"
+fi
+native2d_switch=
+if [ "${REGRESS_NATIVE_2D_AB:-0}" = 1 ]; then
+    native2d_switch=$out/native_2d.switch
+    echo 0 > "$native2d_switch"
+    export SC3_NATIVE_2D="@$native2d_switch"
 fi
 texpack_switch=
 if [ -n "${REGRESS_TEXPACK_AB:-}" ] && [ "${REGRESS_TEXPACK_AB}" != 0 ]; then
@@ -207,6 +223,17 @@ route()
     for i in 1 2 3 4; do press START; await 3 || return 1; done
     await 6 || return 1
     press CROSS; await 4 || return 1
+    if [ -n "$native2d_switch" ]; then
+        await 2 || return 1
+        pause_still menu_2d_off.png
+        await 1 || return 1
+        pause_still menu_2d_off2.png
+        echo 1 > "$native2d_switch"
+        await 1 || return 1
+        pause_still menu_2d.png
+        echo 0 > "$native2d_switch"
+        await 1 || return 1
+    fi
     for i in 1 2 3 4; do press DOWN; await 1 || return 1; done
     await 1 || return 1
     press CROSS; await 4 || return 1
@@ -256,6 +283,13 @@ route()
         if [ "$REGRESS_TEXPACK_AB" = keep ]; then echo keep > "$texpack_switch"; else echo 1 > "$texpack_switch"; fi
         await "$pause_secs" || return 1
         pause_still pause_texpack.png
+    fi
+    if [ -n "$native2d_switch" ]; then
+        await "$pause_secs" || return 1
+        pause_still pause_2d_off.png
+        echo 1 > "$native2d_switch"
+        await "$pause_secs" || return 1
+        pause_still pause_2d.png
     fi
     if [ -n "$hide_ee_file" ]; then
         local address
@@ -350,6 +384,19 @@ pause_direct_floor_psnr=$(pause_psnr pause_packets.png)
 pause_direct_psnr=$(pause_psnr pause_direct.png)
 pause_texpack_floor_psnr=$(pause_psnr pause_texpack_off.png)
 pause_texpack_psnr=$(pause_psnr pause_texpack.png)
+pause_2d_floor_psnr=$(pause_psnr pause_2d_off.png)
+pause_2d_psnr=$(pause_psnr pause_2d.png)
+menu_psnr()
+{
+    if [ -f "$out/menu_2d_off.png" ] && [ -f "$out/$1" ]; then
+        python3 -I "$root/scripts/imgdiff.py" "$out/menu_2d_off.png" "$out/$1" --diff "$out/${1%.png}_diff.png" \
+            | sed -n 's/^psnr=\([^ ]*\).*/\1/p'
+    else
+        echo NA
+    fi
+}
+menu_2d_floor_psnr=$(menu_psnr menu_2d_off2.png)
+menu_2d_psnr=$(menu_psnr menu_2d.png)
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -391,6 +438,10 @@ pause_direct_floor_psnr=$pause_direct_floor_psnr
 pause_direct_psnr=$pause_direct_psnr
 pause_texpack_floor_psnr=$pause_texpack_floor_psnr
 pause_texpack_psnr=$pause_texpack_psnr
+pause_2d_floor_psnr=$pause_2d_floor_psnr
+pause_2d_psnr=$pause_2d_psnr
+menu_2d_floor_psnr=$menu_2d_floor_psnr
+menu_2d_psnr=$menu_2d_psnr
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s
