@@ -94,8 +94,8 @@ def decode_raw_part(d, q, size):
                 words = words * 4
                 fields |= 2
             row = vertices[i]
-            for c in range(min(comps, 4)):
-                row[field * 4 + c] = words[c]
+            for c, word in enumerate(words):
+                row[field * 4 + c] = word
         if field == 3:
             fields |= 1
         pos += comps * 4 * n
