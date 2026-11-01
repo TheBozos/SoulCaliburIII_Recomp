@@ -10,3 +10,4 @@ if [ ! -f "$GAME_BUILD/CMakeCache.txt" ] && [ -z "${CXX:-}" ] && command -v clan
 fi
 cmake -S "$ROOT" -B "$GAME_BUILD" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DPS2X_BUILD_STUDIO=OFF "${compiler[@]}"
 cmake --build "$GAME_BUILD" --target ps2EntryRunner -j "$JOBS"
+case "$(uname -s)" in MINGW* | MSYS*) "$ROOT/scripts/stage_dlls.sh" "$GAME_BUILD" ;; esac

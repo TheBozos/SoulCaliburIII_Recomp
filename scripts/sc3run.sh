@@ -15,7 +15,7 @@ pid=$!
 start=$(date +%s)
 while kill -0 $pid 2>/dev/null && [ $(( $(date +%s) - start )) -lt "$secs" ]; do sleep 1; done
 if kill -0 $pid 2>/dev/null; then
-  geo=$(hyprctl clients -j | python3 -I -c 'import json,sys
+  geo=$(command -v hyprctl >/dev/null && hyprctl clients -j | python3 -I -c 'import json,sys
 for c in json.load(sys.stdin):
     if c["title"].startswith("PS2-Recomp"):
         print("%d,%d %dx%d" % (c["at"][0], c["at"][1], c["size"][0], c["size"][1])); break')

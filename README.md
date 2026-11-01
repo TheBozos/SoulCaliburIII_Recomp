@@ -2,10 +2,10 @@
 
 # SoulCaliburIII_Recomp
 
-**A native Linux port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++.**<br>
+**A native Linux and Windows port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++.**<br>
 Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on a reimplementation of the PS2 hardware.
 
-![Platform](https://img.shields.io/badge/platform-Linux-1b8cff)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-1b8cff)
 ![Compiler](https://img.shields.io/badge/compiler-Clang-1b8cff)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-17a35b)
 ![Status](https://img.shields.io/badge/status-playable%2C%20in%20testing-e8a33c)
@@ -68,7 +68,7 @@ it first and SC3 follows its route (see the layers below and the [function map](
 | Sound mixed natively at libsd's API, no SPU2 emulation | 🔧 |
 | Textures and meshes from offline packs of your disc, 2D drawn in C++ | 🔧 |
 | No GS front end, GS DMA and VIF left unread | ⏳ |
-| Windows build (MSYS2 UCRT64) | 🔧 |
+| Windows build (MSYS2 UCRT64 or llvm-mingw): boots, movies, menus and fights in a Windows 11 VM; sound and a real GPU still to check | 🔧 |
 | Widescreen | ⏳ |
 
 ✅ works · 🔧 in progress · ⏳ not reached yet
@@ -76,7 +76,7 @@ it first and SC3 follows its route (see the layers below and the [function map](
 **Native port** (no PS2 hardware emulation left, not even a small part: the shared goal of PS2Recomp's ports, and
 never kept because it is faster). Native means the game's draws built straight from its own data, its sound mixed
 at its sound library's API, and its frames on the PC's clock, with no PS2 hardware model in between. SC3 pins
-PS2Recomp's `sc3/native-vu1` branch (`native/renderer` plus SC3's fixes); the details of each layer are in
+PS2Recomp's `sc3/windows` branch (`sc3/native-vu1`, i.e. `native/renderer` plus SC3's fixes, with the Windows fixes); the details of each layer are in
 [RECOMP_NOTES.md](RECOMP_NOTES.md#native-target-as-of-2026-11-01).
 
 | Layer | |
@@ -167,7 +167,7 @@ disc files ──► Ghidra (headless, EE) + ps2_analyzer + recomp/*_hints.txt �
   mixer, the renderer and timing choices, and diagnostic tracers.
 
 The runtime is the `PS2Recomp/` git submodule: [boubou666/PS2Recomp](https://github.com/boubou666/PS2Recomp), branch
-`sc3/native-vu1` (`native/renderer` plus SC3's fixes and the VU program hooks), the fork shared with the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The
+`sc3/windows` (`native/renderer` plus SC3's fixes, the VU program hooks and the Windows build fix), the fork shared with the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The
 Third Age* and *Drakengard* recompilations; the port builds on the same runtime as the others.
 The top-level `CMakeLists.txt` builds its runtime, swaps its placeholder function table for the generated one and
 links the generated code, `runtime/` and the compiled VU1 microcode into `ps2EntryRunner`. Every fix made for this
@@ -176,8 +176,8 @@ VCLIP flags and VU1 run-ahead on its own clock.
 
 ## Requirements
 
-- Linux (developed on Arch)
-- CMake 3.21+, Ninja, Clang with C++20, rsync, and bsdtar (libarchive) to extract the disc
+- Linux (developed on Arch) or Windows 10/11 with [MSYS2](https://www.msys2.org/) (UCRT64, see [Windows](#windows))
+- CMake 3.21+, Ninja, Clang with C++20 (or MSYS2's GCC on Windows), rsync, and bsdtar (libarchive) to extract the disc
 - FFmpeg development libraries (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`)
 - X11/Wayland and OpenGL development headers (raylib is fetched and built by the runtime)
 - An OpenGL 4.5 driver (any recent NVIDIA, AMD or Intel driver)
@@ -216,6 +216,22 @@ build takes about 4 minutes of compiling and 6 minutes overall, and a rebuild wi
 `scripts/regress.sh build/game ~/sc3-regress` checks a build for regressions: it boots with movies off, goes through the
 menus into a Free Training fight, attacks for a minute, then writes a verdict to `summary.txt` (route reached, ok,
 hang or crash, GS frame rate, SPU2 underruns) with the last frame and the log.
+
+### Windows
+
+The same scripts run in an MSYS2 **UCRT64** shell, with MSYS2's GCC (MSVC is not supported):
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,ffmpeg,libarchive,python} git rsync
+git clone --recurse-submodules https://github.com/Arzaroth/SoulCaliburIII_Recomp.git
+```
+
+Then follow the steps above. `scripts/build_runtime.sh` ends with `scripts/stage_dlls.sh`, which copies the DLLs the
+runner needs (compiler runtime, FFmpeg and their dependencies) from the MSYS2 prefix next to `ps2EntryRunner.exe`,
+so it also starts outside the MSYS2 shell. With `mingw-w64-ucrt-x86_64-clang` installed it builds with Clang, as on
+Linux; the **CLANG64** environment works the same way with the `mingw-w64-clang-x86_64-` packages. The runner runs
+the same native defaults as on Linux and needs an OpenGL 4.5 driver. Profile with `PS2X_PROFILE=<s>` (no `perf`);
+`scripts/remote_build.sh`, `scripts/threadcpu.sh` and the screenshot of `scripts/sc3run.sh` are Linux only.
 
 A controller is used when one is connected; otherwise the keyboard (US key positions). A second gamepad plays
 player 2:
@@ -277,7 +293,7 @@ player 2:
 
 | Path | Contents |
 |---|---|
-| `PS2Recomp/` | The recompiler and runtime (git submodule, boubou666/PS2Recomp branch `sc3/native-vu1`) |
+| `PS2Recomp/` | The recompiler and runtime (git submodule, boubou666/PS2Recomp branch `sc3/windows`) |
 | `CMakeLists.txt` | Builds the runtime with the generated code and the game overrides linked in |
 | `recomp/` | Recompiler config (`sc3.toml`), the VU programs to lift (`vu1_lift_spec.json`), the Ghidra function map and the entry-point hint lists |
 | `runtime/` | Game override module (`sc3_overrides.cpp`), the native VU1 hooks (`sc3_native.cpp`), the VU1 program ports' entry table (`sc3_vu1_programs.cpp`), the VU0 hook (`sc3_vu0.cpp`), B:0x1388 by hand (`sc3_vu1_port.cpp`) |
