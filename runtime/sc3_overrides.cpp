@@ -4,6 +4,7 @@
 #include "runtime/ee_scheduler.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/native/native_gs_hook.h"
+#include "runtime/native/native_renderer.h"
 #include "sc3_native.h"
 
 #include <algorithm>
@@ -50,6 +51,7 @@ namespace
     // MPEG video and ADX audio) inside MOVIE.AFS, decoded here on the host per Sofdec handle.
     // Full-screen movies replace the GS output and mix their soundtrack into the SPU2 output, whose
     // length is the movie clock; smaller ones are menu textures handed out by mwPlyGetCurFrm.
+    bool g_nativeMovies = false;
     PS2Runtime *g_movieRuntime = nullptr;
 
     // [sc3:movies], one line per movie when it stops: what the movie route still reached while it played. The game's
@@ -82,6 +84,7 @@ namespace
     public:
         static constexpr uint32_t kRate = 48000u;
         static constexpr uint32_t kFullScreenWidth = 512u;
+        static constexpr uint64_t kBackdropKey = 0x5C3B4C4Bu;
 
         ~SfdPlayer() { stop(); }
 
@@ -107,6 +110,7 @@ namespace
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_quit = true;
                 m_active = false;
+                clearBackdropLocked();
             }
             m_wake.notify_all();
             if (m_thread.joinable())
@@ -137,6 +141,8 @@ namespace
             m_audio.erase(m_audio.begin(), m_audio.begin() + static_cast<std::ptrdiff_t>(available * 2u));
             m_clock += (m_hasAudio && !m_decoderDone) ? available : count;
             updateEndLocked();
+            if (g_nativeMovies && m_active && m_fullScreen)
+                showBackdropLocked();
             m_wake.notify_all();
         }
 
@@ -204,7 +210,7 @@ namespace
             m_reported = true;
             const MovieCounters end = MovieCounters::now();
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_startTime).count();
-            std::cerr << "[sc3:movies] override file " << m_fileIndex << " "
+            std::cerr << "[sc3:movies] " << (g_nativeMovies ? "native" : "override") << " file " << m_fileIndex << " "
                       << m_width << "x" << m_height << (m_fullScreen ? " full screen" : " texture") << (m_loop ? " loop" : "")
                       << ": " << m_number << " pictures in " << seconds << " s (" << (seconds > 0.0 ? m_number / seconds : 0.0)
                       << "/s, movie clock " << static_cast<double>(m_clock) / kRate << " s); game picture uploads "
@@ -213,6 +219,43 @@ namespace
                       << end.gsImageBytes - m_startCounters.gsImageBytes << " bytes), IPU accesses "
                       << end.ipuAccesses - m_startCounters.ipuAccesses << " (" << end.ipuAccesses << " since boot), libmpeg / libipu / IPU context calls "
                       << end.mpegCalls - m_startCounters.mpegCalls << " (" << end.mpegCalls << " since boot)" << std::endl;
+        }
+
+        // SC3_NATIVE_MOVIES: the picture of the movie clock as the native renderer's held backdrop, over the whole
+        // displayed area; black until the first one.
+        void showBackdropLocked()
+        {
+            advanceLocked();
+            if (m_backdropShown && m_backdropNumber == m_number)
+                return;
+            auto picture = std::make_shared<ps2x::native::TextureCache::Texture>();
+            picture->key = kBackdropKey;
+            picture->version = ++m_backdropVersion;
+            if (m_current.empty())
+            {
+                picture->width = 640u;
+                picture->height = 448u;
+                picture->rgba.assign(static_cast<size_t>(picture->width) * picture->height, 0x80000000u);
+            }
+            else
+            {
+                picture->width = m_width;
+                picture->height = m_height;
+                picture->rgba.resize(static_cast<size_t>(m_width) * m_height);
+                std::memcpy(picture->rgba.data(), m_current.data(), picture->rgba.size() * 4u);
+                for (uint32_t &c : picture->rgba)
+                    c = (c & 0xFFFFFFu) | 0x80000000u;
+            }
+            ps2x::native::Screen screen;
+            screen.originX = 0.0f;
+            screen.originY = 0.0f;
+            screen.width = static_cast<float>(picture->width);
+            screen.height = static_cast<float>(picture->height);
+            ps2x::native::Renderer::instance().setBackdrop(std::move(picture), screen, 0.0f, 0.0f, screen.width, screen.height, true);
+            m_backdropShown = true;
+            m_backdropNumber = m_number;
+            tracePresentLocked("backdrops");
+            captureLocked();
         }
 
         // SC3_MOVIE_CAPTURE_EVERY=<n> (with PS2X_CAPTURE_WINDOW_DIR): the window showing every n-th picture of a full-screen
@@ -230,6 +273,14 @@ namespace
             char name[64];
             std::snprintf(name, sizeof(name), "movie_%02u_%05u", m_fileIndex, m_number);
             g_movieRuntime->requestWindowCapture(name);
+        }
+
+        void clearBackdropLocked()
+        {
+            if (!m_backdropShown)
+                return;
+            m_backdropShown = false;
+            ps2x::native::Renderer::instance().clearBackdrop();
         }
 
         struct Frame
@@ -288,7 +339,10 @@ namespace
         void updateEndLocked()
         {
             if (m_active && m_decoderDone && m_frames.empty() && m_audio.empty())
+            {
                 m_active = false;
+                clearBackdropLocked();
+            }
         }
 
         static int readPacket(void *opaque, uint8_t *buffer, int size)
@@ -495,11 +549,14 @@ namespace
         bool m_fullScreen = false;
         bool m_decoderDone = false;
         bool m_hasAudio = false;
+        bool m_backdropShown = false;
         bool m_reported = false;
         uint32_t m_captured = 0;
         uint32_t m_fileIndex = 0;
         MovieCounters m_startCounters;
         std::chrono::steady_clock::time_point m_startTime{};
+        uint32_t m_backdropNumber = 0;
+        uint64_t m_backdropVersion = 0;
         std::atomic<bool> m_quit{false};
         bool m_active = true;
     };
@@ -896,6 +953,43 @@ namespace
             count(address);
         for (const uint32_t address : kMoviePictureUploadFunctions)
             count(address);
+    }
+
+    // SC3_NATIVE_MOVIES: Sofdec's decoder set-up for a player (0x3c25b0) and its library init (0x3c2500) in C++ terms:
+    // the host decodes every movie, so libmpeg is never fed and the IPU never runs. sceMpegInit, sceMpegCreate and
+    // the four sceMpegAddCallback calls only report success (their results are not read back), and the IPU context
+    // Sofdec saves for the next restore (0x3c2020: toIPU / fromIPU DMA and IPU_CTRL / IPU_BP into the context's
+    // +0x1C..+0x3C) is the idle one, written without reading the IPU or its DMA channels.
+    constexpr uint32_t kSceMpegInit = 0x003E1770u;
+    constexpr uint32_t kSceMpegCreate = 0x003E0BC8u;
+    constexpr uint32_t kSceMpegAddCallback = 0x003E19E0u;
+    constexpr uint32_t kSfdIpuContextSave = 0x003C2020u;
+
+    void sceMpegInitNative(uint8_t *, R5900Context *ctx, PS2Runtime *)
+    {
+        setReturnU32(ctx, 0u);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sceMpegCreateNative(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+    {
+        std::memset(rdram + (getRegU32(ctx, 4) & PS2_RAM_MASK), 0, 0x40u);
+        setReturnU32(ctx, getRegU32(ctx, 5));
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sceMpegAddCallbackNative(uint8_t *, R5900Context *ctx, PS2Runtime *)
+    {
+        static uint32_t next = 1u;
+        setReturnU32(ctx, next++);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sfdIpuContextSaveNative(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+    {
+        std::memset(rdram + ((getRegU32(ctx, 4) + 0x1Cu) & PS2_RAM_MASK), 0, 0x24u);
+        setReturnU32(ctx, 1u);
+        ctx->pc = getRegU32(ctx, 31);
     }
 
     // Sofdec decodes through libmpeg here, and the runtime's MPEG emulation is not fed by CRI's
@@ -1542,12 +1636,30 @@ namespace
         sc3::installNativeVu1(runtime, nativeGs);
         sc3::installNativeVu0(runtime);
         installMovieCounters(runtime);
-        runtime.setPresentationOverride([](std::vector<uint8_t> &rgba, uint32_t &width, uint32_t &height)
-                                        {
-                                            for (const auto &player : g_movies.all())
-                                                if (player->present(rgba, width, height))
-                                                    return true;
-                                            return false; });
+        // SC3_NATIVE_MOVIES=1: full-screen movies shown as the native renderer's held backdrop instead of replacing the
+        // presented frame (the presentation override, which needs no native renderer), Sofdec's decoder set-up without
+        // libmpeg or the IPU.
+        if (const char *native = std::getenv("SC3_NATIVE_MOVIES"); native && native[0] == '1')
+        {
+            g_nativeMovies = ps2x::native::Renderer::instance().enabled();
+            if (!g_nativeMovies)
+                std::cerr << "[sc3] SC3_NATIVE_MOVIES needs the native renderer: movies replace the presented frame" << std::endl;
+        }
+        std::cerr << "[sc3] movies: " << (g_nativeMovies ? "native (held backdrop)" : "presentation override") << std::endl;
+        if (g_nativeMovies)
+        {
+            runtime.registerFunction(kSceMpegInit, sceMpegInitNative);
+            runtime.registerFunction(kSceMpegCreate, sceMpegCreateNative);
+            runtime.registerFunction(kSceMpegAddCallback, sceMpegAddCallbackNative);
+            runtime.registerFunction(kSfdIpuContextSave, sfdIpuContextSaveNative);
+        }
+        if (!g_nativeMovies)
+            runtime.setPresentationOverride([](std::vector<uint8_t> &rgba, uint32_t &width, uint32_t &height)
+                                            {
+                                                for (const auto &player : g_movies.all())
+                                                    if (player->present(rgba, width, height))
+                                                        return true;
+                                                return false; });
     }
 }
 
