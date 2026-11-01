@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -42,6 +43,7 @@ namespace sc3
         constexpr uint32_t kClipper = 0x0010B970u;
         constexpr uint32_t kClipEmit = 0x0010B7E0u;
         constexpr uint32_t kClipVertexStride = 0x50u;
+        constexpr uint32_t kRelocate = 0x0014A7D8u;
         constexpr uint32_t kScratchpad = 0x70000000u;
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kRawPartKind = 1u;
@@ -143,6 +145,10 @@ namespace sc3
             // not): what a material without its own write draws with.
             // The bone matrices 0x10A4E8 last sent VU1 (scratchpad 0x350 / 0x354 / 0x358), by VU address / 4.
             float bones[256][16] = {};
+            uint32_t boneBase = 0, boneIndices = 0, boneCount = 0;
+            bool bonesOnVu1 = true;
+            // The raw parts and chain lists whose GIF tags 0x14A7D8 cleared PRIM.FGE in when it relocated their model.
+            std::set<uint32_t> noFog;
             uint64_t gameAlpha = 0, gameTest = 0;
             bool gameAlphaKnown = false, gameTestKnown = false;
             bool headerOnVu1 = true, materialOnVu1 = true; // VU1 holds the header / material the game sent last
@@ -151,6 +157,12 @@ namespace sc3
                 uint32_t flags = 0, address = 0, qwc = 0;
                 bool valid = false;
             } clip;
+            struct Placement
+            {
+                bool pending = false;
+                uint32_t ra = 0, program = 0, programQwc = 0;
+                std::vector<Sc3Draw> draws;
+            } placement;
             MeshViewList<Sc3Draw> building{8192};
             std::vector<size_t> unflushed; // indices into the draws since the last packet flush
             std::vector<Sc3Draw> pendingDraws;
@@ -276,6 +288,7 @@ namespace sc3
                 leaf->covered += static_cast<uint32_t>(end - at);
                 if (leaf->covered >= leaf->size)
                 {
+                    s.noFog.erase(s.noFog.lower_bound(base), s.noFog.lower_bound(base + leaf->size));
                     const packs::LoadedImages::Bound bound = s.loaded.bind(s.pack, s.rdram, leaf->name, base, leaf->size, false);
                     leaf->bound = true;
                     if (bound.image.file)
@@ -312,6 +325,30 @@ namespace sc3
             callOriginal(kCdRead, rdram, ctx, runtime);
             if (s.olkLbn >= 0 && lbn >= s.olkLbn && sectors != 0u)
                 noteRead(buffer, static_cast<uint64_t>(lbn - s.olkLbn) * kSector, sectors * kSector);
+        }
+
+        // 0x14A7D8 relocates a model's command list in place; with a5 bit 0 set (and a3 bit 1 clear) it also clears PRIM.FGE
+        // in the GIF tag of every raw part (command 2) and of every block a chain list (command 5) REFs.
+        void relocate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            if ((getRegU32(ctx, 7) & 2u) == 0u && (getRegU32(ctx, 9) & 1u) != 0u)
+            {
+                const uint32_t offset = getRegU32(ctx, 6);
+                for (uint32_t at = getRegU32(ctx, 4) & PS2_RAM_MASK, n = 0; n < 65536u; ++n)
+                {
+                    const uint32_t word = peek32(at);
+                    const uint32_t command = word & 0xFFu, size = (word >> 8) & 0xFFu;
+                    if (command == 0u || size == 0u)
+                        break;
+                    if (command == 2u)
+                        s.noFog.insert((peek32(at + 0x14u) + offset) & PS2_RAM_MASK);
+                    else if (command == 5u)
+                        s.noFog.insert((peek32(at + 4u) + offset) & PS2_RAM_MASK);
+                    at += size;
+                }
+            }
+            callOriginal(kRelocate, rdram, ctx, runtime);
         }
 
         // ---- 0x10AD18 in C++: the header a part's setup loads, from the renderer's state in the scratchpad
@@ -807,6 +844,14 @@ namespace sc3
                 spSet(0x36Cu, s.material.address);
                 spSet(0x370u, s.material.qwc);
             }
+            if (!s.bonesOnVu1 && sp32(0x350u) == 0u && s.boneBase != 0u && !(flags & kFlagProgramA))
+            {
+                spSet(0x350u, s.boneBase);
+                spSet(0x354u, s.boneIndices);
+                spSet(0x358u, s.boneCount);
+            }
+            if (sp32(0x350u) != 0u)
+                s.bonesOnVu1 = true;
             s.headerOnVu1 = s.materialOnVu1 = true;
         }
 
@@ -843,24 +888,6 @@ namespace sc3
         // The placeholder the part leaves in the game's VIF1 list: a MARK where its draws belong (the GS stream's place
         // for them while the rest of the frame still goes through the GS front end), and the microprogram upload the
         // game asked for (parts left to VU1 after it need it).
-        // Room for that many quadwords in the scratchpad packet, flushed as the game's builders flush it when full.
-        uint32_t reserve(R5900Context *ctx, PS2Runtime *runtime, uint32_t qwords)
-        {
-            State &s = g_state;
-            uint32_t cursor = sp32(0x378u);
-            if (sp32(0x374u) + sp32(0x18u) - 0x10u < cursor + qwords * 16u)
-            {
-                const uint32_t ra = getRegU32(ctx, 31);
-                setReg(ctx, 4, cursor);
-                packetFlush(s.rdram, ctx, runtime);
-                setReg(ctx, 31, ra);
-                cursor = sp32(0x0u);
-                spSet(0x378u, cursor);
-                spSet(0x374u, cursor);
-            }
-            return cursor;
-        }
-
         uint32_t writeMark(uint32_t cursor, uint16_t mark)
         {
             poke32(cursor, 0x10000000u);
@@ -870,30 +897,84 @@ namespace sc3
             return cursor + 16u;
         }
 
-        void writePlaceholder(R5900Context *ctx, PS2Runtime *runtime, uint16_t mark)
+        void queueDraw(Sc3Draw &&draw);
+
+        void emitPlacement(R5900Context *ctx)
         {
-            const bool program = sp32(0x384u) != 0u;
-            uint32_t cursor = reserve(ctx, runtime, program ? 2u : 1u);
-            if (program)
+            State &s = g_state;
+            State::Placement &p = s.placement;
+            uint32_t cursor = sp32(0x378u);
+            if (p.program != 0u)
             {
-                poke32(cursor, 0x30000000u | sp32(0x388u));
-                poke32(cursor + 4u, sp32(0x384u));
+                poke32(cursor, 0x30000000u | p.programQwc);
+                poke32(cursor + 4u, p.program);
                 poke32(cursor + 8u, 0u);
                 poke32(cursor + 12u, 0u);
                 cursor += 16u;
             }
-            cursor = writeMark(cursor, mark);
+            for (Sc3Draw &draw : p.draws)
+            {
+                cursor = writeMark(cursor, draw.mark);
+                queueDraw(std::move(draw));
+            }
             spSet(0x378u, cursor);
-            spSet(0x384u, 0u);
-            spSet(0x368u, 0u);
-            spSet(0x350u, 0u);
-            spSet(0x36Cu, 0u);
+            p.draws.clear();
+            p.pending = false;
+            p.program = 0u;
+            setReg(ctx, 31, p.ra);
+            ctx->pc = p.ra;
+        }
+
+        // A native part's placeholder (the microprogram upload the game asked for, then a MARK per draw) goes into the scratchpad
+        // packet and its draws are queued. With no room left, the game's flush runs first as a guest call returning into
+        // `entry` (the part's hook, which then finishes here): a recompiled function called from C++ may return before its end.
+        void place(R5900Context *ctx, uint32_t entry, std::vector<Sc3Draw> &&draws, bool part)
+        {
+            State &s = g_state;
+            State::Placement &p = s.placement;
+            p.program = part ? sp32(0x384u) : 0u;
+            p.programQwc = sp32(0x388u);
+            if (part)
+            {
+                spSet(0x384u, 0u);
+                spSet(0x368u, 0u);
+                spSet(0x350u, 0u);
+                spSet(0x36Cu, 0u);
+            }
+            p.draws = std::move(draws);
+            p.ra = getRegU32(ctx, 31);
+            const uint32_t qwords = (p.program != 0u ? 1u : 0u) + static_cast<uint32_t>(p.draws.size());
+            const uint32_t cursor = sp32(0x378u);
+            if (sp32(0x374u) + sp32(0x18u) - 0x10u < cursor + qwords * 16u)
+            {
+                p.pending = true;
+                setReg(ctx, 4, cursor);
+                setReg(ctx, 31, entry);
+                ctx->pc = kPacketFlush;
+                return;
+            }
+            emitPlacement(ctx);
+        }
+
+        bool resumePlacement(R5900Context *ctx, uint32_t entry)
+        {
+            State &s = g_state;
+            if (!s.placement.pending || getRegU32(ctx, 31) != entry)
+                return false;
+            const uint32_t start = sp32(0x0u);
+            spSet(0x374u, start);
+            spSet(0x378u, start);
+            emitPlacement(ctx);
+            return true;
         }
 
         struct PartSource
         {
             uint32_t file = 0, offset = 0, object = 0;
+            bool noFog = false;
         };
+
+        bool fogCleared(uint32_t address) { return g_state.noFog.count(address & PS2_RAM_MASK) != 0u; }
 
         // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
         // the header and material the game sent last. False: nothing drawn, the reason counted.
@@ -901,7 +982,7 @@ namespace sc3
                           const std::vector<Out> *shaded = nullptr)
         {
             State &s = g_state;
-            const uint32_t prim = (tag[1] >> 15) & 0x7FFu;
+            const uint32_t prim = ((tag[1] >> 15) & 0x7FFu) & (source.noFog ? ~0x20u : ~0u);
             if (!s.material.known || (((prim >> 4) & 1u) != 0u && s.material.tex0 == 0u))
             {
                 ++s.stats.noMaterial;
@@ -1101,6 +1182,8 @@ namespace sc3
             s.pendingDraws.push_back(std::move(draw));
         }
 
+        void noteBones();
+
         bool drawRawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
@@ -1110,6 +1193,7 @@ namespace sc3
             Shade mode;
             const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, routine >> 3);
+            noteBones();
             if (s.frames == g_traceFrame)
                 std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
                              getRegU32(ctx, 31), sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
@@ -1137,26 +1221,23 @@ namespace sc3
                 return false;
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address}, draw))
+            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
                 return false;
-            writePlaceholder(ctx, runtime, draw.mark);
-            queueDraw(std::move(draw));
             if (header)
                 s.headerOnVu1 = false;
             if (materialSent)
                 s.materialOnVu1 = false;
             ++s.stats.native;
+            std::vector<Sc3Draw> draws;
+            draws.push_back(std::move(draw));
+            place(ctx, kRawPart, std::move(draws), true);
             return true;
         }
 
         void rawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            const uint32_t ra = getRegU32(ctx, 31);
-            if (drawRawPart(rdram, ctx, runtime))
-            {
-                ctx->pc = ra;
+            if (resumePlacement(ctx, kRawPart) || drawRawPart(rdram, ctx, runtime))
                 return;
-            }
             ++g_state.stats.leftToVu1;
             selfContained(getRegU32(ctx, 6));
             callOriginal(kRawPart, rdram, ctx, runtime);
@@ -1174,7 +1255,6 @@ namespace sc3
             s.clip.qwc = peek32(entry + 8u);
             s.clip.valid = s.clip.flags == getRegU32(ctx, 4);
             callOriginal(kClipper, rdram, ctx, runtime);
-            s.clip.valid = false;
         }
 
         bool drawClipped(R5900Context *ctx, PS2Runtime *runtime)
@@ -1213,10 +1293,11 @@ namespace sc3
                 std::memcpy(v.normal, w + 12, 12);
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address}, draw))
+            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address, fogCleared(s.clip.address)}, draw))
                 return false;
-            spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draw.mark));
-            queueDraw(std::move(draw));
+            std::vector<Sc3Draw> draws;
+            draws.push_back(std::move(draw));
+            place(ctx, kClipEmit, std::move(draws), false);
             return true;
         }
 
@@ -1224,11 +1305,12 @@ namespace sc3
         {
             State &s = g_state;
             const uint32_t ra = getRegU32(ctx, 31);
+            if (resumePlacement(ctx, kClipEmit))
+                return;
             ++s.stats.clipped;
             if (drawClipped(ctx, runtime))
             {
                 ++s.stats.clippedNative;
-                ctx->pc = ra;
                 return;
             }
             if (!s.headerOnVu1 || !s.materialOnVu1) // VU1 would run it with registers no part sent it
@@ -1251,18 +1333,17 @@ namespace sc3
                 return;
             }
             const uint32_t command = getRegU32(ctx, 4);
-            const uint32_t ra = getRegU32(ctx, 31);
             setReg(ctx, 4, peek32(command + 0x14u));
             setReg(ctx, 5, peek32(command) >> 16);
             setReg(ctx, 6, flags);
             rawPart(rdram, ctx, runtime);
-            ctx->pc = ra;
         }
 
         // A program B chain part with B:0x1388 (skinned bodies): its blocks from the pack, the bones the game sent.
         bool drawSkinnedPart(R5900Context *ctx, PS2Runtime *runtime, uint32_t list, uint32_t flags, bool header, bool materialSent)
         {
             State &s = g_state;
+            const bool bonesSent = sp32(0x350u) != 0u;
             const uint32_t routine = flags & 0xFFFFu;
             if (routine != 0x1388u || !routineAllowed(0x11388u) || (flags & (kFlagShineA | kFlagShineB)) || (header && setupOf(flags) != 0x10u) ||
                 !s.header.valid || s.header.shine)
@@ -1290,20 +1371,18 @@ namespace sc3
                     return false;
                 if (s.mode == Mode::Check)
                     checkSkinned(s.header, routine, block->data, block->size / 16u, out);
-                if (!drawVertices(routine, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0]}, draws[i], &out))
+                if (!drawVertices(routine, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
                     return false;
             }
-            writePlaceholder(ctx, runtime, draws[0].mark);
-            for (size_t i = 1; i < draws.size(); ++i)
-                spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draws[i].mark));
-            for (Sc3Draw &draw : draws)
-                queueDraw(std::move(draw));
             if (header)
                 s.headerOnVu1 = false;
             if (materialSent)
                 s.materialOnVu1 = false;
+            if (bonesSent)
+                s.bonesOnVu1 = false;
             ++s.stats.chainNative;
             s.stats.chainBatches += n;
+            place(ctx, kChainPart, std::move(draws), true);
             return true;
         }
 
@@ -1347,19 +1426,15 @@ namespace sc3
             }
             std::vector<Sc3Draw> draws(parts.size());
             for (size_t i = 0; i < parts.size(); ++i)
-                if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset}, draws[i]))
+                if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
                     return false;
-            writePlaceholder(ctx, runtime, draws[0].mark);
-            for (size_t i = 1; i < draws.size(); ++i)
-                spSet(0x378u, writeMark(reserve(ctx, runtime, 1u), draws[i].mark));
-            for (Sc3Draw &draw : draws)
-                queueDraw(std::move(draw));
             if (header)
                 s.headerOnVu1 = false;
             if (materialSent)
                 s.materialOnVu1 = false;
             ++s.stats.chainNative;
             s.stats.chainBatches += parts.size();
+            place(ctx, kChainPart, std::move(draws), true);
             return true;
         }
 
@@ -1372,6 +1447,7 @@ namespace sc3
             if (base == 0u)
                 return;
             const uint32_t count = sp32(0x358u), indices = sp32(0x354u);
+            s.boneBase = base, s.boneIndices = indices, s.boneCount = count;
             for (uint32_t i = 0; i < count && i < 256u; ++i)
             {
                 const uint32_t index = (peek32(indices + i) >> (8u * ((indices + i) & 3u))) & 0xFFu;
@@ -1386,6 +1462,8 @@ namespace sc3
         void chainPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
+            if (resumePlacement(ctx, kChainPart))
+                return;
             const uint32_t list = getRegU32(ctx, 4) & PS2_RAM_MASK, flags = getRegU32(ctx, 5);
             ++s.stats.chainParts;
             if (s.frames == g_traceFrame)
@@ -1394,12 +1472,8 @@ namespace sc3
             const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, (flags & 0xFFFFu) >> 3);
             noteBones();
-            const uint32_t ra = getRegU32(ctx, 31);
             if (drawChainPart(ctx, runtime, list, flags, header, materialSent))
-            {
-                ctx->pc = ra;
                 return;
-            }
             ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | (flags & 0xFFFFu)];
             selfContained(flags);
             callOriginal(kChainPart, rdram, ctx, runtime);
@@ -1666,6 +1740,7 @@ namespace sc3
         wrap(runtime, kRawPart, rawPart);
         wrap(runtime, kRawPartTail, rawPartTail);
         wrap(runtime, kChainPart, chainPart);
+        wrap(runtime, kRelocate, relocate);
         wrap(runtime, kClipper, clipper);
         wrap(runtime, kClipEmit, clipEmit);
         wrap(runtime, kPacketFlush, packetFlush);
