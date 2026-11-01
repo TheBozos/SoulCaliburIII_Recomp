@@ -2,10 +2,10 @@
 
 # SoulCaliburIII_Recomp
 
-**A native Linux port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++.**<br>
+**A native Linux and Windows port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++.**<br>
 Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on a reimplementation of the PS2 hardware.
 
-![Platform](https://img.shields.io/badge/platform-Linux-1b8cff)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-1b8cff)
 ![Compiler](https://img.shields.io/badge/compiler-Clang-1b8cff)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-17a35b)
 ![Status](https://img.shields.io/badge/status-playable%2C%20in%20testing-e8a33c)
@@ -162,8 +162,8 @@ VCLIP flags and VU1 run-ahead on its own clock.
 
 ## Requirements
 
-- Linux (developed on Arch)
-- CMake 3.21+, Ninja, Clang with C++20, rsync, and bsdtar (libarchive) to extract the disc
+- Linux (developed on Arch) or Windows 10/11 with [MSYS2](https://www.msys2.org/) (UCRT64, see [Windows](#windows))
+- CMake 3.21+, Ninja, Clang with C++20 (or MSYS2's GCC on Windows), rsync, and bsdtar (libarchive) to extract the disc
 - FFmpeg development libraries (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`)
 - X11/Wayland and OpenGL development headers (raylib is fetched and built by the runtime)
 - An OpenGL 4.5 driver (any recent NVIDIA, AMD or Intel driver)
@@ -202,6 +202,22 @@ build takes about 4 minutes of compiling and 6 minutes overall, and a rebuild wi
 `scripts/regress.sh build/game ~/sc3-regress` checks a build for regressions: it boots with movies off, goes through the
 menus into a Free Training fight, attacks for a minute, then writes a verdict to `summary.txt` (route reached, ok,
 hang or crash, GS frame rate, SPU2 underruns) with the last frame and the log.
+
+### Windows
+
+The same scripts run in an MSYS2 **UCRT64** shell, with MSYS2's GCC (MSVC is not supported):
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,ffmpeg,libarchive,python} git rsync
+git clone --recurse-submodules https://github.com/Arzaroth/SoulCaliburIII_Recomp.git
+```
+
+Then follow the steps above. `scripts/build_runtime.sh` ends with `scripts/stage_dlls.sh`, which copies the DLLs the
+runner needs (compiler runtime, FFmpeg and their dependencies) from the MSYS2 prefix next to `ps2EntryRunner.exe`,
+so it also starts outside the MSYS2 shell. With `mingw-w64-ucrt-x86_64-clang` installed it builds with Clang, as on
+Linux; the **CLANG64** environment works the same way with the `mingw-w64-clang-x86_64-` packages. The runner runs
+the same native defaults as on Linux and needs an OpenGL 4.5 driver. Profile with `PS2X_PROFILE=<s>` (no `perf`);
+`scripts/remote_build.sh`, `scripts/threadcpu.sh` and the screenshot of `scripts/sc3run.sh` are Linux only.
 
 A controller is used when one is connected; otherwise the keyboard (US key positions). A second gamepad plays
 player 2:
