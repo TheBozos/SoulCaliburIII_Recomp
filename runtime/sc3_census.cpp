@@ -51,6 +51,18 @@ namespace sc3
             std::map<std::pair<uint32_t, uint32_t>, uint64_t> otCalls;
             std::atomic<uint64_t> frame{0};
             std::mutex logMutex;
+            uint64_t recordFrame = ~0ull;
+            std::string recordDir;
+            std::map<uint32_t, Function> recordOriginals;
+            FILE *records = nullptr;
+            uint32_t recordSeq = 0;
+        };
+
+        constexpr uint32_t kRecordedDefault[] = {
+            0x001040B0u, 0x00105278u, 0x00104AF0u, 0x00108A58u, 0x0010A178u, 0x0010A4E8u, 0x00109618u, 0x001096A0u, 0x00109728u,
+            0x001097B0u, 0x00109990u, 0x00109A18u, 0x00109A60u, 0x00109A88u, 0x00109AC8u, 0x0010A100u, 0x0010B330u, 0x0010B3F0u,
+            0x0010B4D8u, 0x0010D9A0u, 0x0010DC90u, 0x0010DDF8u, 0x0010E1F8u, 0x0010D2F0u, 0x0010F8B8u, 0x0010F808u, 0x00108980u,
+            0x00109AF0u, 0x0010AC40u, 0x001088A0u, 0x00108850u, 0x0010F4B8u, 0x00108D40u, 0x00108F28u, 0x00108F48u, 0x00109278u,
         };
 
         State g_state;
@@ -148,9 +160,73 @@ namespace sc3
             }
         }
 
+        void dumpMemory(const char *name, const uint8_t *data, size_t size)
+        {
+            const std::string path = g_state.recordDir + "/" + name;
+            if (FILE *f = std::fopen(path.c_str(), "wb"))
+            {
+                std::fwrite(data, 1, size, f);
+                std::fclose(f);
+            }
+        }
+
+        // One record a call: "SC3R" u32, the function (bit 31: after it returned), a sequence number, the GPRs' low
+        // words, the FPRs, VU0's vf registers, scratchpad 0x0000-0x0400 and 0x1b00-0x1d00.
+        void writeRecord(uint32_t function, R5900Context *ctx)
+        {
+            State &s = g_state;
+            const uint32_t head[3] = {0x52334353u, function, s.recordSeq++};
+            std::fwrite(head, sizeof(head), 1, s.records);
+            for (int r = 0; r < 32; ++r)
+            {
+                const uint32_t value = getRegU32(ctx, r);
+                std::fwrite(&value, 4, 1, s.records);
+            }
+            std::fwrite(ctx->f, 4, 32, s.records);
+            std::fwrite(ctx->vu0_vf, 16, 32, s.records);
+            std::fwrite(s.scratchpad, 1, 0x400u, s.records);
+            std::fwrite(s.scratchpad + 0x1B00u, 1, 0x200u, s.records);
+        }
+
+        void recorded(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t address = ctx->pc;
+            State &s = g_state;
+            const bool on = s.records && s.frame.load(std::memory_order_relaxed) == s.recordFrame;
+            if (on)
+                writeRecord(address, ctx);
+            s.recordOriginals.at(address)(rdram, ctx, runtime);
+            if (on && s.records)
+                writeRecord(address | 0x80000000u, ctx);
+        }
+
+        void recordFrameEdge(uint64_t frame)
+        {
+            State &s = g_state;
+            if (s.recordFrame == ~0ull)
+                return;
+            if (frame == s.recordFrame)
+            {
+                const std::string path = s.recordDir + "/parts.bin";
+                s.records = std::fopen(path.c_str(), "wb");
+                dumpMemory("rdram_begin.bin", s.rdram, PS2_RAM_SIZE);
+                dumpMemory("scratch_begin.bin", s.scratchpad, 0x4000u);
+                std::fprintf(stderr, "[sc3:record] frame %llu: recording to %s\n", static_cast<unsigned long long>(frame), path.c_str());
+            }
+            else if (frame == s.recordFrame + 1u && s.records)
+            {
+                std::fclose(s.records);
+                s.records = nullptr;
+                dumpMemory("rdram_end.bin", s.rdram, PS2_RAM_SIZE);
+                dumpMemory("scratch_end.bin", s.scratchpad, 0x4000u);
+                std::fprintf(stderr, "[sc3:record] frame %llu: %u records, memory dumped\n", static_cast<unsigned long long>(frame), s.recordSeq);
+            }
+        }
+
         void frameKick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint64_t frame = g_state.frame.fetch_add(1, std::memory_order_relaxed) + 1u;
+            recordFrameEdge(frame);
             if ((frame & 15u) == 0u)
                 followHideFile();
             report();
@@ -303,7 +379,13 @@ namespace sc3
             candidates = census::parseAddresses(hide);
             s.hidden.insert(candidates.begin(), candidates.end());
         }
-        if (candidates.empty() && !s.traceLoads && s.traceCount == 0u && !s.traceOt)
+        if (const char *record = std::getenv("SC3_RECORD_FRAME"); record && *record)
+        {
+            s.recordFrame = std::strtoull(record, nullptr, 10);
+            const char *dir = std::getenv("SC3_RECORD_DIR");
+            s.recordDir = dir && *dir ? dir : ".";
+        }
+        if (candidates.empty() && !s.traceLoads && s.traceCount == 0u && !s.traceOt && s.recordFrame == ~0ull)
             return;
         census::wrap(runtime, census::kFrameKick, census::frameKick);
         if (s.traceLoads)
@@ -325,6 +407,19 @@ namespace sc3
                 census::wrap(runtime, address, census::otInsert);
         for (const uint32_t address : candidates)
             census::wrap(runtime, address, census::hideable);
+        if (s.recordFrame != ~0ull)
+        {
+            std::vector<uint32_t> recorded(std::begin(census::kRecordedDefault), std::end(census::kRecordedDefault));
+            if (const char *list = std::getenv("SC3_RECORD_FUNCTIONS"); list && *list)
+                recorded = census::parseAddresses(list);
+            for (const uint32_t address : recorded)
+                if (address != census::kFrameKick && s.recordOriginals.count(address) == 0u)
+                    if (census::Function original = runtime.lookupFunction(address))
+                    {
+                        s.recordOriginals[address] = original;
+                        runtime.registerFunction(address, census::recorded);
+                    }
+        }
         std::fprintf(stderr, "[sc3] census: %zu function(s) hideable%s%s%s\n", candidates.size(), s.traceLoads ? ", loads traced" : "",
                      s.traceCount ? ", frames traced" : "", s.traceOt ? ", OT insertions counted" : "");
     }
