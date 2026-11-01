@@ -6,12 +6,13 @@ far it is from running without emulation.
 
 Reads the game ELF (static MIPS analysis), recomp/sc3.toml, the generated tree (function list, stub bindings,
 generated/iop/), runtime/ (game overrides) and PS2Recomp's runtime sources (stub handlers, syscall dispatcher).
-Writes map.json into --out and appends the counts to history.json there (or --history).
+Writes map.json, map.html, map.svg into --out and appends the counts to history.json there (or --history).
 Everything it writes is derived from the game: keep it out of the repository.
 """
 
 import argparse
 import datetime
+import html
 import json
 import os
 import re
@@ -831,6 +832,72 @@ def classify(funcs, elf, config, handlers, sysnames, overrides, coverage):
     return funcs
 
 
+def svg_map(funcs, counts, meta, colors):
+    pitch, cell, cols = 5, 4, 160
+    top = 80
+    rows = (len(funcs) + cols - 1) // cols
+    width, height = cols * pitch + 16, top + rows * pitch + 12
+    order = ["native", "clean", "direct", "indirect", "stub", "stubemu"]
+    css = [":root{--bg:#fbfaf7;--fg:#24211c;--muted:#6b665d}"]
+    dark = []
+    for key in order:
+        css.append(f".{key}{{fill:{colors['light'][key]}}}")
+        dark.append(f".{key}{{fill:{colors['dark'][key]}}}")
+    style = " ".join(css) + " text{fill:var(--fg);font:12px system-ui,sans-serif} .m{fill:var(--muted)} " \
+        "rect.bg{fill:var(--bg)} .stripe{stroke:var(--bg);stroke-width:1} " \
+        "@media (prefers-color-scheme: dark){:root{--bg:#1b1a17;--fg:#ece8df;--muted:#a39d91} " + " ".join(dark) + "}"
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+           f'role="img" aria-label="{html.escape(meta["title"])}">', f"<style>{style}</style>",
+           f'<rect class="bg" width="{width}" height="{height}"/>', "<defs>"]
+    for key in order:
+        out.append(f'<pattern id="p-{key}" width="{pitch}" height="{pitch}" patternUnits="userSpaceOnUse">'
+                   f'<rect class="{key}" width="{cell}" height="{cell}"/>' +
+                   (f'<path class="stripe" d="M0 {cell} L{cell} 0"/>' if key == "direct" else "") +
+                   (f'<rect class="bg" x="1.5" y="1.5" width="1" height="1"/>' if key == "stubemu" else "") +
+                   "</pattern>")
+    out.append("</defs>")
+    pct = meta["emulation_free_pct"]
+    out.append(f'<text x="8" y="18" style="font-weight:600;font-size:14px">{html.escape(meta["title"])}: '
+               f'{counts["direct"] + counts["indirect"]} of {counts["total"]} functions still touch emulation '
+               f'({pct:.1f}% emulation-free)</text>')
+    labels = [("native", "native C++"), ("clean", "recompiled, clean"), ("direct", "touches emulation"),
+              ("indirect", "calls emulation"), ("stub", "native stub"), ("stubemu", "emulation-backed stub")]
+    for k, (key, text) in enumerate(labels):
+        n = counts.get(key, 0) if key not in ("stub", "stubemu") else counts["stub_native" if key == "stub" else "stub_emulation"]
+        x, y = 8 + (k % 3) * 260, 28 + (k // 3) * 16
+        out.append(f'<rect class="{key}" x="{x}" y="{y}" width="10" height="10"/>' +
+                   (f'<path class="stripe" d="M{x} {y + 10} L{x + 10} {y}"/>' if key == "direct" else "") +
+                   (f'<rect class="bg" x="{x + 4}" y="{y + 4}" width="2" height="2"/>' if key == "stubemu" else "") +
+                   f'<text x="{x + 15}" y="{y + 9}" class="m">{text} {n}</text>')
+    out.append(f'<text x="8" y="{top - 8}" class="m">{html.escape(meta["subtitle"])}</text>')
+
+    def key_of(f):
+        if f["state"] == STUB:
+            return "stubemu" if f["flags"] & FLAG_EMU_STUB else "stub"
+        return STATES[f["state"]][0]
+
+    for r in range(rows):
+        run_start, run_key = 0, None
+        row = funcs[r * cols:(r + 1) * cols]
+        for c, f in enumerate(row + [None]):
+            k = key_of(f) if f else None
+            if k != run_key:
+                if run_key is not None:
+                    out.append(f'<rect x="{8 + run_start * pitch}" y="{top + r * pitch}" width="{(c - run_start) * pitch}" '
+                               f'height="{pitch}" fill="url(#p-{run_key})"/>')
+                run_start, run_key = c, k
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+COLORS = {
+    "light": {"native": "#0868ac", "clean": "#7fbfa6", "direct": "#d1495b", "indirect": "#f2a7a0",
+              "stub": "#9c7fc1", "stubemu": "#6a3d9a"},
+    "dark": {"native": "#56a8e8", "clean": "#2f7a62", "direct": "#ff6b6b", "indirect": "#8f4a48",
+             "stub": "#a48bd0", "stubemu": "#c9b3f0"},
+}
+
+
 def write_outputs(out_dir, history_path, payload, funcs):
     out_dir.mkdir(parents=True, exist_ok=True)
     counts = payload["counts"]
@@ -851,6 +918,41 @@ def write_outputs(out_dir, history_path, payload, funcs):
     history_path.write_text(json.dumps(history, indent=1) + "\n", encoding="utf-8")
     payload["history"] = history
     (out_dir / "map.json").write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+    (out_dir / "map.svg").write_text(svg_map(funcs, counts, payload["meta"], COLORS) + "\n", encoding="utf-8")
+    (out_dir / "map.html").write_text(render_html(payload), encoding="utf-8")
+
+
+def compact(payload):
+    strings, index = [], {}
+
+    def s(text):
+        if text not in index:
+            index[text] = len(strings)
+            strings.append(text)
+        return index[text]
+
+    position = {(f["addr"], f["region"].startswith("VU ")): i for i, f in enumerate(payload["functions"])}
+    funcs = []
+    for f in payload["functions"]:
+        calls = [position[(int(c, 16), False)] for c in f["calls"][:8] if (int(c, 16), False) in position]
+        via = sum(1 << ("hardware", "vu0", "stub").index(v) for v in f["via"])
+        funcs.append([f["addr"], f["size"], f["state"], s(f["name"]), s(f["reason"]), f["flags"], s(f["region"]),
+                      f["depth"], via, calls])
+    irx = []
+    for m in payload["irx"]:
+        irx.append({"module": m["module"], "base": m["base"], "size": m["size"],
+                    "funcs": [[g["addr"], g["size"], g["state"], s(g["reason"])] for g in m["functions"]]})
+    return {"meta": payload["meta"], "counts": payload["counts"], "runtime": payload["runtime"],
+            "heuristics": payload["heuristics"], "irx_counts": payload["irx_counts"], "kinds": payload["kinds"],
+            "history": payload["history"], "strings": strings, "funcs": funcs, "irx": irx,
+            "states": [{"id": k, "label": l, "desc": d} for k, l, d in STATES]}
+
+
+def render_html(payload):
+    data = json.dumps(compact(payload), separators=(",", ":")).replace("</", "<\\/")
+    page = HTML_TEMPLATE.replace("/*DATA*/null", data)
+    page = page.replace("{{TITLE}}", html.escape(payload["meta"]["page_title"]))
+    return page
 
 
 def main():
@@ -969,7 +1071,7 @@ def main():
           f"({counts['uncertain']} uncertain), indirect {counts['indirect']}, stubs {counts['stub']} "
           f"({counts['stub_emulation']} emulation-backed); {len(vu)} VU program entries native; "
           f"IRX {dict(payload['irx_counts'])}")
-    print(f"wrote {out_dir / 'map.json'}, {history_path}")
+    print(f"wrote {out_dir / 'map.html'}, map.svg, map.json, {history_path}")
 
 
 HEURISTICS = {
@@ -1027,6 +1129,524 @@ HEURISTICS = {
     ],
 }
 
+HTML_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+:root {
+  --bg: #f7f6f2; --surface: #ffffff; --fg: #1f1d1a; --muted: #6a655c; --border: #dedad1; --track: #ebe8e0;
+  --accent: #1f6fb2; --focus: #111111;
+  --s-native: #1f6fb2; --s-clean: #8cc7b0; --s-direct: #d1495b; --s-indirect: #f0b0a8;
+  --s-stub: #a58cd0; --s-stubemu: #5e3c99;
+  --b-present: #d1495b; --b-partial: #c98a12; --b-diagnostic: #1f6fb2; --b-absent: #2e8b57;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15161a; --surface: #1e2025; --fg: #ecebe6; --muted: #a29e95; --border: #34363d; --track: #2a2c32;
+    --accent: #5aa9e6; --focus: #ffffff;
+    --s-native: #5aa9e6; --s-clean: #2e6b57; --s-direct: #ff6b6b; --s-indirect: #7a3f3f;
+    --s-stub: #8a73b8; --s-stubemu: #c7b2f2;
+    --b-present: #ff6b6b; --b-partial: #e3a832; --b-diagnostic: #5aa9e6; --b-absent: #4cc38a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15161a; --surface: #1e2025; --fg: #ecebe6; --muted: #a29e95; --border: #34363d; --track: #2a2c32;
+  --accent: #5aa9e6; --focus: #ffffff;
+  --s-native: #5aa9e6; --s-clean: #2e6b57; --s-direct: #ff6b6b; --s-indirect: #7a3f3f;
+  --s-stub: #8a73b8; --s-stubemu: #c7b2f2;
+  --b-present: #ff6b6b; --b-partial: #e3a832; --b-diagnostic: #5aa9e6; --b-absent: #4cc38a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif; overflow-x: hidden; }
+main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; line-height: 1.25; margin: 0; }
+h2 { font-size: 17px; margin: 32px 0 8px; }
+h3 { font-size: 13px; font-weight: 600; margin: 0; }
+p { margin: 6px 0; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+.muted { color: var(--muted); }
+.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.chip { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px;
+  font-size: 12px; color: var(--muted); background: var(--surface); }
+button { font: inherit; color: inherit; }
+.theme { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 4px 10px;
+  cursor: pointer; font-size: 13px; white-space: nowrap; }
+.kpi { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; margin-top: 18px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.big { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; color: var(--s-direct); }
+.bar { height: 14px; border-radius: 7px; background: var(--track); overflow: hidden; display: flex; margin: 10px 0 6px; }
+.bar span { display: block; height: 100%; }
+.pct { font-size: 28px; font-weight: 700; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px 9px; background: var(--surface); font-size: 13px; cursor: help; max-width: 100%; }
+.badge i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.badge b { font-weight: 600; }
+.badge small { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.legend button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border);
+  background: var(--surface); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 13px; }
+.legend button[aria-pressed="false"] { opacity: 0.45; text-decoration: line-through; }
+.legend canvas { width: 14px; height: 14px; flex: none; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input[type="search"] { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.details { margin-top: 10px; min-height: 64px; }
+.details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 6px 0 0; }
+.details dt { color: var(--muted); }
+.details dd { margin: 0; overflow-wrap: anywhere; }
+.details .links button { border: 1px solid var(--border); background: transparent; border-radius: 6px;
+  padding: 0 6px; margin: 2px 4px 2px 0; cursor: pointer; font-size: 12px; }
+.region { margin-top: 14px; }
+.region .head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 4px; }
+.region .head .mini { flex: 1 1 120px; max-width: 220px; height: 6px; margin: 0; align-self: center; }
+.map { display: block; width: 100%; touch-action: manipulation; cursor: crosshair; }
+#tip { position: fixed; z-index: 10; pointer-events: none; max-width: min(420px, calc(100vw - 32px));
+  background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); display: none; }
+#tip b { font-weight: 600; }
+.irxgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart text { fill: var(--muted); font-size: 11px; }
+details { margin-top: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+ul.tight { margin: 6px 0; padding-left: 20px; }
+ul.tight li { margin: 4px 0; }
+footer { margin-top: 28px; font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .kpi { grid-template-columns: minmax(0, 1fr); }
+  .big { font-size: 38px; }
+  h1 { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div>
+      <h1>Soulcalibur III native map</h1>
+      <p class="muted" id="sub"></p>
+    </div>
+    <button class="theme" id="theme" type="button" aria-label="Colour theme">Theme: auto</button>
+  </div>
+
+  <section class="kpi" aria-label="Progress">
+    <div class="card">
+      <h3>Functions still touching emulation</h3>
+      <div class="big" id="headline">0</div>
+      <p class="muted" id="headline-sub"></p>
+    </div>
+    <div class="card">
+      <h3>Functions emulation-free</h3>
+      <div><span class="pct" id="pct"></span> <span class="muted" id="pct-sub"></span></div>
+      <div class="bar" id="bar" role="img"></div>
+      <p class="muted" id="bar-sub"></p>
+    </div>
+  </section>
+
+  <h2>Runtime-level emulation</h2>
+  <p class="muted">Not tied to one function: what SC3's defaults still run as a model of the PS2 (hover or tap for the evidence).</p>
+  <div class="badges" id="runtime"></div>
+
+  <h2>EE function map</h2>
+  <p class="muted">One square per function, in address order. Hover for details, click or tap to pin, filter by state
+  with the legend.</p>
+  <div class="legend" id="legend" role="group" aria-label="Filter by state"></div>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Search address (0x10f4b8) or name" aria-label="Search address or name">
+    <span class="muted" id="found"></span>
+  </div>
+  <div class="card details" id="details" aria-live="polite"><span class="muted">Nothing pinned yet.</span></div>
+  <div id="regions"></div>
+
+  <h2>IRX modules</h2>
+  <p class="muted" id="irx-sub"></p>
+  <div class="legend" id="irx-legend"></div>
+  <div class="irxgrid" id="irx"></div>
+
+  <h2>Trend</h2>
+  <p class="muted">Functions still touching emulation (direct and indirect) and direct only, one point per run of
+  <code>scripts/func_map.py</code>.</p>
+  <div class="card chart" id="chart"></div>
+
+  <h2>How states are decided</h2>
+  <div class="card">
+    <ul class="tight" id="rules"></ul>
+    <details><summary>Known blind spots</summary><ul class="tight" id="blind"></ul></details>
+    <details><summary>What the direct touches are</summary><ul class="tight" id="kinds"></ul></details>
+  </div>
+  <footer id="foot"></footer>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+const D = /*DATA*/null;
+const S = D.strings;
+const KEYS = ["native", "clean", "direct", "indirect", "stub"];
+const F_UNCERTAIN = 1, F_EMU = 2, F_RAN = 4, F_WRAPPER = 8;
+const $ = (id) => document.getElementById(id);
+const hex = (n, w = 6) => "0x" + n.toString(16).padStart(w, "0");
+const fmt = (n) => n.toLocaleString("en-US");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+let palette = {};
+function readPalette() {
+  palette = { bg: css("--surface"), page: css("--bg"), fg: css("--fg"), muted: css("--muted"), border: css("--border") };
+  for (const k of KEYS) palette[k] = css("--s-" + k);
+  palette.stubemu = css("--s-stubemu");
+}
+const C = D.counts;
+const touching = C.direct + C.indirect;
+const enabled = new Set([0, 1, 2, 3, 4]);
+let query = null, pinned = null, onlyRan = false;
+
+function stateLabel(f) {
+  const st = D.states[f[2]];
+  let s = st.label;
+  if (f[2] === 4) s += f[5] & F_EMU ? (f[5] & F_UNCERTAIN ? ", possibly emulation-backed" : ", emulation-backed") : ", native";
+  else if (f[2] === 2 && f[5] & F_UNCERTAIN) s += " (uncertain)";
+  else if (f[2] === 3) s += " (depth " + f[7] + ")";
+  else if (f[2] === 0 && f[5] & F_WRAPPER) s += " (wrapper)";
+  return s;
+}
+function viaText(v) {
+  const out = [];
+  if (v & 1) out.push("hardware access");
+  if (v & 2) out.push("VU0 micro mode");
+  if (v & 4) out.push("emulation-backed stub");
+  return out.join(", ");
+}
+
+function header() {
+  const m = D.meta;
+  $("sub").innerHTML = '<span class="chip">' + esc(m.game) + "</span> " + esc(m.subtitle);
+  $("headline").textContent = fmt(touching);
+  $("headline-sub").innerHTML = fmt(C.direct) + " touch it themselves (" + fmt(C.uncertain) + " uncertain) and " +
+    fmt(C.indirect) + " call one that does (" + fmt(C.indirect_via_vu0_only) + " only through VU0 micro calls), out of " +
+    fmt(C.total) + " EE functions. Plus " + fmt(C.stub_emulation) + " library stubs the runtime answers with emulation.";
+  const free = C.native + C.clean + C.stub_native;
+  $("pct").textContent = m.emulation_free_pct.toFixed(1) + "%";
+  $("pct-sub").textContent = fmt(free) + " of " + fmt(C.total);
+  const parts = [["native", C.native], ["clean", C.clean], ["stub", C.stub_native], ["stubemu", C.stub_emulation],
+    ["indirect", C.indirect], ["direct", C.direct]];
+  $("bar").innerHTML = parts.map(([k, n]) => '<span style="width:' + (100 * n / C.total) + "%;background:var(--s-" + k +
+    ')" title="' + k + " " + n + '"></span>').join("");
+  $("bar").setAttribute("aria-label", m.emulation_free_pct.toFixed(1) + " percent of functions emulation-free");
+  $("bar-sub").textContent = "Native C++ " + fmt(C.native) + " (and " + fmt(C.vu_programs_native) +
+    " VU program entries), recompiled clean " + fmt(C.clean) + ", native stubs " + fmt(C.stub_native) + ".";
+  const status = { present: "present", partial: "partly", diagnostic: "diagnostic only", absent: "absent" };
+  $("runtime").innerHTML = D.runtime.map((r) => '<span class="badge" tabindex="0" title="' + esc(r.evidence) +
+    '"><i style="background:var(--b-' + r.status + ')"></i><b>' + esc(r.name) + "</b><small>" +
+    esc(status[r.status] || r.status) + "</small></span>").join("");
+  $("foot").textContent = "Generated " + m.generated + " by scripts/func_map.py v" + m.tool_version + " from " +
+    m.function_source + ". SC3 " + (m.sc3_commit || "?") + " (" + (m.sc3_branch || "?") + "), PS2Recomp " +
+    (m.ps2recomp_commit || "?") + ". Derived from the game: keep it private.";
+}
+
+function drawCell(ctx, x, y, s, f, dim) {
+  const st = f[2];
+  let col = palette[KEYS[st]];
+  if (st === 4 && f[5] & F_EMU) col = palette.stubemu;
+  ctx.globalAlpha = dim ? 0.13 : 1;
+  if (st === 2 && f[5] & F_UNCERTAIN) {
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    ctx.strokeRect(x + 0.75, y + 0.75, s - 1.5, s - 1.5);
+  } else {
+    ctx.fillStyle = col; ctx.fillRect(x, y, s, s);
+    if (st === 2) {
+      ctx.strokeStyle = palette.page; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(x, y + s); ctx.lineTo(x + s, y); ctx.stroke();
+    } else if (st === 4 && f[5] & F_EMU) {
+      ctx.fillStyle = palette.page; const d = Math.max(1, Math.round(s / 3));
+      ctx.fillRect(x + (s - d) / 2, y + (s - d) / 2, d, d);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+const maps = [];
+function makeMap(container, items, opts) {
+  const canvas = document.createElement("canvas");
+  canvas.className = "map";
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", opts.label);
+  container.appendChild(canvas);
+  const m = { canvas, items, opts, cols: 1, pitch: 7, cell: 6 };
+  maps.push(m);
+  canvas.addEventListener("mousemove", (e) => hover(m, e));
+  canvas.addEventListener("mouseleave", () => { $("tip").style.display = "none"; });
+  canvas.addEventListener("click", (e) => { const i = hit(m, e); if (i >= 0) opts.pin(items[i]); });
+  return m;
+}
+function layout(m) {
+  const w = m.canvas.parentElement.clientWidth;
+  m.pitch = w < 520 ? 6 : 7; m.cell = m.pitch - 1;
+  m.cols = Math.max(1, Math.floor((w + 1) / m.pitch));
+  const rows = Math.ceil(m.items.length / m.cols);
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.min(w, m.cols * m.pitch), ch = rows * m.pitch;
+  m.canvas.style.width = cw + "px"; m.canvas.style.height = ch + "px";
+  m.canvas.width = Math.round(cw * dpr); m.canvas.height = Math.round(ch * dpr);
+  const ctx = m.canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  m.items.forEach((f, i) => {
+    const x = (i % m.cols) * m.pitch, y = Math.floor(i / m.cols) * m.pitch;
+    const dim = m.opts.dim(f);
+    m.opts.draw(ctx, x, y, m.cell, f, dim);
+    if (m.opts.mark(f)) {
+      ctx.strokeStyle = palette.fg; ctx.lineWidth = 1.5;
+      ctx.strokeRect(x - 0.25, y - 0.25, m.cell + 0.5, m.cell + 0.5);
+    }
+  });
+}
+function hit(m, e) {
+  const r = m.canvas.getBoundingClientRect();
+  const c = Math.floor((e.clientX - r.left) / m.pitch), row = Math.floor((e.clientY - r.top) / m.pitch);
+  if (c < 0 || c >= m.cols) return -1;
+  const i = row * m.cols + c;
+  return i >= 0 && i < m.items.length ? i : -1;
+}
+function hover(m, e) {
+  const i = hit(m, e), tip = $("tip");
+  if (i < 0) { tip.style.display = "none"; return; }
+  tip.innerHTML = m.opts.tip(m.items[i]);
+  tip.style.display = "block";
+  const pad = 14, tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + tw > window.innerWidth - 8) x = Math.max(8, e.clientX - tw - pad);
+  if (y + th > window.innerHeight - 8) y = Math.max(8, e.clientY - th - pad);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+
+function funcTip(f) {
+  const name = S[f[3]];
+  return "<b class=mono>" + hex(f[0]) + "</b> " + (name ? esc(name) : "") + "<br>" + esc(stateLabel(f)) +
+    ", " + fmt(f[1]) + " bytes<br><span class=muted>" + esc(S[f[4]]).slice(0, 360) + "</span>";
+}
+function pinFunc(f) {
+  pinned = f;
+  const name = S[f[3]];
+  const calls = f[9].map((k) => D.funcs[k]).map((g) => '<button type="button" data-k="' + D.funcs.indexOf(g) + '">' +
+    hex(g[0]) + (S[g[3]] ? " " + esc(S[g[3]]) : "") + "</button>").join("");
+  $("details").innerHTML = "<h3 class=mono>" + hex(f[0]) + (name ? " " + esc(name) : "") + "</h3><dl>" +
+    "<dt>State</dt><dd>" + esc(stateLabel(f)) + "</dd>" +
+    "<dt>Range</dt><dd class=mono>" + hex(f[0]) + " - " + hex(f[0] + f[1]) + " (" + fmt(f[1]) + " bytes)</dd>" +
+    "<dt>Region</dt><dd>" + esc(S[f[6]]) + "</dd>" +
+    "<dt>Why</dt><dd>" + esc(S[f[4]]) + "</dd>" +
+    (f[8] ? "<dt>Via</dt><dd>" + viaText(f[8]) + "</dd>" : "") +
+    (f[5] & F_RAN ? "<dt>Coverage</dt><dd>ran in the recorded session</dd>" : "") +
+    (calls ? "<dt>Calls</dt><dd class=links>" + calls + "</dd>" : "") + "</dl>";
+  $("details").querySelectorAll("button[data-k]").forEach((b) => b.addEventListener("click", () => pinFunc(D.funcs[+b.dataset.k])));
+  redraw();
+}
+
+function legend() {
+  const n = [C.native, C.clean, C.direct, C.indirect, C.stub];
+  const L = $("legend");
+  D.states.forEach((st, i) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("aria-pressed", "true"); b.title = st.desc;
+    const sw = document.createElement("canvas"); sw.width = 28; sw.height = 28;
+    b.appendChild(sw);
+    b.appendChild(document.createTextNode(st.label + " " + fmt(n[i]) +
+      (i === 2 ? " (" + fmt(C.uncertain) + " hollow: uncertain)" : i === 4 ? " (" + fmt(C.stub_emulation) + " dotted: emulation-backed)" : "")));
+    b.addEventListener("click", () => {
+      if (enabled.has(i)) enabled.delete(i); else enabled.add(i);
+      b.setAttribute("aria-pressed", enabled.has(i) ? "true" : "false");
+      redraw();
+    });
+    b._swatch = () => {
+      const c = sw.getContext("2d"); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, 28, 28); c.scale(2, 2);
+      drawCell(c, 1, 1, 12, [0, 0, i, 0, 0, i === 4 ? F_EMU : 0], false);
+    };
+    L.appendChild(b);
+  });
+}
+
+function regions() {
+  const host = $("regions");
+  const groups = [];
+  D.funcs.forEach((f, k) => {
+    const g = groups[groups.length - 1];
+    if (g && g.region === f[6]) g.items.push(f); else groups.push({ region: f[6], items: [f] });
+  });
+  for (const g of groups) {
+    const div = document.createElement("div"); div.className = "region";
+    const counts = [0, 0, 0, 0, 0]; g.items.forEach((f) => counts[f[2]]++);
+    const lo = g.items[0][0], last = g.items[g.items.length - 1], hi = last[0] + last[1];
+    const isVu = S[g.region].startsWith("VU ");
+    const total = g.items.length;
+    div.innerHTML = '<div class="head"><h3>' + esc(S[g.region]) + '</h3><span class="muted mono">' +
+      (isVu ? "entries " + hex(lo, 1) + "-" + hex(hi, 1) : hex(lo) + "-" + hex(hi)) + "</span><span class=muted>" +
+      fmt(total) + (isVu ? " entries" : " functions") + (counts[2] + counts[3] ? ", " + fmt(counts[2] + counts[3]) + " touching" : "") +
+      '</span><div class="bar mini">' + [0, 1, 4, 3, 2].map((s) => '<span style="width:' + (100 * counts[s] / total) +
+      "%;background:var(--s-" + KEYS[s] + ')"></span>').join("") + "</div></div>";
+    host.appendChild(div);
+    makeMap(div, g.items, {
+      label: S[g.region] + ": " + total + " squares",
+      draw: drawCell,
+      dim: (f) => !enabled.has(f[2]) || (query !== null && !query.has(f)) || (onlyRan && !(f[5] & F_RAN)),
+      mark: (f) => f === pinned,
+      tip: funcTip,
+      pin: pinFunc,
+    });
+  }
+}
+
+function coverage() {
+  if (!D.meta.coverage) return;
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "theme"; b.setAttribute("aria-pressed", "false");
+  const ran = D.funcs.filter((f) => f[5] & F_RAN).length;
+  b.textContent = "Only what ran (" + fmt(ran) + ")";
+  b.addEventListener("click", () => { onlyRan = !onlyRan; b.setAttribute("aria-pressed", String(onlyRan)); redraw(); });
+  $("search").parentElement.appendChild(b);
+}
+
+function search() {
+  const box = $("search");
+  const run = () => {
+    const q = box.value.trim().toLowerCase();
+    if (!q) { query = null; $("found").textContent = ""; redraw(); return; }
+    const m = q.match(/^(?:0x)?([0-9a-f]{3,8})$/);
+    const set = new Set();
+    if (m) {
+      const a = parseInt(m[1], 16);
+      for (const f of D.funcs) if ((a >= f[0] && a < f[0] + f[1]) || f[0].toString(16).includes(m[1])) set.add(f);
+    }
+    for (const f of D.funcs) if (S[f[3]].toLowerCase().includes(q)) set.add(f);
+    query = set;
+    $("found").textContent = fmt(set.size) + " match" + (set.size === 1 ? "" : "es");
+    redraw();
+  };
+  box.addEventListener("input", run);
+  box.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !query || !query.size) return;
+    const f = [...query][0];
+    pinFunc(f);
+    for (const m of maps) {
+      const i = m.items.indexOf(f);
+      if (i >= 0) { m.canvas.scrollIntoView({ block: "center", behavior: "smooth" }); break; }
+    }
+  });
+}
+
+const IRX_STATES = [["recompiled", "Recompiled", "--s-clean"], ["interpreted", "Interpreted fallback", "--s-direct"],
+  ["overridden", "Export natively overridden", "--s-native"]];
+function irx() {
+  const ic = D.irx_counts;
+  const total = ic.recompiled + ic.interpreted + ic.overridden;
+  $("irx-sub").textContent = D.irx.length ? fmt(total) + " functions in " + D.irx.length +
+    " IRX modules recompiled by tools/iop_recomp.py. They still run on the emulated IOP kernel (see the badge above)." :
+    "No generated/iop/ tree was found: run scripts/iop_recomp.sh, then this tool again.";
+  $("irx-legend").innerHTML = IRX_STATES.map(([k, l, v]) => '<span class="badge"><i style="background:var(' + v +
+    ');border-radius:2px"></i>' + l + " " + fmt(ic[k] || 0) + "</span>").join("");
+  for (const m of D.irx) {
+    const card = document.createElement("div"); card.className = "card";
+    const n = [0, 0, 0]; m.funcs.forEach((f) => n[f[2]]++);
+    card.innerHTML = "<h3>" + esc(m.module) + '</h3><p class="muted mono" style="margin:2px 0 6px">base ' +
+      hex(m.base, 5) + ", " + fmt(m.funcs.length) + " functions" + (n[1] ? ", " + n[1] + " interpreted" : "") + "</p>";
+    $("irx").appendChild(card);
+    const colors = IRX_STATES.map((s) => s[2]);
+    makeMap(card, m.funcs, {
+      label: m.module + ": " + m.funcs.length + " functions",
+      draw: (ctx, x, y, s, f, dim) => {
+        ctx.globalAlpha = dim ? 0.13 : 1; ctx.fillStyle = css(colors[f[2]]); ctx.fillRect(x, y, s, s);
+        if (f[2] === 1) { ctx.strokeStyle = palette.page; ctx.beginPath(); ctx.moveTo(x, y + s); ctx.lineTo(x + s, y); ctx.stroke(); }
+        ctx.globalAlpha = 1;
+      },
+      dim: () => false,
+      mark: (f) => f === pinned,
+      tip: (f) => "<b>" + esc(m.module) + "</b> <span class=mono>" + hex(f[0], 5) + "</span>, " + fmt(f[1]) +
+        " bytes<br>" + IRX_STATES[f[2]][1] + "<br><span class=muted>" + esc(S[f[3]]) + "</span>",
+      pin: (f) => {
+        pinned = f;
+        $("details").innerHTML = "<h3>" + esc(m.module) + " <span class=mono>" + hex(f[0], 5) + "</span></h3><dl><dt>State</dt><dd>" +
+          IRX_STATES[f[2]][1] + "</dd><dt>Size</dt><dd>" + fmt(f[1]) + " bytes</dd><dt>Why</dt><dd>" + esc(S[f[3]]) + "</dd></dl>";
+        redraw();
+      },
+    });
+  }
+}
+
+function chart() {
+  const H = D.history || [];
+  const W = 640, Hh = 220, l = 46, r = 14, t = 14, b = 30;
+  const pts = H.map((h) => ({ d: h.date.slice(0, 10), all: h.counts.direct + h.counts.indirect, dir: h.counts.direct }));
+  const max = Math.max(10, ...pts.map((p) => p.all)) * 1.1;
+  const X = (i) => pts.length < 2 ? l + (W - l - r) / 2 : l + i * (W - l - r) / (pts.length - 1);
+  const Y = (v) => t + (Hh - t - b) * (1 - v / max);
+  let s = '<svg viewBox="0 0 ' + W + " " + Hh + '" role="img" aria-label="Functions touching emulation per run">';
+  for (let k = 0; k <= 4; k++) {
+    const v = Math.round(max * k / 4);
+    s += '<line class="grid" x1="' + l + '" x2="' + (W - r) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/>' +
+      '<text x="' + (l - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + fmt(v) + "</text>";
+  }
+  const line = (key, color, dash) => {
+    if (pts.length > 1) s += '<polyline fill="none" stroke="var(' + color + ')" stroke-width="2.5"' + (dash ? ' stroke-dasharray="5 4"' : "") +
+      ' points="' + pts.map((p, i) => X(i) + "," + Y(p[key])).join(" ") + '"/>';
+    pts.forEach((p, i) => { s += '<circle cx="' + X(i) + '" cy="' + Y(p[key]) + '" r="4" fill="var(' + color + ')"><title>' +
+      p.d + ": " + fmt(p[key]) + "</title></circle>"; });
+  };
+  line("all", "--s-direct", false);
+  line("dir", "--s-native", true);
+  const step = Math.max(1, Math.ceil(pts.length / 6));
+  pts.forEach((p, i) => { if (i % step === 0 || i === pts.length - 1) s += '<text x="' + X(i) + '" y="' + (Hh - 10) + '" text-anchor="middle">' + p.d + "</text>"; });
+  s += "</svg>";
+  const note = pts.length < 2 ? '<p class="muted">One run so far: the line appears with the next one.</p>' : "";
+  $("chart").innerHTML = s + '<div class="legend"><span class="badge"><i style="background:var(--s-direct)"></i>direct + indirect</span>' +
+    '<span class="badge"><i style="background:var(--s-native)"></i>direct only (dashed)</span></div>' + note;
+}
+
+function texts() {
+  $("rules").innerHTML = D.heuristics.rules.map(([h, t]) => "<li><b>" + esc(h) + ".</b> " + esc(t) + "</li>").join("");
+  $("blind").innerHTML = D.heuristics.blind.map((t) => "<li>" + esc(t) + "</li>").join("");
+  $("kinds").innerHTML = Object.entries(D.kinds).map(([k, n]) => "<li>" + esc(k) + ": " + fmt(n) + " functions</li>").join("");
+}
+
+function redraw() {
+  readPalette();
+  maps.forEach(layout);
+  document.querySelectorAll("#legend button").forEach((b) => b._swatch && b._swatch());
+}
+
+function theme() {
+  const btn = $("theme"), root = document.documentElement;
+  const order = ["auto", "light", "dark"];
+  let mode = "auto";
+  try { mode = localStorage.getItem("sc3map-theme") || "auto"; } catch (e) { mode = "auto"; }
+  const apply = () => {
+    if (mode === "auto") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", mode);
+    btn.textContent = "Theme: " + mode;
+    redraw();
+  };
+  btn.addEventListener("click", () => {
+    mode = order[(order.indexOf(mode) + 1) % order.length];
+    try { localStorage.setItem("sc3map-theme", mode); } catch (e) { }
+    apply();
+  });
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => redraw());
+  apply();
+}
+
+header(); legend(); regions(); irx(); chart(); texts(); search(); coverage();
+theme();
+let resizeTimer = 0;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(redraw, 120); });
+</script>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
     main()
