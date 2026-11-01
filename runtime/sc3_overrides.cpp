@@ -1636,14 +1636,13 @@ namespace
         sc3::installNativeVu1(runtime, nativeGs);
         sc3::installNativeVu0(runtime);
         installMovieCounters(runtime);
-        // SC3_NATIVE_MOVIES=1: full-screen movies shown as the native renderer's held backdrop instead of replacing the
-        // presented frame (the presentation override, which needs no native renderer), Sofdec's decoder set-up without
-        // libmpeg or the IPU.
-        if (const char *native = std::getenv("SC3_NATIVE_MOVIES"); native && native[0] == '1')
+        // Full-screen movies as the native renderer's held backdrop, Sofdec's decoder set-up without libmpeg or the IPU.
+        // SC3_NATIVE_MOVIES=0 (or a GS renderer without the native renderer): the presentation override instead.
+        if (const char *native = std::getenv("SC3_NATIVE_MOVIES"); !native || native[0] != '0')
         {
             g_nativeMovies = ps2x::native::Renderer::instance().enabled();
             if (!g_nativeMovies)
-                std::cerr << "[sc3] SC3_NATIVE_MOVIES needs the native renderer: movies replace the presented frame" << std::endl;
+                std::cerr << "[sc3] native movies need the native renderer: movies replace the presented frame" << std::endl;
         }
         std::cerr << "[sc3] movies: " << (g_nativeMovies ? "native (held backdrop)" : "presentation override") << std::endl;
         if (g_nativeMovies)
