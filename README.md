@@ -92,7 +92,7 @@ PS2Recomp's `sc3/windows` branch (`sc3/native-vu1`, i.e. `native/renderer` plus 
 | Materials and 3D meshes from offline packs, drawn at the game's per-object hooks; no VIF stream read | ⏳ |
 | 2D (menus, HUD, fonts) built in C++ from the game's variables, no GIF packet built or read | ⏳ |
 | Shadow volumes, glow and the sun's depth probe as native passes | ⏳ |
-| Movies drawn as native pictures | ⏳ |
+| Movies as native pictures: full-screen ones the native renderer's backdrop, no libmpeg or IPU; menu previews still uploaded by the game until its sprite builder is C++ | 🔧 |
 | The frame's end written to the game natively (SC3 waits on the GS's FINISH), GS DMA and VIF0 left unread | ⏳ |
 | No GS front end, no copy of GS memory: the native renderer draws and presents the whole frame | ⏳ |
 | IOP kernel layer (interrupts, timers, SIF) under the recompiled IOP modules: still PS2Recomp's model | ⏳ |
@@ -257,6 +257,7 @@ player 2:
 | `PS2X_GS_SCALE=<n>` | Internal resolution multiplier of the native GS back end |
 | `PS2X_IOP_NATIVE=0` | Interpret the IRX modules instead of running their recompiled code |
 | `PS2X_IOP_WALLCLOCK=0` | Run the IOP on the EE cycles the game accounts instead of the host's clock |
+| `SC3_NATIVE_MOVIES=0` | Show full-screen movies by replacing the presented frame (the presentation override) instead of as the native renderer's backdrop, and set up Sofdec's decoders through the MPEG HLE |
 | `SC3_NATIVE_VU1=0` | Run the VU1 microprograms on the emulated VU1 instead of in C++ |
 | `SC3_NATIVE_VU1_PORT=0\|check` | Run the VU1 programs on the native sandbox (the AOT microcode on PS2Recomp's interpreter) instead of in C++, or both, compared |
 | `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,…>` | Keep those entries on the sandbox |
