@@ -70,6 +70,7 @@ namespace sc3
         {
             uint32_t q[19][4] = {};
             bool valid = false;
+            bool shine = false; // 0x10AFE8's layout, loaded by A:0x1C80
             // As the VU reads a float: no infinity or NaN (exponent 255 is the largest magnitude), no denormals.
             float f(int qword, int lane) const
             {
@@ -147,6 +148,47 @@ namespace sc3
         };
 
         State g_state;
+
+        // SC3_NATIVE_MESHES_ROUTINES=<a,b,...> or @file (read every 64 frames): only those routines drawn natively.
+        std::string g_routinesPath, g_routinesSpec;
+        std::vector<uint32_t> g_routines;
+        uint64_t g_traceFrame = ~0ull;
+
+        void parseRoutines(const std::string &spec)
+        {
+            g_routines.clear();
+            std::string item;
+            for (char c : spec + ",")
+            {
+                if (c == ',' || c == ' ' || c == '\n')
+                {
+                    if (!item.empty())
+                        g_routines.push_back(static_cast<uint32_t>(std::strtoul(item.c_str(), nullptr, 16)));
+                    item.clear();
+                }
+                else
+                    item += c;
+            }
+        }
+
+        void followRoutines(uint64_t frame)
+        {
+            if (g_routinesPath.empty() || (frame & 63u) != 0u)
+                return;
+            std::ifstream file(g_routinesPath);
+            std::string spec;
+            std::getline(file, spec);
+            if (spec == g_routinesSpec)
+                return;
+            g_routinesSpec = spec;
+            parseRoutines(spec);
+            std::fprintf(stderr, "[sc3:mesh] frame %llu: native routines '%s'\n", static_cast<unsigned long long>(frame), spec.c_str());
+        }
+
+        bool routineAllowed(uint32_t routine)
+        {
+            return g_routines.empty() && g_routinesPath.empty() ? true : std::find(g_routines.begin(), g_routines.end(), routine) != g_routines.end();
+        }
 
         uint32_t peek32(uint32_t address)
         {
@@ -272,6 +314,30 @@ namespace sc3
         // The common setup (0x10ADF8, then 0x10B2F8, 0x10AF28, 0x10AFA8); false for the shine setups (0x10AFE8, 0x10B160).
         bool buildHeader(uint32_t flags, uint32_t jump, Header &h)
         {
+            if ((flags & kFlagShineA) && (flags & kFlagProgramA))
+            {
+                Header out = h;
+                copyQwords(out, 0, 0x100u, 4);
+                copyQwords(out, 4, 0x2C0u, 3);
+                copyQwords(out, 7, 0x180u, 3);
+                copyQwords(out, 10, 0x270u, 1);
+                copyQwords(out, 11, 0x2F0u, 1);
+                out.q[14][0] = 0x8000u;
+                out.q[14][1] = sp32(0x36Cu) != 0u ? 0x19Fu : 0u;
+                out.q[14][2] = jump;
+                out.q[14][3] = sp32(0x1ACu);
+                const float u = spf(0x2A0u), v = spf(0x2A4u);
+                setFloat(out, 12, 0, u * -0.5f);
+                setFloat(out, 12, 1, v * -0.5f);
+                out.q[12][2] = 0u;
+                setFloat(out, 13, 0, -(spf(0x300u) + 0.5f) * u);
+                setFloat(out, 13, 1, -(spf(0x304u) + 0.5f) * v);
+                setFloat(out, 13, 2, 1.0f);
+                out.valid = true;
+                out.shine = true;
+                h = out;
+                return true;
+            }
             if (flags & (kFlagShineA | kFlagShineB))
                 return false;
             Header out = h;
@@ -316,6 +382,7 @@ namespace sc3
                 setFloat(out, 4, 1, spf(0x2B4u) * spf(0x2A4u));
             }
             out.valid = true;
+            out.shine = false;
             h = out;
             return true;
         }
@@ -379,7 +446,7 @@ namespace sc3
         // (F from the clamped fog term, else the vertex's own), its texture coordinates scrolled by vf24.xy.
         struct Shade
         {
-            bool lit = false, fog = false, scroll = false;
+            bool lit = false, fog = false, scroll = false, environment = false;
         };
 
         bool routineShade(uint32_t routine, Shade &shade)
@@ -391,6 +458,8 @@ namespace sc3
             case 0xC18u: shade = {false, false, false}; return true;
             case 0x1558u: shade = {false, true, true}; return true;
             case 0x1730u: shade = {false, false, true}; return true;
+            case 0xA48u: shade = {false, true, false}; return true;
+            case 0x1D28u: shade = {false, true, false, true}; return true;
             default: return false;
             }
         }
@@ -403,8 +472,53 @@ namespace sc3
             uint32_t w; // XYZF2's last word: bit 15 ADC, bits 4-11 F
         };
 
+        // A:0x1D28 after A:0x1C80 (0x10AFE8's header): texture coordinates from the normal plus the position times
+        // vf20 through vf25-27 (an environment map), one colour for all (vf21's words), fogged.
+        void shadeEnvironment(const Header &h, const std::vector<In> &in, std::vector<Out> &out)
+        {
+            out.resize(in.size());
+            bool outside[3] = {false, false, false};
+            for (size_t k = 0; k < in.size(); ++k)
+            {
+                const In &v = in[k];
+                float p[4], e[4], r[4];
+                for (int c = 0; c < 4; ++c)
+                    p[c] = h.f(0, c) * v.position[0] + h.f(1, c) * v.position[1] + h.f(2, c) * v.position[2] + h.f(3, c);
+                const float q = 1.0f / p[3];
+                const float pos[4] = {v.position[0], v.position[1], v.position[2], 0.0f};
+                const float nrm[4] = {v.normal[0], v.normal[1], v.normal[2], 0.0f};
+                for (int c = 0; c < 4; ++c)
+                    e[c] = nrm[c] + pos[c] * h.f(11, c);
+                for (int c = 0; c < 4; ++c)
+                    r[c] = h.f(4, c) * e[0] + h.f(5, c) * e[1] + h.f(6, c) * e[2];
+                const float s0 = h.f(13, 0) + r[0] * h.f(12, 0), t0 = h.f(13, 1) + r[1] * h.f(12, 1);
+                const float position[4] = {p[0] * q, p[1] * q, p[2] * q, p[3]};
+                float g[4];
+                for (int i = 0; i < 4; ++i)
+                    g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) +
+                               static_cast<double>(sat(static_cast<double>(position[i]) * h.f(8, i))));
+                outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
+                const bool clipped = outside[0] || outside[1] || outside[2];
+                Out &o = out[k];
+                o.s = s0 * q;
+                o.t = t0 * q;
+                o.q = q;
+                for (int i = 0; i < 4; ++i)
+                    o.rgba[i] = static_cast<int32_t>(h.q[10][i]);
+                for (int i = 0; i < 3; ++i)
+                    o.xyz[i] = ftoi(position[i], 16.0f);
+                const float fog = std::max(std::min(g[3], h.f(9, 0)), h.f(9, 1));
+                o.w = ((((clipped ? 0x8000u : 0u) | v.flags) & 0x8000u) + (static_cast<uint32_t>(ftoi(fog, 16.0f)) & 0xFFFFu)) & 0xFFFFu;
+            }
+        }
+
         void shade(const Header &h, Shade mode, const std::vector<In> &in, std::vector<Out> &out)
         {
+            if (mode.environment)
+            {
+                shadeEnvironment(h, in, out);
+                return;
+            }
             out.resize(in.size());
             bool outside[3] = {false, false, false};
             for (size_t k = 0; k < in.size(); ++k)
@@ -536,11 +650,12 @@ namespace sc3
             State &s = g_state;
             uint8_t *vu = s.checkMemory.data();
             auto put = [vu](uint32_t qword, const void *words) { std::memcpy(vu + (qword & 0x3FFu) * 16u, words, 16u); };
-            const uint32_t pc = 0x10u;
+            const uint32_t pc = h.shine ? 0x1C80u : 0x10u;
+            const int control = h.shine ? 14 : 17;
             Header setup = h;
-            setup.q[17][1] = 0u;
-            setup.q[17][2] = routine >> 3;
-            for (int i = 0; i < 19; ++i)
+            setup.q[control][1] = 0u;
+            setup.q[control][2] = routine >> 3;
+            for (int i = 0; i < control + 2 && i < 19; ++i)
                 put(0x1ADu + static_cast<uint32_t>(i), setup.q[i]);
             put(0u, tag);
             for (size_t k = 0; k < in.size(); ++k)
@@ -709,7 +824,11 @@ namespace sc3
             Shade mode;
             const bool header = sp32(0x368u) != 0u;
             noteState(flags, routine >> 3);
-            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || (header && setupOf(flags) != 0x10u) || sp32(0x350u) != 0u || !s.header.valid)
+            if (s.frames == g_traceFrame)
+                std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
+                             getRegU32(ctx, 31), sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
+            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) || (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
+                s.header.shine != mode.environment)
             {
                 ++s.stats.unsupported;
                 ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | routine];
@@ -825,6 +944,9 @@ namespace sc3
             State &s = g_state;
             const uint32_t flags = getRegU32(ctx, 5);
             ++s.stats.chainParts;
+            if (s.frames == g_traceFrame)
+                std::fprintf(stderr, "[sc3:mesh] trace chain %#x flags %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", getRegU32(ctx, 4), flags,
+                             sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
             selfContained(flags);
             noteState(flags, (flags & 0xFFFFu) >> 3);
             callOriginal(kChainPart, rdram, ctx, runtime);
@@ -929,6 +1051,9 @@ namespace sc3
         void report()
         {
             State &s = g_state;
+            followRoutines(s.frames + 1u);
+            if (s.frames + 1u == g_traceFrame)
+                std::fprintf(stderr, "[sc3:mesh] trace frame %llu kicked\n", static_cast<unsigned long long>(s.frames + 1u));
             if (++s.frames % 250u != 0u)
                 return;
             Stats &t = s.stats;
@@ -1044,6 +1169,15 @@ namespace sc3
             return;
         }
         s.mode = std::strcmp(mode, "check") == 0 ? Mode::Check : Mode::On;
+        if (const char *routines = std::getenv("SC3_NATIVE_MESHES_ROUTINES"); routines && *routines)
+        {
+            if (*routines == '@')
+                g_routinesPath = routines + 1;
+            else
+                parseRoutines(routines);
+        }
+        if (const char *trace = std::getenv("SC3_MESH_TRACE"); trace && *trace)
+            g_traceFrame = std::strtoull(trace, nullptr, 10);
         s.runtime = &runtime;
         s.rdram = runtime.memory().getRDRAM();
         s.scratchpad = runtime.memory().getScratchpad();
