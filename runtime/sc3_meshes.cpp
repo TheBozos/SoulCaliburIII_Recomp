@@ -118,6 +118,7 @@ namespace sc3
         struct Stats
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
+            uint64_t chainNotInPack = 0;
             uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
@@ -522,6 +523,7 @@ namespace sc3
             case 0xA48u: shade = {false, true, false}; return true;
             case 0x1D28u: shade = {false, true, false, true}; return true;
             case 0x1AB8u: shade = {true, false, false, false, true}; return true;
+            case 0x18C0u: shade = {true, true, false, false, true}; return true;
             case 0x1F00u: shade = {false, false, false, true}; return true;
             default: return false;
             }
@@ -1325,7 +1327,7 @@ namespace sc3
         }
 
         // 0x1088A0 drains the parts deferred for clipping against the near plane: each one's raw data goes to the scratchpad,
-        // 0x10B970 clips it on the EE and 0x10B7E0 sends the clipped strip with the part's routine and no header or material
+        // 0x10B970 clips it on the EE and 0x10B7E0 sends the clipped polygon as a fan with the part's routine and no header or material
         // (the VU keeps those of the last part). Its loop's s0 is one entry past the part's {flags, address, qwc}.
         void clipper(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -1356,6 +1358,7 @@ namespace sc3
             if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != s.clip.qwc * 16u || !readVertices(*object, in, tag))
                 return false;
             tag[0] = (tag[0] & 0xFFFF8000u) | count;
+            tag[1] = (tag[1] & 0xFFFC7FFFu) | 0x28000u;
             in.resize(count);
             for (uint32_t k = 0; k < count; ++k)
             {
@@ -1489,7 +1492,10 @@ namespace sc3
                 chain = image.file->object(list - image.base);
             const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
             if (!batches || batches->size < 8u)
+            {
+                ++s.stats.chainNotInPack;
                 return false;
+            }
             struct Batch
             {
                 std::vector<In> in;
@@ -1504,7 +1510,10 @@ namespace sc3
                 const packs::MeshObject *object = image.file->object(entry[0]);
                 if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != entry[1] * 16u ||
                     !readVertices(*object, parts[i].in, parts[i].tag))
+                {
+                    ++s.stats.chainNotInPack;
                     return false;
+                }
                 parts[i].offset = entry[0];
             }
             std::vector<Sc3Draw> draws(parts.size());
@@ -1709,7 +1718,9 @@ namespace sc3
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedToVu1),
                          static_cast<unsigned long long>(t.clippedDropped));
             if (!left.empty())
-                std::fprintf(stderr, "[sc3:mesh] routines left to VU1:%s\n", left.c_str());
+                std::fprintf(stderr, "[sc3:mesh] routines left to VU1:%s (chain parts not in the pack %llu)\n", left.c_str(),
+                             static_cast<unsigned long long>(t.chainNotInPack));
+            t.chainNotInPack = 0;
             if (t.inheritedAlpha + t.inheritedTest + t.unknownAlpha + t.unknownTest != 0u)
                 std::fprintf(stderr, "[sc3:mesh] native parts whose material sets no ALPHA %llu (no earlier one %llu), no TEST %llu (no earlier one %llu)\n",
                              static_cast<unsigned long long>(t.inheritedAlpha + t.unknownAlpha), static_cast<unsigned long long>(t.unknownAlpha),
