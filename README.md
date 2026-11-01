@@ -10,13 +10,10 @@ Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on 
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-17a35b)
 ![Status](https://img.shields.io/badge/status-playable%2C%20in%20testing-e8a33c)
 
-<img src="docs/screenshots/fight.jpg" width="49%"> <img src="docs/screenshots/title_screen.jpg" width="49%">
-<img src="docs/screenshots/character_select.jpg" width="49%"> <img src="docs/screenshots/versus.jpg" width="49%">
-<img src="docs/screenshots/chronicles_field.jpg" width="49%"> <img src="docs/screenshots/stage_select.jpg" width="49%">
-<img src="docs/screenshots/fight_2.jpg" width="49%"> <img src="docs/screenshots/opening_movie.jpg" width="49%">
+<img src="docs/screenshots/title_screen.jpg" width="70%" alt="Soulcalibur III's title screen">
 
-<sub>Captured from the running port: native OpenGL GS renderer at twice the internal resolution
-(<code>PS2X_GS_SCALE=2</code>, 1280x896), scaled to 960x720.</sub>
+<sub>Captured from the running port: native OpenGL renderer at twice the internal resolution
+(<code>PS2X_GS_SCALE=2</code>, 1280x896).</sub>
 
 </div>
 
@@ -30,9 +27,9 @@ Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on 
 
 ## Status
 
-**Playable.** Every mode has been played through with scripted input, and a human played long sessions on
-2026-11-01 ("it's playable"). The port runs on PS2Recomp's native
-target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules recompiled, the IOP and the SPU2 on the wall clock, the frame loop and the movies on real time. Fights run at about
+**Playable, at 60 frames per second.** A human played long sessions on 2026-11-01 ("it's playable"). The port runs
+on PS2Recomp's native target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules
+recompiled, the IOP and the SPU2 on the wall clock, the frame loop and the movies on real time. Fights run at about
 60 frames per second on a Ryzen 7 7800X3D, with music and voices. Every mode has been played through with scripted input: Tales
 of Souls to the credits, Chronicles of the Sword battles on the field map, World Competition, Soul Arena, Museum,
 Character Creation, Shop and Options, with saves loaded back after a restart. The game runs its own `rand`: the
@@ -46,7 +43,7 @@ loading screen or a screen change.
 **Now: removing the last of the emulation.** The goal, set by the project's owner for every PS2Recomp port, is no
 emulated PS2 hardware at all, not even a small part, and never kept because it is faster: no GS front end or GS
 memory, no GIF or VIF packet read, no VU or SPU2 model, frames on the PC's clock. Twisted Metal: Black's port reached
-it first and SC3 follows its route (see [Emulation left](#emulation-left) and the [function map](#function-map)).
+it first and SC3 follows its route (see the layers below and the [function map](#function-map)).
 
 | Milestone | |
 |---|:---:|
@@ -76,68 +73,33 @@ it first and SC3 follows its route (see [Emulation left](#emulation-left) and th
 
 ✅ works · 🔧 in progress · ⏳ not reached yet
 
-### Native target
+**Native port** (no PS2 hardware emulation left, not even a small part: the shared goal of PS2Recomp's ports, and
+never kept because it is faster). Native means the game's draws built straight from its own data, its sound mixed
+at its sound library's API, and its frames on the PC's clock, with no PS2 hardware model in between. SC3 pins
+PS2Recomp's `sc3/native-vu1` branch (`native/renderer` plus SC3's fixes); the details of each layer are in
+[RECOMP_NOTES.md](RECOMP_NOTES.md#native-target-as-of-2026-11-01).
 
-The port runs on the native target the other PS2Recomp ports use. It pins PS2Recomp's `sc3/native-vu1` integration
-branch: `native/renderer` plus the SC3 fixes below, on their way into `native/renderer`.
+| Layer | |
+|---|:---:|
+| IOP modules (CRI_ADXI, LIBSD, SDRDRV, NUSOUND, MCMAN, MCSERV, PADMAN, SIO2MAN) recompiled to C++, none interpreted (`scripts/iop_recomp.sh`) | ✅ |
+| Sound and IOP on the PC's clock (`PS2X_SPU2_WALLCLOCK=1`, `PS2X_IOP_WALLCLOCK=1`) | ✅ |
+| No paraLLEl-GS: OpenGL on the GPU (the GS native back end), higher internal resolution (`PS2X_GS_SCALE`) | ✅ |
+| Frame loop and one-shot movies on the PC's clock (`FramePacer`; `SC3_NATIVE_FRAMES=0`: the vblanks) | ✅ |
+| Every VU1 and VU0 microprogram translated to C++ (`tools/vu1_lift.py`), no VU interpreter and no sandbox | ✅ |
+| VU1 programs draw from their computation: no GIF packet, no GS register replay (`runtime/sc3_draw_sink.cpp`) | ✅ |
+| No SPU2 emulation: libsd's calls played by PS2Recomp's native mixer, the SPU2 absent | 🔧 |
+| Textures from an offline native pack of your disc, looked up by the game's own keys | 🔧 |
+| Materials and 3D meshes from offline packs, drawn at the game's per-object hooks; no VIF stream read | ⏳ |
+| 2D (menus, HUD, fonts) built in C++ from the game's variables, no GIF packet built or read | ⏳ |
+| Shadow volumes, glow and the sun's depth probe as native passes | ⏳ |
+| Movies drawn as native pictures | ⏳ |
+| The frame's end written to the game natively (SC3 waits on the GS's FINISH), GS DMA and VIF0 left unread | ⏳ |
+| No GS front end, no copy of GS memory: the native renderer draws and presents the whole frame | ⏳ |
+| IOP kernel layer (interrupts, timers, SIF) under the recompiled IOP modules: still PS2Recomp's model | ⏳ |
 
-- **Native GS renderer**: PS2Recomp's GS back end translates the GS stream into OpenGL draws (`GSNativeBackend`),
-  on its own model of GS memory (see the emulation left, below). SC3 needed these
-  fixes in it: pixels sampled at their integer coordinates as the GS does (a one-pixel seam every 64 pixels and a
-  soft picture before), HIGHLIGHT and HIGHLIGHT2 adding the vertex alpha at its own scale, blending with Ad at the
-  GS's scale, draws testing against the Z buffer their ZBUF names (the shadow pass darkened the whole frame), and
-  for the character shadows: blends with COLCLAMP off keeping the low 8 bits (the shadow volumes count by wrapping
-  past white), a colour buffer read as Z in the Z format's block order, and untextured draws at their own colour.
-- **Higher internal resolution**: `PS2X_GS_SCALE=2` draws at 1280x896. The screenshots above come from it.
-- **IOP modules recompiled**: `scripts/iop_recomp.sh` turns the eight IRX modules into native code (813 functions,
-  none left to the interpreter); `PS2X_IOP_NATIVE=0` interprets them again.
-- **SPU2 on the wall clock** by default (`PS2X_SPU2_WALLCLOCK=1` in the scripts), with an AutoDMA fix so the ADX
-  stream gets each half's interrupt in time, and kept within 512 samples of the IOP clock.
-- **IOP on the wall clock** by default (`PS2X_IOP_WALLCLOCK=1`, set by the game override; `=0` puts it back on the
-  EE cycles the game accounts): its timers, vblank interrupts and sound driver ticks follow real time, at no cost in
-  fps (59.8 capped, 58.6 with the fight uncapped, against 59.3 and 57.8 on the EE clock).
-- **Frame loop on real time** by default: the main loop's frames are paced by PS2Recomp's FramePacer and shown when
-  the game ends them, not on the vblank grid (`SC3_NATIVE_FRAMES=0` goes back to it). One-shot movies too: their loop
-  ends its frames in a vsync wait of CRI's ADXM, which the override turns into the same native frame end, so they
-  play at their 29.97 pictures a second on the host's clock, with their sound in step. `PS2X_FRAME_CAP` sets the cap
-  (60 by default, 0 = unlimited).
-- **VU1 microprograms in C++** by default: PS2Recomp's `Vu1StreamAdapter` reads every VIF1 stream and, at each
-  MSCAL, runs the program as C++ on its copy of VU1 memory, on the VIF1 thread. The programs draw from what they
-  compute: no GIF packet is written, each vertex goes to `runtime/sc3_draw_sink.cpp` as it is computed, the drawing
-  registers come from the game's own material blocks in its VIF data, decoded in C++, and the triangles go to the GL
-  back end at their place in the GS stream (`Renderer::drawGs`); `SC3_NATIVE_VU1_DIRECT=0` goes back to the packets.
-  SC3's two programs, A (stage, props, sky, floor,
-  reflection, weapons, shine) and B (fighters), are written as C++ by PS2Recomp's `tools/vu1_lift.py` from the microcode
-  `ps2_vu_aot` compiled (`scripts/recomp.sh`, `generated/vu1port/`), with what VU1's pipeline makes timing-dependent
-  worked out for every path; the fighters' skinned bodies (B:0x1388) keep their hand-written port
-  (`runtime/sc3_vu1_port.cpp`). Every MSCAL leaves exactly what the sandbox (the AOT-compiled microcode on
-  PS2Recomp's VU1 interpreter) leaves: packets, VU memory, registers, flags and cycles.
-  `SC3_NATIVE_VU1_PORT=0` puts every program back on the sandbox, `=check` runs both and compares,
-  `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,...>` keeps some entries on it, `SC3_NATIVE_VU1=0` gives everything back to the
-  emulated VU1. The VU0 microprograms the EE calls with VCALLMS (the math library, about 370,000 calls a second in
-  fights) run as C++ written the same way, in the interpreter's place (`runtime/sc3_vu0.cpp`; `SC3_NATIVE_VU0=0` puts
-  them back, `=check` compares).
-  The regression route holds 60.0 fps capped; uncapped fights run about 62.5 fps drawing directly (61 from the packets), against 55.8 with everything on
-  the sandbox and VU0's interpreter.
-- **Speed**: the regression route runs at 59.6 fps (58.2 on the vblank grid), with 5 frames over 25 ms instead of
-  about 590; uncapped (`PS2X_FRAME_CAP=0`) it reaches 90 GS frames per second, 112 game frames per second.
+✅ works · 🔧 in progress · ⏳ not reached yet
 
-### Emulation left
-
-What still models the PS2 rather than doing the job natively, in the order the ports work through it:
-
-| | Where SC3 stands | What remains |
-|---|:---:|---|
-| 1. VU1 programs | 🔧 | Every program runs as C++ (`tools/vu1_lift.py`), still with the microcode's own semantics (VU registers, flags, cycles, VU memory) on the VIF stream's VU memory. Their 3D is drawn natively: triangles from the computation, the material from the game's A+D blocks decoded in C++ (the game keeps its materials only as GS register words), no GIF packet, GS front end or register replay. The render target and the global registers (FRAME, ZBUF, offset, scissor, TEXA, FOGCOL, dithering) are still the GS state where the draw sits in the stream. |
-| 2. GS front end and the native back end's GS model | ⏳ | The GL back end keeps GS memory, its swizzled layouts, CLUT loads, the texture buffer model, page coherence between targets and memory, and shows the frame by reading DISPFB. Everything SC3 sends besides the VU1 3D goes through the GS front end's state machine: 2D, menus, HUD, the frame copies and post passes, the shadow volumes. |
-| 3. VIF and DMA | ⏳ | VIF1 still unpacks the game's packets into VU memory and the DMA chains are walked as the DMAC would; the programs read their input from there, not from the game's data directly. |
-| 4. VU0 | 🔧 | The microprograms (VCALLMS) run as C++ lifted the same way (microcode semantics); the VU0 macro-mode instructions in the EE code are recompiled one by one. |
-| 5. Sound | 🔧 | The SPU2 is emulated (voices, ADMA, mixing), on the host's clock; the game's IRX modules are recompiled but run on the emulated IOP kernel. Movie soundtracks are host audio. In progress: libsd's exports taken over by PS2Recomp's native mixer (the one Dark Cloud and Twisted Metal: Black use) and the SPU2 absent. |
-| 6. Vblank | 🔧 | Frames and movies are paced on real time (FramePacer, the frame end and ADXM's vsync wait answered by the override), but the vblank and GS interrupts are still raised on EE time and the game's handlers run on them. |
-
-✅ done · 🔧 partly · ⏳ to do
-
-The plan to clear rows 1 to 3 and the GS front end, in order, each step leaving the game playable and checked
+The order of the remaining work, each step leaving the game playable and checked
 picture by picture against the current path: textures, then materials, from offline packs converted from your own
 disc (the game stores both only as ready-made GS and VIF data; the packs stay in the build tree, never in the
 repository); meshes from a pack at the game's per-object hooks, with the vertex programs as plain C++; the 2D

@@ -500,6 +500,52 @@ Recompiled functions return early at scheduler checkpoints with `ctx->pc` inside
 a guest function may only read state on entry, never `$v0` after the call. Overrides registered with
 `registerFunction` only catch dispatched calls, not direct calls between recompiled functions.
 
+## Native target (as of 2026-11-01)
+
+The port runs on the native target the other PS2Recomp ports use. It pins PS2Recomp's `sc3/native-vu1` integration
+branch: `native/renderer` plus the SC3 fixes below, on their way into `native/renderer`.
+
+- **Native GS renderer**: PS2Recomp's GS back end translates the GS stream into OpenGL draws (`GSNativeBackend`),
+  on its own model of GS memory (see the native layers in the README). SC3 needed these
+  fixes in it: pixels sampled at their integer coordinates as the GS does (a one-pixel seam every 64 pixels and a
+  soft picture before), HIGHLIGHT and HIGHLIGHT2 adding the vertex alpha at its own scale, blending with Ad at the
+  GS's scale, draws testing against the Z buffer their ZBUF names (the shadow pass darkened the whole frame), and
+  for the character shadows: blends with COLCLAMP off keeping the low 8 bits (the shadow volumes count by wrapping
+  past white), a colour buffer read as Z in the Z format's block order, and untextured draws at their own colour.
+- **Higher internal resolution**: `PS2X_GS_SCALE=2` draws at 1280x896. The screenshots above come from it.
+- **IOP modules recompiled**: `scripts/iop_recomp.sh` turns the eight IRX modules into native code (813 functions,
+  none left to the interpreter); `PS2X_IOP_NATIVE=0` interprets them again.
+- **SPU2 on the wall clock** by default (`PS2X_SPU2_WALLCLOCK=1` in the scripts), with an AutoDMA fix so the ADX
+  stream gets each half's interrupt in time, and kept within 512 samples of the IOP clock.
+- **IOP on the wall clock** by default (`PS2X_IOP_WALLCLOCK=1`, set by the game override; `=0` puts it back on the
+  EE cycles the game accounts): its timers, vblank interrupts and sound driver ticks follow real time, at no cost in
+  fps (59.8 capped, 58.6 with the fight uncapped, against 59.3 and 57.8 on the EE clock).
+- **Frame loop on real time** by default: the main loop's frames are paced by PS2Recomp's FramePacer and shown when
+  the game ends them, not on the vblank grid (`SC3_NATIVE_FRAMES=0` goes back to it). One-shot movies too: their loop
+  ends its frames in a vsync wait of CRI's ADXM, which the override turns into the same native frame end, so they
+  play at their 29.97 pictures a second on the host's clock, with their sound in step. `PS2X_FRAME_CAP` sets the cap
+  (60 by default, 0 = unlimited).
+- **VU1 microprograms in C++** by default: PS2Recomp's `Vu1StreamAdapter` reads every VIF1 stream and, at each
+  MSCAL, runs the program as C++ on its copy of VU1 memory, on the VIF1 thread. The programs draw from what they
+  compute: no GIF packet is written, each vertex goes to `runtime/sc3_draw_sink.cpp` as it is computed, the drawing
+  registers come from the game's own material blocks in its VIF data, decoded in C++, and the triangles go to the GL
+  back end at their place in the GS stream (`Renderer::drawGs`); `SC3_NATIVE_VU1_DIRECT=0` goes back to the packets.
+  SC3's two programs, A (stage, props, sky, floor,
+  reflection, weapons, shine) and B (fighters), are written as C++ by PS2Recomp's `tools/vu1_lift.py` from the microcode
+  `ps2_vu_aot` compiled (`scripts/recomp.sh`, `generated/vu1port/`), with what VU1's pipeline makes timing-dependent
+  worked out for every path; the fighters' skinned bodies (B:0x1388) keep their hand-written port
+  (`runtime/sc3_vu1_port.cpp`). Every MSCAL leaves exactly what the sandbox (the AOT-compiled microcode on
+  PS2Recomp's VU1 interpreter) leaves: packets, VU memory, registers, flags and cycles.
+  `SC3_NATIVE_VU1_PORT=0` puts every program back on the sandbox, `=check` runs both and compares,
+  `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,...>` keeps some entries on it, `SC3_NATIVE_VU1=0` gives everything back to the
+  emulated VU1. The VU0 microprograms the EE calls with VCALLMS (the math library, about 370,000 calls a second in
+  fights) run as C++ written the same way, in the interpreter's place (`runtime/sc3_vu0.cpp`; `SC3_NATIVE_VU0=0` puts
+  them back, `=check` compares).
+  The regression route holds 60.0 fps capped; uncapped fights run about 62.5 fps drawing directly (61 from the packets), against 55.8 with everything on
+  the sandbox and VU0's interpreter.
+- **Speed**: the regression route runs at 59.6 fps (58.2 on the vblank grid), with 5 frames over 25 ms instead of
+  about 590; uncapped (`PS2X_FRAME_CAP=0`) it reaches 90 GS frames per second, 112 game frames per second.
+
 ## Runtime fixes found with this game
 
 All of them are generic and on boubou666's `main`, which the submodule follows; there is no SC3 branch any more.
