@@ -1,5 +1,6 @@
 #include "sc3_native.h"
 #include "sc3_draw_sink.h"
+#include "sc3_meshes.h"
 #include "sc3_textures.h"
 #include "sc3_vu1_port.h"
 
@@ -190,6 +191,8 @@ namespace sc3
                 ++s.stats.calls[entry];
             s.portNext = false;
             s.recordNext = false;
+            if (nativeMeshesOn()) // its groups are the native meshes' alone
+                return Vu1StreamAdapter::Choice::Vu1;
             if (!s.hidden.empty() && s.hidden.contains(s.names[program], pc))
             {
                 ++s.stats.hidden;

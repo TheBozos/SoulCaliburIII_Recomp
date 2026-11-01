@@ -360,6 +360,17 @@ namespace sc3
         return nullptr;
     }
 
+    bool texturePackReady() { return texpack::g_runtime != nullptr; }
+
+    const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height)
+    {
+        for (size_t g = texpack::g_building.size(); g-- > 0;)
+            if (const TextureKeys::Entry *entry = texpack::g_building[g].entry)
+                if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*entry, tex0, width, height))
+                    return texture;
+        return nullptr;
+    }
+
     void packNoteDirect(const uint32_t *words, size_t qwords)
     {
         if (!texpack::g_runtime)

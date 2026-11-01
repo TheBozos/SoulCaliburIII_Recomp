@@ -22,4 +22,9 @@ namespace sc3
     void packNoteDirect(const uint32_t *words, size_t qwords);
     // VIF1 thread, where the game's frame ends: the next draws belong to the next kicked frame's upload groups.
     void packFrameEnd();
+    // Game thread, at a per-part hook (0x104AF0's commands run in order: a batch's texture CALLs come right before its
+    // draws): the pack texture this TEX0 (as the pack's material has it) and used size select among the upload groups the
+    // frame being built has CALLed, the latest first, or null. True from texturePackReady() on.
+    const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height);
+    bool texturePackReady();
 }
