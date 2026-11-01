@@ -187,7 +187,7 @@ VCLIP flags and VU1 run-ahead on its own clock.
 ## Build and run
 
 ```bash
-git clone --recurse-submodules https://github.com/Arzaroth/SoulCaliburIII_Recomp.git
+git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
 cd SoulCaliburIII_Recomp
 scripts/extract_iso.sh "/path/to/Soulcalibur III (USA).iso"   # disc files -> game/
 scripts/build_tools.sh                                         # ps2_recomp, ps2_analyzer, ps2_vu_aot -> build/tools
@@ -223,7 +223,7 @@ The same scripts run in an MSYS2 **UCRT64** shell, with MSYS2's GCC (MSVC is not
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,ffmpeg,libarchive,python} git rsync
-git clone --recurse-submodules https://github.com/Arzaroth/SoulCaliburIII_Recomp.git
+git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
 ```
 
 Then follow the steps above. `scripts/build_runtime.sh` ends with `scripts/stage_dlls.sh`, which copies the DLLs the
