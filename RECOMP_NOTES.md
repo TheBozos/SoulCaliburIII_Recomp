@@ -570,6 +570,51 @@ only as this diagnostic) does not match the groups' segments in the pause. With 
 per-object hooks (M3: 0x104af0's commands run in order, a batch's texture CALL right before its draws) the group is
 known at the hook and none of this is needed.
 
+#### Native 2D (`scripts/sc3_2d_pack.py`, `runtime/sc3_2d.cpp`, opt-in)
+
+The 2D is GIF data on PATH3: the ordering table (8192 buckets of 16 bytes at *(0x5BE754), one table cut into layers,
+0x10D718 setting the layer base *(0x5BE750)) is part of the GIF channel's chain, a bucket a list of packets newest
+first, buckets drawn in index order. 2D builders write a packet in the scratchpad and link it with 0x10DDF8 (a fixed
+bucket), 0x10DF30 / 0x10E068 (the text layers, 0x1FF3 + 0..3), 0x10D9A0 (by depth, in the layer) or 0x10E1C8 (the
+in-order GIF list); 0x120978 picks one of them by the mode word 0x468CB0 and is reached by tail jumps. A 2D texture
+is a page of a texture file, a ROOT.OLK leaf with a 03 04 04 00 header: byte 4 its upload CALL lists, bytes 5 and 7 its
+pages, word 8 the CALL table (20 bytes an entry when byte 0 or 3 is 3, else 12), word 0xC the page table (a GIF A+D
+block: TEX1_2, TEX0_2, CLAMP_2, the used size in the tag's REGS word). 0x117A38 CALLs a file's upload lists (once a frame
+into the OT), 0x1177E0 REFs a page's block before the draws. A page's texels and its CLUT come from different lists.
+ALPHA_2 comes from the table of four at 0x46EFD8; TEST_2 is whatever the packets before left (0x10FE50 sets TEXA and
+TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view matrix *(*(0x46DA88) + 0x460) times
+(x, y, z, 1), z times 1 / z, clamped at 0, ftoi4.
+
+- `scripts/sc3_2d_pack.py` (stdlib, `python3 -I`, all cores, about 40 s): every leaf's register blocks into a
+  PS2Recomp mesh pack (`build/sc3_2d.pack`, `.leaves`), and for each page the texture the leaf's own uploads write,
+  played into the offline GS memory model of `scripts/sc3_texture_pack.py` and decoded at its used size into
+  `build/sc3_2d_textures.pack` (PS2XTEX1, one file per leaf, the records' numbers as registers 0x101 / 0x102 of the
+  block). 4,647 leaves, 4,454 with page textures, 470 MB.
+- At run time (`SC3_NATIVE_2D=1`, `=check`, or `=@<file>` following the file's first line; `SC3_2D_PACK`): leaves
+  are bound at sceCdRead as for the meshes. A rewritten builder draws its primitives from the game's variables as
+  `Renderer::drawGsKeyed` batches (sprites as two triangles) with the page's TEX0 / TEX1 / CLAMP from the pack and its
+  texture from the 2D texture pack, ALPHA_2 from the game's table, TEST_2 from the context where it lands
+  (`GsMaterial::testFromTarget`), and links in C++ a two-quadword marker into the bucket the game would (a CNT with QWC 0
+  whose upper 64 bits carry the key, then the NEXT to the bucket's old head, at the frame heap's next place): no
+  scratchpad packet, SPR DMA or GIF packet. The GIF channel finds the marker (PS2Recomp `setGifChainMarkGate`) and the
+  GS front end draws the key's batches between the packets around it. A call whose file, page or texture is missing
+  goes to the game's packet, counted.
+- Rewritten: 0x1388E8 (the labels: the menus' text in the Free Training pause, Mode Select; 0x28-byte items, two
+  passes by page, sprites into bucket 0x1FF2), 0x124C80 (a Gouraud-shaded blended triangle, through 0x120978's modes 1
+  to 3; mode 0, the GIF list, stays the game's).
+- `check`: the game's packets built and drawn, each rewritten call's sprites compared word for word (colour, ST,
+  XYZ) with the packet it linked. Regress route: about 500,000 label sprites, all equal but 19 colours in one stretch
+  of the pause menu; about 10 % of the calls differ in their count of visible sprites (open).
+- `[sc3:2d]` every 250 frames: GIF chain markers read, leaves bound, pages without a texture, per builder calls /
+  native / left to the game / GIF quadwords the game still built, and the census of 2D packets the game still builds
+  by (return address > insertion function): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode
+  Select and pause stills off / on. Pause menu with the labels and triangles native (about 34 triangles and 4 label
+  batches a frame drawn at their markers): below its blinking first line 76.8 dB against the game's packets (largest
+  difference 2); the Mode Select stills move on their own (animated backdrop, 27 dB between two stills off).
+- Still the game's on the pause menu: the text 0x11EA80 (glyph runs 0x11E160, flushed by 0x11E898 / 0x11E9B0 through
+  the insertion function at text state + 0x48), 0x115600, the 0x10FE50 family (through 0x110D78), the dimmed backdrop
+  0x12C7E0, and the state packets (0x11FCF0 the font's uploads, 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET).
+
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
 VU0 runs SC3's math library as microcode (`VCALLMS` from about 15 EE functions): one program, the 172 pairs
