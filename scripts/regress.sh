@@ -37,6 +37,9 @@
 #                     the run with the programs drawn from their packets (SC3_NATIVE_VU1_DIRECT=@file); in the pause
 #                     menu pause_packets.png a little after pause.png (pause_direct_floor_psnr), then direct draws
 #                     switched on for pause_direct.png (pause_direct_psnr, against pause.png)
+#   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
+#                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
+#                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
 #   REGRESS_PAUSE_HIDE="A:0x10 B:0x1388 ..."
 #                     in the pause menu, one still per entry with that VU1 program hidden (SC3_NATIVE_VU1_HIDE), as
 #                     pause_hide_<entry>.png, and pause_hide.txt: each one's imgdiff against pause.png
@@ -76,7 +79,7 @@ frames=$out/frames
 shots=$out/shots
 log=$out/run.log
 input=$out/pad_input.txt
-rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/pause_hide.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
+rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
 : > "$input"
 native_switch=
@@ -102,6 +105,12 @@ if [ -n "${REGRESS_FIGHT_FRAME_CAP:-}" ]; then
     cap_file=$out/frame_cap
     rm -f "$cap_file"
     export SC3_FRAME_CAP_FILE="$cap_file"
+fi
+hide_ee_file=
+if [ -n "${REGRESS_PAUSE_HIDE_EE:-}" ]; then
+    hide_ee_file=$out/hide_ee.txt
+    : > "$hide_ee_file"
+    export SC3_HIDE_EE="@$hide_ee_file" SC3_HIDE_EE_ALL="$REGRESS_PAUSE_HIDE_EE"
 fi
 hide_file=
 if [ -n "${REGRESS_PAUSE_HIDE:-}" ]; then
@@ -222,6 +231,15 @@ route()
         await "$pause_secs" || return 1
         pause_still pause_direct.png
     fi
+    if [ -n "$hide_ee_file" ]; then
+        local address
+        for address in $REGRESS_PAUSE_HIDE_EE; do
+            echo "$address" > "$hide_ee_file"
+            await "$pause_secs" || return 1
+            pause_still "pause_hide_ee_$address.png"
+        done
+        : > "$hide_ee_file"
+    fi
     if [ -n "$hide_file" ]; then
         local entry
         for entry in $REGRESS_PAUSE_HIDE; do
@@ -304,6 +322,13 @@ pause_port_floor_psnr=$(pause_psnr pause_sandbox.png)
 pause_port_psnr=$(pause_psnr pause_port.png)
 pause_direct_floor_psnr=$(pause_psnr pause_packets.png)
 pause_direct_psnr=$(pause_psnr pause_direct.png)
+if [ -n "$hide_ee_file" ]; then
+    for address in $REGRESS_PAUSE_HIDE_EE; do
+        still=pause_hide_ee_$address.png
+        [ -f "$out/$still" ] || continue
+        echo "$address $(python3 -I "$root/scripts/imgdiff.py" "$out/pause.png" "$out/$still" --diff "$out/${still%.png}_diff.png")"
+    done > "$out/pause_hide_ee.txt"
+fi
 if [ -n "$hide_file" ]; then
     for entry in $REGRESS_PAUSE_HIDE; do
         still=pause_hide_$(echo "$entry" | tr ':*' '__').png

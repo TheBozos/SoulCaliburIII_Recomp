@@ -2,6 +2,7 @@
 #include "ps2_runtime.h"
 #include "ps2_recompiled_functions.h"
 #include "runtime/ee_scheduler.h"
+#include "sc3_census.h"
 #include "sc3_native.h"
 
 #include <algorithm>
@@ -1410,6 +1411,7 @@ namespace
             runtime.registerFunction(kCreateTask, createTaskTraced);
         sc3::installNativeVu1(runtime, nativeGs);
         sc3::installNativeVu0(runtime);
+        sc3::installCensus(runtime);
     }
 }
 

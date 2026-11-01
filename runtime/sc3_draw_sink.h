@@ -100,6 +100,8 @@ namespace sc3
         std::array<Vertex, kVertices> m_vertices{};
         ps2x::native::GsMaterial m_material[2];
         uint64_t m_prim = 0;
+        uint64_t m_rawTex0[2] = {};
+        uint64_t m_materialTag = 0;
         std::vector<ps2x::native::GsVertex> m_triangles;
         std::vector<Draw> *m_capture = nullptr;
         Stats m_stats;

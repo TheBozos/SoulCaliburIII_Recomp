@@ -1,4 +1,5 @@
 #include "sc3_draw_sink.h"
+#include "sc3_census.h"
 
 #include "runtime/gs/gs_registers.h"
 #include "runtime/native/native_renderer.h"
@@ -125,6 +126,7 @@ namespace sc3
             else
             {
                 ++m_stats.materials;
+                m_materialTag = hi;
                 for (uint32_t i = 0; i < nloop; ++i)
                 {
                     const uint8_t *entry = m_data + ((qword + total + 1u + i) & 0x3FFu) * 16u;
@@ -152,6 +154,7 @@ namespace sc3
         case 0x07u:
             m.tex0 = ps2x::gs::decodeTex0(value);
             m.loadClut = true;
+            m_rawTex0[&m == &m_material[1] ? 1 : 0] = value;
             break;
         case 0x08u:
         case 0x09u:
@@ -228,6 +231,8 @@ namespace sc3
         ps2x::native::GsMaterial draw = material;
         draw.prim = ps2x::gs::decodePrim(m_prim);
         material.loadClut = false;
+        if (censusTracingDraws())
+            censusNoteDraw(m_rawTex0[draw.prim.ctxt ? 1 : 0], m_materialTag, static_cast<uint32_t>(m_triangles.size() / 3u));
         if (m_capture)
         {
             m_capture->push_back({draw, m_triangles});
