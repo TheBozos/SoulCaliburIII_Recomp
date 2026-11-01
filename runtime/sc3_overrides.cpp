@@ -4,6 +4,9 @@
 #include "runtime/ee_scheduler.h"
 #include "sc3_census.h"
 #include "sc3_meshes.h"
+#include "runtime/gs/gs_frontend.h"
+#include "runtime/native/native_gs_hook.h"
+#include "runtime/native/native_renderer.h"
 #include "sc3_native.h"
 #include "sc3_textures.h"
 
@@ -11,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -50,19 +54,51 @@ namespace
     // MPEG video and ADX audio) inside MOVIE.AFS, decoded here on the host per Sofdec handle.
     // Full-screen movies replace the GS output and mix their soundtrack into the SPU2 output, whose
     // length is the movie clock; smaller ones are menu textures handed out by mwPlyGetCurFrm.
+    bool g_nativeMovies = false;
+    PS2Runtime *g_movieRuntime = nullptr;
+
+    // [sc3:movies], one line per movie when it stops: what the movie route still reached while it played. The game's
+    // own picture uploads (0x217458's GIF image packet, 0x2174c0's macroblock packets, 0x217e28's texture), the GS
+    // front end's image transfers, IPU register and FIFO accesses, the libmpeg / libipu HLE calls.
+    std::atomic<uint64_t> g_moviePictureUploads{0};
+    std::atomic<uint64_t> g_movieMpegCalls{0};
+
+    struct MovieCounters
+    {
+        uint64_t gsImageTransfers = 0, gsImageBytes = 0, ipuAccesses = 0, pictureUploads = 0, mpegCalls = 0;
+
+        static MovieCounters now()
+        {
+            MovieCounters c;
+            if (g_movieRuntime && g_movieRuntime->hasGs())
+            {
+                c.gsImageTransfers = g_movieRuntime->gs().imageTransfers();
+                c.gsImageBytes = g_movieRuntime->gs().imageBytes();
+            }
+            c.ipuAccesses = ps2x::native::packetStats().ipuAccesses.load(std::memory_order_relaxed);
+            c.pictureUploads = g_moviePictureUploads.load(std::memory_order_relaxed);
+            c.mpegCalls = g_movieMpegCalls.load(std::memory_order_relaxed);
+            return c;
+        }
+    };
+
     class SfdPlayer
     {
     public:
         static constexpr uint32_t kRate = 48000u;
         static constexpr uint32_t kFullScreenWidth = 512u;
+        static constexpr uint64_t kBackdropKey = 0x5C3B4C4Bu;
 
         ~SfdPlayer() { stop(); }
 
-        bool start(const std::string &path, uint64_t offset, uint64_t size, bool loop)
+        bool start(const std::string &path, uint64_t offset, uint64_t size, bool loop, uint32_t file)
         {
             m_file.open(path, std::ios::binary);
             if (!m_file)
                 return false;
+            m_fileIndex = file;
+            m_startCounters = MovieCounters::now();
+            m_startTime = std::chrono::steady_clock::now();
             m_base = offset;
             m_size = size;
             m_loop = loop;
@@ -77,10 +113,12 @@ namespace
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_quit = true;
                 m_active = false;
+                clearBackdropLocked();
             }
             m_wake.notify_all();
             if (m_thread.joinable())
                 m_thread.join();
+            report();
         }
 
         bool active()
@@ -106,6 +144,8 @@ namespace
             m_audio.erase(m_audio.begin(), m_audio.begin() + static_cast<std::ptrdiff_t>(available * 2u));
             m_clock += (m_hasAudio && !m_decoderDone) ? available : count;
             updateEndLocked();
+            if (g_nativeMovies && m_active && m_fullScreen)
+                showBackdropLocked();
             m_wake.notify_all();
         }
 
@@ -115,7 +155,8 @@ namespace
             if (!m_active || !m_fullScreen)
                 return false;
             advanceLocked();
-            tracePresentLocked();
+            tracePresentLocked("presents");
+            captureLocked();
             if (m_current.empty())
             {
                 rgba.assign(640u * 448u * 4u, 0u);
@@ -164,6 +205,87 @@ namespace
         }
 
     private:
+        void report()
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_reported || m_startTime == std::chrono::steady_clock::time_point{})
+                return;
+            m_reported = true;
+            const MovieCounters end = MovieCounters::now();
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_startTime).count();
+            std::cerr << "[sc3:movies] " << (g_nativeMovies ? "native" : "override") << " file " << m_fileIndex << " "
+                      << m_width << "x" << m_height << (m_fullScreen ? " full screen" : " texture") << (m_loop ? " loop" : "")
+                      << ": " << m_number << " pictures in " << seconds << " s (" << (seconds > 0.0 ? m_number / seconds : 0.0)
+                      << "/s, movie clock " << static_cast<double>(m_clock) / kRate << " s); game picture uploads "
+                      << end.pictureUploads - m_startCounters.pictureUploads << ", GS image transfers "
+                      << end.gsImageTransfers - m_startCounters.gsImageTransfers << " ("
+                      << end.gsImageBytes - m_startCounters.gsImageBytes << " bytes), IPU accesses "
+                      << end.ipuAccesses - m_startCounters.ipuAccesses << " (" << end.ipuAccesses << " since boot), libmpeg / libipu / IPU context calls "
+                      << end.mpegCalls - m_startCounters.mpegCalls << " (" << end.mpegCalls << " since boot)" << std::endl;
+        }
+
+        // SC3_NATIVE_MOVIES: the picture of the movie clock as the native renderer's held backdrop, over the whole
+        // displayed area; black until the first one.
+        void showBackdropLocked()
+        {
+            advanceLocked();
+            if (m_backdropShown && m_backdropNumber == m_number)
+                return;
+            auto picture = std::make_shared<ps2x::native::TextureCache::Texture>();
+            picture->key = kBackdropKey;
+            picture->version = ++m_backdropVersion;
+            if (m_current.empty())
+            {
+                picture->width = 640u;
+                picture->height = 448u;
+                picture->rgba.assign(static_cast<size_t>(picture->width) * picture->height, 0x80000000u);
+            }
+            else
+            {
+                picture->width = m_width;
+                picture->height = m_height;
+                picture->rgba.resize(static_cast<size_t>(m_width) * m_height);
+                std::memcpy(picture->rgba.data(), m_current.data(), picture->rgba.size() * 4u);
+                for (uint32_t &c : picture->rgba)
+                    c = (c & 0xFFFFFFu) | 0x80000000u;
+            }
+            ps2x::native::Screen screen;
+            screen.originX = 0.0f;
+            screen.originY = 0.0f;
+            screen.width = static_cast<float>(picture->width);
+            screen.height = static_cast<float>(picture->height);
+            ps2x::native::Renderer::instance().setBackdrop(std::move(picture), screen, 0.0f, 0.0f, screen.width, screen.height, true);
+            m_backdropShown = true;
+            m_backdropNumber = m_number;
+            tracePresentLocked("backdrops");
+            captureLocked();
+        }
+
+        // SC3_MOVIE_CAPTURE_EVERY=<n> (with PS2X_CAPTURE_WINDOW_DIR): the window showing every n-th picture of a full-screen
+        // movie, as movie_<file>_<picture>.png, to compare two ways of showing it picture for picture.
+        void captureLocked()
+        {
+            static const uint32_t every = []
+            {
+                const char *value = std::getenv("SC3_MOVIE_CAPTURE_EVERY");
+                return value && *value ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+            }();
+            if (every == 0u || m_number == 0u || m_number % every != 0u || m_captured == m_number || !g_movieRuntime)
+                return;
+            m_captured = m_number;
+            char name[64];
+            std::snprintf(name, sizeof(name), "movie_%02u_%05u", m_fileIndex, m_number);
+            g_movieRuntime->requestWindowCapture(name);
+        }
+
+        void clearBackdropLocked()
+        {
+            if (!m_backdropShown)
+                return;
+            m_backdropShown = false;
+            ps2x::native::Renderer::instance().clearBackdrop();
+        }
+
         struct Frame
         {
             double pts = 0.0;
@@ -191,7 +313,7 @@ namespace
 
         // PS2X_SC3_TRACE_MOVIE: every 5 s of a full-screen movie, the pictures it showed and the window's presents per
         // second against the movie clock.
-        void tracePresentLocked()
+        void tracePresentLocked(const char *shown)
         {
             static const bool trace = std::getenv("PS2X_SC3_TRACE_MOVIE") != nullptr;
             if (!trace)
@@ -208,7 +330,7 @@ namespace
             const double seconds = std::chrono::duration<double>(now - m_traceStart).count();
             if (seconds < 5.0)
                 return;
-            std::cerr << "[sc3] movie pictures " << (m_number - m_traceNumber) / seconds << "/s, presents " << m_tracePresents / seconds
+            std::cerr << "[sc3] movie pictures " << (m_number - m_traceNumber) / seconds << "/s, " << shown << " " << m_tracePresents / seconds
                       << "/s, movie clock " << static_cast<double>(m_clock - m_traceClock) / kRate / seconds << " s/s, at "
                       << static_cast<double>(m_clock) / kRate << " s" << std::endl;
             m_traceStart = now;
@@ -220,7 +342,10 @@ namespace
         void updateEndLocked()
         {
             if (m_active && m_decoderDone && m_frames.empty() && m_audio.empty())
+            {
                 m_active = false;
+                clearBackdropLocked();
+            }
         }
 
         static int readPacket(void *opaque, uint8_t *buffer, int size)
@@ -427,6 +552,14 @@ namespace
         bool m_fullScreen = false;
         bool m_decoderDone = false;
         bool m_hasAudio = false;
+        bool m_backdropShown = false;
+        bool m_reported = false;
+        uint32_t m_captured = 0;
+        uint32_t m_fileIndex = 0;
+        MovieCounters m_startCounters;
+        std::chrono::steady_clock::time_point m_startTime{};
+        uint32_t m_backdropNumber = 0;
+        uint64_t m_backdropVersion = 0;
         std::atomic<bool> m_quit{false};
         bool m_active = true;
     };
@@ -764,6 +897,104 @@ namespace
         sub_00218600_0x218600(rdram, ctx, runtime);
     }
 
+    // libmpeg and libipu (the runtime's MPEG HLE), the game's own IPU users, its movie picture uploads: counted for
+    // [sc3:movies].
+    constexpr uint32_t kMpegHleFunctions[] = {
+        0x003E0BC8u, // sceMpegCreate
+        0x003E1770u, // sceMpegInit
+        0x003E1828u, // sceMpegAddBs
+        0x003E1868u, // sceMpegGetPicture
+        0x003E18B0u, // sceMpegGetPictureRAW8
+        0x003E1908u, // sceMpegReset
+        0x003E19C0u, // sceMpegGetDecodeMode
+        0x003E19E0u, // sceMpegAddCallback
+        0x003E1B98u, // sceMpegClearRefBuff
+        0x003E1BF0u, // sceMpegGetPictureRAW8xy
+        0x003E2838u, // sceMpegFlush
+        0x003E8308u, // sceIpuStopDMA
+        0x003E83F0u, // sceIpuRestartDMA
+        0x003E8540u, // sceIpuSync
+        0x003E8620u, // sceIpuInit
+        0x003E2B48u, // libmpeg, IPU_CTRL reset
+        0x003E7350u, // libmpeg, IPU_CMD
+        0x003E7A30u, // libmpeg, IPU_CTRL picture setup
+        0x003C2120u, // Sofdec, IPU context restore
+    };
+    constexpr uint32_t kMoviePictureUploadFunctions[] = {
+        0x00217458u, // the full-screen picture as a GIF image packet, sent on channel 2
+        0x002174C0u, // a picture's 16x16 macroblocks as GIF image packets (0x216e60), sent on channel 2
+        0x00217E28u, // macroblocks into a texture's pixels (then 0x118b68 uploads the texture)
+    };
+    std::map<uint32_t, PS2Runtime::RecompiledFunction> g_movieCounted;
+
+    void movieCounted(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t address = ctx->pc;
+        if (std::find(std::begin(kMpegHleFunctions), std::end(kMpegHleFunctions), address) != std::end(kMpegHleFunctions))
+        {
+            if (g_movieMpegCalls.fetch_add(1, std::memory_order_relaxed) < 8u)
+                std::cerr << "[sc3:movies] libmpeg / libipu / IPU context call 0x" << std::hex << address << " ra=0x" << getRegU32(ctx, 31) << std::dec
+                          << std::endl;
+        }
+        else
+            g_moviePictureUploads.fetch_add(1, std::memory_order_relaxed);
+        g_movieCounted.at(address)(rdram, ctx, runtime);
+    }
+
+    void installMovieCounters(PS2Runtime &runtime)
+    {
+        g_movieRuntime = &runtime;
+        const auto count = [&](uint32_t address)
+        {
+            if (const auto original = runtime.lookupFunction(address))
+            {
+                g_movieCounted[address] = original;
+                runtime.registerFunction(address, movieCounted);
+            }
+        };
+        for (const uint32_t address : kMpegHleFunctions)
+            count(address);
+        for (const uint32_t address : kMoviePictureUploadFunctions)
+            count(address);
+    }
+
+    // SC3_NATIVE_MOVIES: Sofdec's decoder set-up for a player (0x3c25b0) and its library init (0x3c2500) in C++ terms:
+    // the host decodes every movie, so libmpeg is never fed and the IPU never runs. sceMpegInit, sceMpegCreate and
+    // the four sceMpegAddCallback calls only report success (their results are not read back), and the IPU context
+    // Sofdec saves for the next restore (0x3c2020: toIPU / fromIPU DMA and IPU_CTRL / IPU_BP into the context's
+    // +0x1C..+0x3C) is the idle one, written without reading the IPU or its DMA channels.
+    constexpr uint32_t kSceMpegInit = 0x003E1770u;
+    constexpr uint32_t kSceMpegCreate = 0x003E0BC8u;
+    constexpr uint32_t kSceMpegAddCallback = 0x003E19E0u;
+    constexpr uint32_t kSfdIpuContextSave = 0x003C2020u;
+
+    void sceMpegInitNative(uint8_t *, R5900Context *ctx, PS2Runtime *)
+    {
+        setReturnU32(ctx, 0u);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sceMpegCreateNative(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+    {
+        std::memset(rdram + (getRegU32(ctx, 4) & PS2_RAM_MASK), 0, 0x40u);
+        setReturnU32(ctx, getRegU32(ctx, 5));
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sceMpegAddCallbackNative(uint8_t *, R5900Context *ctx, PS2Runtime *)
+    {
+        static uint32_t next = 1u;
+        setReturnU32(ctx, next++);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void sfdIpuContextSaveNative(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+    {
+        std::memset(rdram + ((getRegU32(ctx, 4) + 0x1Cu) & PS2_RAM_MASK), 0, 0x24u);
+        setReturnU32(ctx, 1u);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
     // Sofdec decodes through libmpeg here, and the runtime's MPEG emulation is not fed by CRI's
     // bitstream callbacks: a started player blocks the main thread in sceMpegGetPicture. Players
     // are never started; AFS movies play on the host instead and the others report their end.
@@ -810,7 +1041,7 @@ namespace
             const std::string path = (PS2Runtime::getIoPaths().cdRoot / "MOVIE.AFS").string();
             uint64_t offset = 0, size = 0;
             auto player = std::make_shared<SfdPlayer>();
-            if (afsEntry(path, getRegU32(ctx, 6), offset, size) && player->start(path, offset, size, ctx->pc == kMwPlyStartAfsLp))
+            if (afsEntry(path, getRegU32(ctx, 6), offset, size) && player->start(path, offset, size, ctx->pc == kMwPlyStartAfsLp, getRegU32(ctx, 6)))
             {
                 g_movies.set(handle, std::move(player));
                 std::cerr << "[sc3] movie file " << getRegU32(ctx, 6) << " at 0x" << std::hex << offset << " size 0x" << size << std::dec << std::endl;
@@ -1395,12 +1626,6 @@ namespace
         runtime.registerFunction(kMwPlyRelCurFrm, mwPlyRelCurFrmHost);
         runtime.registerFunction(kMwPlyIsNextFrmReady, mwPlyIsNextFrmReadyHost);
         runtime.registerFunction(kMwPlyStop, mwPlyStopHost);
-        runtime.setPresentationOverride([](std::vector<uint8_t> &rgba, uint32_t &width, uint32_t &height)
-                                        {
-                                            for (const auto &player : g_movies.all())
-                                                if (player->present(rgba, width, height))
-                                                    return true;
-                                            return false; });
         runtime.audioBackend().setSpu2Mixer([](int16_t *frames, size_t count)
                                             {
                                                 for (const auto &player : g_movies.all())
@@ -1416,7 +1641,32 @@ namespace
         sc3::installTexturePack(runtime, nativeGs);
         sc3::installNativeMeshes(runtime, nativeGs);
         sc3::installCensus(runtime);
+        installMovieCounters(runtime);
+        // Full-screen movies as the native renderer's held backdrop, Sofdec's decoder set-up without libmpeg or the IPU.
+        // SC3_NATIVE_MOVIES=0 (or a GS renderer without the native renderer): the presentation override instead.
+        if (const char *native = std::getenv("SC3_NATIVE_MOVIES"); !native || native[0] != '0')
+        {
+            g_nativeMovies = ps2x::native::Renderer::instance().enabled();
+            if (!g_nativeMovies)
+                std::cerr << "[sc3] native movies need the native renderer: movies replace the presented frame" << std::endl;
+        }
+        std::cerr << "[sc3] movies: " << (g_nativeMovies ? "native (held backdrop)" : "presentation override") << std::endl;
+        if (g_nativeMovies)
+        {
+            runtime.registerFunction(kSceMpegInit, sceMpegInitNative);
+            runtime.registerFunction(kSceMpegCreate, sceMpegCreateNative);
+            runtime.registerFunction(kSceMpegAddCallback, sceMpegAddCallbackNative);
+            runtime.registerFunction(kSfdIpuContextSave, sfdIpuContextSaveNative);
+        }
+        if (!g_nativeMovies)
+            runtime.setPresentationOverride([](std::vector<uint8_t> &rgba, uint32_t &width, uint32_t &height)
+                                            {
+                                                for (const auto &player : g_movies.all())
+                                                    if (player->present(rgba, width, height))
+                                                        return true;
+                                                return false; });
     }
 }
 
 PS2_REGISTER_GAME_OVERRIDE("Soulcalibur III (SLUS-21216)", "SLUS_212.16", 0x00100008u, 0xD9A4ECF8u, applySoulcalibur3)
+
