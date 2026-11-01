@@ -42,6 +42,12 @@
 #                     pause_texpack_off.png a little after pause.png (pause_texpack_floor_psnr), then the pack switched
 #                     on (keep: its textures drawn, the game's uploads still sent) for pause_texpack.png
 #                     (pause_texpack_psnr, against pause.png)
+#   REGRESS_MESH_AB=1   the run with native meshes (SC3_NATIVE_MESHES_ROUTINES=@file, every native routine); in the pause
+#                     menu pause_mesh_floor.png a little after pause.png (pause_mesh_floor_psnr), then every part left
+#                     to VU1 for pause_mesh_vu1.png (pause_mesh_psnr, against pause.png)
+#   REGRESS_MESH_AB_EACH="0x1558 0x1730 ..."
+#                     with REGRESS_MESH_AB, before that: one still per routine left to VU1 alone
+#                     (pause_mesh_vu1_<routine>.png), and pause_mesh_each.txt: each one's imgdiff against pause.png
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -124,6 +130,12 @@ if [ -n "${REGRESS_TEXPACK_AB:-}" ] && [ "${REGRESS_TEXPACK_AB}" != 0 ]; then
     texpack_switch=$out/texpack.switch
     echo 0 > "$texpack_switch"
     export SC3_TEXTURE_PACK_MODE="@$texpack_switch"
+fi
+mesh_switch=
+if [ "${REGRESS_MESH_AB:-0}" != 0 ]; then
+    mesh_switch=$out/mesh.switch
+    echo 0xd8,0x2b0,0xc18,0x1558,0x1730,0xa48,0x1d28 > "$mesh_switch"
+    export SC3_NATIVE_MESHES="${SC3_NATIVE_MESHES:-1}" SC3_NATIVE_MESHES_ROUTINES="@$mesh_switch"
 fi
 hide_ee_file=
 if [ -n "${REGRESS_PAUSE_HIDE_EE:-}" ]; then
@@ -257,6 +269,20 @@ route()
         await "$pause_secs" || return 1
         pause_still pause_texpack.png
     fi
+    if [ -n "$mesh_switch" ]; then
+        await "$pause_secs" || return 1
+        pause_still pause_mesh_floor.png
+        local routine all
+        all=$(cat "$mesh_switch")
+        for routine in ${REGRESS_MESH_AB_EACH:-}; do
+            echo "$all" | tr ',' '\n' | grep -vx "$routine" | paste -sd, > "$mesh_switch"
+            await "$pause_secs" || return 1
+            pause_still "pause_mesh_vu1_$routine.png"
+        done
+        echo > "$mesh_switch"
+        await "$pause_secs" || return 1
+        pause_still pause_mesh_vu1.png
+    fi
     if [ -n "$hide_ee_file" ]; then
         local address
         for address in $REGRESS_PAUSE_HIDE_EE; do
@@ -350,6 +376,12 @@ pause_direct_floor_psnr=$(pause_psnr pause_packets.png)
 pause_direct_psnr=$(pause_psnr pause_direct.png)
 pause_texpack_floor_psnr=$(pause_psnr pause_texpack_off.png)
 pause_texpack_psnr=$(pause_psnr pause_texpack.png)
+pause_mesh_floor_psnr=$(pause_psnr pause_mesh_floor.png)
+pause_mesh_psnr=$(pause_psnr pause_mesh_vu1.png)
+for routine in ${REGRESS_MESH_AB_EACH:-}; do
+    [ -f "$out/pause_mesh_vu1_$routine.png" ] || continue
+    echo "$routine $(pause_psnr "pause_mesh_vu1_$routine.png")" >> "$out/pause_mesh_each.txt"
+done
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -391,6 +423,8 @@ pause_direct_floor_psnr=$pause_direct_floor_psnr
 pause_direct_psnr=$pause_direct_psnr
 pause_texpack_floor_psnr=$pause_texpack_floor_psnr
 pause_texpack_psnr=$pause_texpack_psnr
+pause_mesh_floor_psnr=$pause_mesh_floor_psnr
+pause_mesh_psnr=$pause_mesh_psnr
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s
