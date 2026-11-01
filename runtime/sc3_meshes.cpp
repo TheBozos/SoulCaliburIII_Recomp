@@ -92,7 +92,7 @@ namespace sc3
         struct Material
         {
             uint64_t tex0 = 0, tex1 = 0, clamp = 0, alpha = 0x44, test = 0, miptbp1 = 0, miptbp2 = 0, tagRegs = 0;
-            bool setsAlpha = false, setsTest = false;
+            bool setsAlpha = false, setsTest = false, known = false;
             uint32_t address = 0, qwc = 0; // the game's block, for parts left to VU1
         };
 
@@ -778,9 +778,12 @@ namespace sc3
                 m.address = block;
                 m.qwc = sp32(0x370u);
                 if (readMaterial(block, m))
+                {
+                    m.known = true;
                     s.material = m;
+                }
                 else
-                    s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, block, m.qwc};
+                    s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, m.qwc};
             }
         }
 
@@ -846,15 +849,16 @@ namespace sc3
         bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw)
         {
             State &s = g_state;
-            if (s.material.tex0 == 0u)
+            const uint32_t prim = (tag[1] >> 15) & 0x7FFu;
+            if (!s.material.known || (((prim >> 4) & 1u) != 0u && s.material.tex0 == 0u))
             {
                 ++s.stats.noMaterial;
                 return false;
             }
-            const uint32_t prim = (tag[1] >> 15) & 0x7FFu;
             GsMaterial material;
             material.prim = ps2x::gs::decodePrim(prim);
-            material.tex0 = ps2x::gs::decodeTex0(s.material.tex0);
+            if (material.prim.tme)
+                material.tex0 = ps2x::gs::decodeTex0(s.material.tex0);
             material.tex1 = s.material.tex1;
             material.clamp = s.material.clamp;
             material.miptbp1 = s.material.miptbp1;
