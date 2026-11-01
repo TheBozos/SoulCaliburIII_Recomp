@@ -168,6 +168,7 @@ namespace sc3
         std::string g_routinesPath, g_routinesSpec;
         std::vector<uint32_t> g_routines;
         uint64_t g_traceFrame = ~0ull;
+        std::string g_traceRequest; // SC3_MESH_TRACE=@file: the frame after the file appears (it is removed)
 
         void parseRoutines(const std::string &spec)
         {
@@ -911,6 +912,40 @@ namespace sc3
                 ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
             toTriangles(prim, out, batch.gsTriangles);
             s.stats.triangles += batch.gsTriangles.size() / 3u;
+            if (s.frames == g_traceFrame)
+            {
+                uint32_t z0 = ~0u, z1 = 0u, a0 = 255u, a1 = 0u;
+                for (const GsVertex &v : batch.gsTriangles)
+                    z0 = std::min(z0, v.z), z1 = std::max(z1, v.z), a0 = std::min(a0, v.rgba >> 24), a1 = std::max(a1, v.rgba >> 24);
+                std::fprintf(stderr, "[sc3:mesh] trace draw %#x routine %#x prim %#x tex0 %#llx key %#llx alpha %#llx/%d test %#llx/%d tris %zu of %zu z %#x..%#x va %u..%u mark %u\n",
+                             source.object, routine, prim, static_cast<unsigned long long>(s.material.tex0),
+                             static_cast<unsigned long long>(material.texture ? material.texture->key : 0u), static_cast<unsigned long long>(s.material.alpha),
+                             s.material.setsAlpha, static_cast<unsigned long long>(s.material.test), s.material.setsTest, batch.gsTriangles.size() / 3u,
+                             out.size(), z0, z1, a0, a1, s.nextMark);
+                if (a1 == 0u && !in.empty())
+                {
+                    std::fprintf(stderr, "[sc3:mesh] trace   in0 st %g %g col %g %g %g %g pos %g %g %g flags %#x; q12 %g %g %g %g\n", in[0].st[0], in[0].st[1],
+                                 in[0].colour[0], in[0].colour[1], in[0].colour[2], in[0].colour[3], in[0].position[0], in[0].position[1], in[0].position[2],
+                                 in[0].flags, s.header.f(12, 0), s.header.f(12, 1), s.header.f(12, 2), s.header.f(12, 3));
+                    std::string codes;
+                    for (uint32_t at = source.object, end = source.object + 0x40u * 16u; at < end && codes.size() < 400u;)
+                    {
+                        const uint32_t code = peek32(at);
+                        char item[24];
+                        std::snprintf(item, sizeof(item), " %08x", code);
+                        codes += item;
+                        const uint32_t cmd = (code >> 24) & 0x7Fu, num = (code >> 16) & 0xFFu;
+                        at += 4u;
+                        if (cmd >= 0x60u)
+                        {
+                            const uint32_t vl = cmd & 3u, vn = (cmd >> 2) & 3u;
+                            const uint32_t bits = (32u >> vl) * (vn + 1u) * (num ? num : 256u);
+                            at += ((bits + 31u) / 32u) * 4u;
+                        }
+                    }
+                    std::fprintf(stderr, "[sc3:mesh] trace   vif%s\n", codes.c_str());
+                }
+            }
             draw.batches.push_back(std::move(batch));
             draw.mark = s.nextMark;
             s.nextMark = static_cast<uint16_t>(s.nextMark == 0xFFFFu ? 1u : s.nextMark + 1u);
@@ -1195,6 +1230,13 @@ namespace sc3
         {
             State &s = g_state;
             followRoutines(s.frames + 1u);
+            if (!g_traceRequest.empty())
+                if (std::FILE *f = std::fopen(g_traceRequest.c_str(), "rb"))
+                {
+                    std::fclose(f);
+                    std::remove(g_traceRequest.c_str());
+                    g_traceFrame = s.frames + 2u;
+                }
             if (s.frames + 1u == g_traceFrame)
                 std::fprintf(stderr, "[sc3:mesh] trace frame %llu kicked\n", static_cast<unsigned long long>(s.frames + 1u));
             if (++s.frames % 250u != 0u)
@@ -1329,7 +1371,12 @@ namespace sc3
                 parseRoutines(routines);
         }
         if (const char *trace = std::getenv("SC3_MESH_TRACE"); trace && *trace)
-            g_traceFrame = std::strtoull(trace, nullptr, 10);
+        {
+            if (*trace == '@')
+                g_traceRequest = trace + 1;
+            else
+                g_traceFrame = std::strtoull(trace, nullptr, 10);
+        }
         s.runtime = &runtime;
         s.rdram = runtime.memory().getRDRAM();
         s.scratchpad = runtime.memory().getScratchpad();
