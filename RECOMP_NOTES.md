@@ -496,15 +496,25 @@ materials and texture keys are taken from the disc's values.
   left to VU1, MARKs reached, out of the list's order, unknown; leaves bound. `SC3_NATIVE_MESHES=check` also runs each
   native part's routine (through its setup with the same header) on the lifted program and compares the vertices.
 
-State (2026-11-01), Free Training, three runs: about 98 % of the raw parts native (295 of 302 a fight frame; A:0xA48
-and A:0x1D28 left, 2 each), about 6,900 triangles a frame; every MARK reached in the list's order (0 out of order, 0 unknown); every material and
-texture found in the packs. Check against the lifted programs: positions, colours, STQ and ADC agree, F agrees since the
-VU float reading; what differs is rounding (the VU truncates, the C++ rounds to nearest): Z off by 1-4 sixteenths at
-depths past a million, X / Y a few ulps on vertices far outside the screen, STQ in the sixth digit; no part bit-equal
-because of that. Open: with 0x1558 / 0x1730 native, VU1 faults about once a frame on a part left to it (a reserved
-instruction at pc 0x1718, code memory that is neither A nor B there), and two of three runs stopped before the pause;
-the fighters and weapons (0x10A4E8's chains: B:0x1388 skinning, B:0x15E8, A:0x1AB8, A:0x1F00 and the shine setups)
-are not native yet, nor the VIF0 part lists (0x10B3F0). Off by default until those are done and the route is clean.
+- Parts deferred for clipping against the near plane: 0x1088A0 drains them, 0x10B970 clips each on the EE and 0x10B7E0
+  sends the strip with the part's routine and no header or material (VU1 keeps the last part's). Drawn natively from the
+  clipper's vertices (0x50 bytes a vertex, the four quadwords the routine reads) under the last header and material, the
+  routine and GIF tag from the pack's deferred part (0x10B970's caller holds its {flags, address, qwc} entry in s0).
+  Left to VU1 only while VU1 holds the last header and material, else counted as not drawn. VU1's header and material
+  are tracked apart: a part left to VU1 resends them only after a native part took the game's last one.
+- A material without TEX0 (ALPHA / TEST only) is drawn untextured when the part's primitive has no TME.
+
+State (2026-11-01, second pass), Free Training: every raw part native (A:0xD8, 0x2B0, 0xC18, 0x1558, 0x1730, 0xA48,
+0x1D28, about 300 a fight frame) and the clipped strips (up to 1,900 per 250 frames, about 0.5 % not drawn); the
+0xFFFFFFFB "reserved instruction" was VU1's XGKICK overflow on such a strip run with a stale header, now 0. Bench runs:
+3 of 3 reach the pause, mean 58.9 to 59.2 fps, fight 53 to 56 fps against 59.5 with the switch off: with the switch on
+the C++ ports of A and B are off, so the fighters' chain parts (0x10A4E8, all on VU1) run on the VU1 recompiler
+(PS2X_PROFILE: the VIF1 thread doubles, the EE waits on it). Check: positions, colours, STQ agree with the lifted programs
+(rounding only). REGRESS_MESH_AB: the native pause still is 17 dB from the VU1 one (floor 33 dB); per routine
+(REGRESS_MESH_AB_EACH) A:0xA48 (16.9 dB) and A:0xD8 (19.7 dB) differ, the floor drawn much darker natively with the same
+vertices: the material's interpretation (TFX / TCC / blending) under the GS-form batch, not the arithmetic. Open: that
+difference, the fighters and weapons (0x10A4E8's chains: B:0x1388 skinning, B:0x15E8, A:0x1AB8, A:0x1F00 and the shine
+setups; raw parts with A:0x1F00 too) and the VIF0 part lists (0x10B3F0). Off by default until those are done and the route is clean.
 
 #### Texture pack (`scripts/sc3_texture_pack.py`, `runtime/sc3_textures.cpp`)
 
