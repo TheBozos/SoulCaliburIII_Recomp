@@ -372,10 +372,10 @@ namespace sc3
         // The common setup (0x10ADF8, then 0x10B2F8, 0x10AF28, 0x10AFA8); false for the shine setups (0x10AFE8, 0x10B160).
         bool buildHeader(uint32_t flags, uint32_t jump, Header &h)
         {
-            if ((flags & kFlagShineA) && (flags & kFlagProgramA))
+            if (flags & kFlagShineA)
             {
                 Header out = h;
-                copyQwords(out, 0, 0x100u, 4);
+                copyQwords(out, 0, (flags & kFlagProgramA) ? 0x100u : 0x140u, 4);
                 copyQwords(out, 4, 0x2C0u, 3);
                 copyQwords(out, 7, 0x180u, 3);
                 copyQwords(out, 10, 0x270u, 1);
@@ -1084,7 +1084,31 @@ namespace sc3
         // coordinates (w: the vertex flags) and the colour. Position and normal are the influences' sum through their bone
         // matrices, the position then through the header's matrix; the shading is A:0x1AB8's (three lights and the
         // highlight); the XYZF word's bit 15 when the guard test fails or the flags are not 0, plus the header's vi3.
-        bool skinBlock(const Header &h, const uint8_t *data, uint32_t qwords, uint32_t tag[4], std::vector<Out> &out)
+        // The other skinned routines of program B: B:0x15E8 culls back faces (a vertex also gets bit 15 when the screen-space
+        // cross product of the triangle it ends, (P1 - P0) x (P2 - P0), is negative in z, the winding alternating along the
+        // strip and starting reversed when the tag's last word is not 0); B:0x350 and B:0x5B0 (culled) shade like A:0x2B0
+        // (four lights, no highlight); B:0x1CA8 and B:0x1EF0 (culled), after B:0x1990 and 0x10AFE8's header, map the
+        // environment like A:0x1D28 from the skinned normal alone, one colour for all.
+        struct Skinning
+        {
+            bool highlight = true, cull = false, orVi3 = false, environment = false;
+        };
+
+        bool skinRoutine(uint32_t routine, Skinning &k)
+        {
+            switch (routine)
+            {
+            case 0x1388u: k = {true, false, false}; return true;
+            case 0x15E8u: k = {true, true, true}; return true;
+            case 0x350u: k = {false, false, false}; return true;
+            case 0x5B0u: k = {false, true, false}; return true;
+            case 0x1CA8u: k = {false, false, false, true}; return true;
+            case 0x1EF0u: k = {false, true, true, true}; return true;
+            default: return false;
+            }
+        }
+
+        bool skinBlock(const Header &h, const uint8_t *data, uint32_t qwords, uint32_t tag[4], std::vector<Out> &out, Skinning kind)
         {
             State &s = g_state;
             const auto word = [&](uint32_t q, int lane) { uint32_t w; std::memcpy(&w, data + 16u * q + 4u * static_cast<uint32_t>(lane), 4); return w; };
@@ -1093,13 +1117,35 @@ namespace sc3
                 return false;
             for (int i = 0; i < 4; ++i)
                 tag[i] = word(0, i);
-            const int count = static_cast<int16_t>(tag[0] & 0xFFFFu) - static_cast<int16_t>(h.q[17][0] & 0xFFFFu);
+            const int control = kind.environment ? 14 : 17;
+            const uint32_t vi12 = h.q[control][0] & 0xFFFFu;
+            const int count = static_cast<int16_t>(tag[0] & 0xFFFFu) - static_cast<int16_t>(vi12);
             if (count <= 0)
                 return false;
             out.clear();
             uint32_t q = 1u;
             bool outside[3] = {false, false, false};
-            const uint32_t vi3 = h.q[17][3] & 0xFFFFu;
+            const uint32_t vi3 = (kind.environment ? h.q[9][3] : h.q[17][3]) & 0xFFFFu;
+            const bool reversed = (tag[3] & 0xFFFFu) != 0u;
+            float screen[3][2] = {};
+            const auto finish = [&](Out &o, bool clipped, uint32_t flags, const float *position, int k)
+            {
+                uint32_t back = 0u;
+                if (kind.cull)
+                {
+                    screen[0][0] = screen[1][0], screen[0][1] = screen[1][1];
+                    screen[1][0] = screen[2][0], screen[1][1] = screen[2][1];
+                    screen[2][0] = position[0], screen[2][1] = position[1];
+                    const float a[2] = {screen[1][0] - screen[0][0], screen[1][1] - screen[0][1]};
+                    const float b[2] = {screen[2][0] - screen[0][0], screen[2][1] - screen[0][1]};
+                    const bool odd = ((k & 1) != 0) != reversed;
+                    const float z = odd ? b[0] * a[1] - a[0] * b[1] : a[0] * b[1] - b[0] * a[1];
+                    back = std::signbit(z) ? 0x8000u : 0u;
+                }
+                const uint32_t bit = ((((clipped ? 1u : 0u) | flags) + 0x7FFFu) | back) & vi12;
+                o.w = (kind.orVi3 ? bit | vi3 : bit + vi3) & 0xFFFFu;
+                out.push_back(o);
+            };
             for (int k = 0; k < count; ++k)
             {
                 float pos[4] = {0, 0, 0, 0}, nrm[4] = {0, 0, 0, 0};
@@ -1130,14 +1176,49 @@ namespace sc3
                 float l[4];
                 for (int i = 0; i < 4; ++i)
                     l[i] = h.f(4, i) * nrm[0] + h.f(5, i) * nrm[1] + h.f(6, i) * nrm[2];
-                float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
-                e[1] = std::min(e[1], h.f(16, 1));
                 Out o;
-                for (int i = 0; i < 4; ++i)
+                if (kind.environment)
                 {
-                    const float lit = h.f(12, i) + h.f(8, i) * std::max(l[0], 0.0f) + h.f(9, i) * std::max(l[1], 0.0f) + h.f(10, i) * std::max(l[2], 0.0f);
-                    const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
-                    o.rgba[i] = ftoi(std::min(lit * colour[i] + highlight * 128.0f, h.f(16, 0)), 1.0f);
+                    const float qv = 1.0f / p[3];
+                    float r[3];
+                    for (int c = 0; c < 3; ++c)
+                        r[c] = h.f(4, c) * nrm[0] + h.f(5, c) * nrm[1] + h.f(6, c) * nrm[2];
+                    const float position[3] = {p[0] * qv, p[1] * qv, p[2] * qv};
+                    float g[3];
+                    for (int i = 0; i < 3; ++i)
+                        g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * h.f(8, i))));
+                    outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
+                    const bool clipped = outside[0] || outside[1] || outside[2];
+                    for (int i = 0; i < 4; ++i)
+                        o.rgba[i] = static_cast<int32_t>(h.q[10][i]);
+                    for (int i = 0; i < 3; ++i)
+                        o.xyz[i] = ftoi(position[i], 16.0f);
+                    o.s = (h.f(13, 0) + r[0] * h.f(12, 0)) * qv;
+                    o.t = (h.f(13, 1) + r[1] * h.f(12, 1)) * qv;
+                    o.q = kind.cull ? qv : (h.f(13, 2) + r[2] * h.f(12, 2)) * qv;
+                    finish(o, clipped, flags, position, k);
+                    continue;
+                }
+                if (kind.highlight)
+                {
+                    float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
+                    e[1] = std::min(e[1], h.f(16, 1));
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const float lit = h.f(12, i) + h.f(8, i) * std::max(l[0], 0.0f) + h.f(9, i) * std::max(l[1], 0.0f) + h.f(10, i) * std::max(l[2], 0.0f);
+                        const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
+                        o.rgba[i] = ftoi(std::min(lit * colour[i] + highlight * 128.0f, h.f(16, 0)), 1.0f);
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < 4; ++i)
+                        l[i] = std::max(l[i], 0.0f);
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const float lit = h.f(12, i) + h.f(8, i) * l[0] + h.f(9, i) * l[1] + h.f(10, i) * l[2] + h.f(11, i) * l[3];
+                        o.rgba[i] = ftoi(std::min(lit * colour[i], h.f(16, 0)), 1.0f);
+                    }
                 }
                 const float qv = 1.0f / p[3];
                 const float position[4] = {p[0] * qv, p[1] * qv, p[2] * qv, p[3]};
@@ -1151,8 +1232,7 @@ namespace sc3
                 o.s = st[0] * h.f(18, 0) * qv;
                 o.t = st[1] * h.f(18, 1) * qv;
                 o.q = qv;
-                o.w = (((((clipped ? 1u : 0u) | flags) + 0x7FFFu) & 0x8000u) + vi3) & 0xFFFFu;
-                out.push_back(o);
+                finish(o, clipped, flags, position, k);
             }
             return true;
         }
@@ -1168,11 +1248,12 @@ namespace sc3
             constexpr uint32_t kTop = 0x200u;
             std::memcpy(vu + kTop * 16u, data, std::min<size_t>(16u * qwords, 0x1ADu * 16u));
             Header setup = h;
-            setup.q[17][1] = 0u;
-            setup.q[17][2] = routine >> 3;
+            const int control = h.shine ? 14 : 17;
+            setup.q[control][1] = 0u;
+            setup.q[control][2] = routine >> 3;
             for (int i = 0; i < 19; ++i)
                 std::memcpy(vu + (kTop + 0x1ADu + static_cast<uint32_t>(i)) * 16u, setup.q[i], 16u);
-            compareKicks(routine, h, out, kProgramB, 0x10u, kTop);
+            compareKicks(routine, h, out, kProgramB, h.shine ? 0x1990u : 0x10u, kTop);
         }
 
         void queueDraw(Sc3Draw &&draw)
@@ -1345,8 +1426,10 @@ namespace sc3
             State &s = g_state;
             const bool bonesSent = sp32(0x350u) != 0u;
             const uint32_t routine = flags & 0xFFFFu;
-            if (routine != 0x1388u || !routineAllowed(0x11388u) || (flags & (kFlagShineA | kFlagShineB)) || (header && setupOf(flags) != 0x10u) ||
-                !s.header.valid || s.header.shine)
+            Skinning kind;
+            if (!skinRoutine(routine, kind) || !routineAllowed(0x10000u | routine) || (flags & kFlagShineB) ||
+                (kind.environment != ((flags & kFlagShineA) != 0u)) || (header && setupOf(flags) != (kind.environment ? 0x1990u : 0x10u)) ||
+                !s.header.valid || s.header.shine != kind.environment)
                 return false;
             packs::LoadedImages::Image image;
             const packs::MeshObject *chain = nullptr;
@@ -1367,7 +1450,7 @@ namespace sc3
                     return false;
                 uint32_t tag[4];
                 std::vector<Out> out;
-                if (!skinBlock(s.header, block->data, block->size / 16u, tag, out))
+                if (!skinBlock(s.header, block->data, block->size / 16u, tag, out, kind))
                     return false;
                 if (s.mode == Mode::Check)
                     checkSkinned(s.header, routine, block->data, block->size / 16u, out);
