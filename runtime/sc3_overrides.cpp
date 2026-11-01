@@ -1,4 +1,5 @@
 #include "game_overrides.h"
+#include "ps2x/iop/iop_native.h"
 #include "ps2_runtime.h"
 #include "ps2_recompiled_functions.h"
 #include "runtime/ee_scheduler.h"
@@ -1299,6 +1300,27 @@ namespace
         setenv(name, value, 0);
 #endif
     }
+
+    // Native audio: the sound modules' libsd calls (CRI_ADXI, NUSOUND, SDRDRV) played by PS2Recomp's native mixer,
+    // the SPU2 absent. Set here, before the runtime constructs the IOP, where PS2X_NATIVE_AUDIO is read.
+    // SC3_NATIVE_AUDIO=0 (or PS2X_NATIVE_AUDIO=0) keeps libsd on the emulated SPU2, as a diagnostic.
+    // LIBSD.IRX's SPU2 bus set-up (its sound bus address and delay, DMA channels 4 and 7 enabled), from its start and
+    // its reset: nothing to set up without the SPU2.
+    constexpr uint64_t kLibsdFileHash = 0x7b7a5df2162a7ea3ull;
+    constexpr uint32_t kLibsdBusSetup = 0x1550u;
+    void libsdBusSetupNative(ps2x::iop::native::Env &e)
+    {
+        e.cpu.pc = e.cpu.gpr[31];
+    }
+
+    [[maybe_unused]] const bool g_nativeAudioDefault = []
+    {
+        const char *audio = std::getenv("SC3_NATIVE_AUDIO");
+        setDefaultEnv("PS2X_NATIVE_AUDIO", audio && *audio == '0' ? "0" : "1");
+        if (const char *native = std::getenv("PS2X_NATIVE_AUDIO"); native && *native == '1')
+            ps2x::iop::native::overrideModuleFunction(kLibsdFileHash, kLibsdBusSetup, &libsdBusSetupNative);
+        return true;
+    }();
 
     void applySoulcalibur3(PS2Runtime &runtime)
     {
