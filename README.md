@@ -121,6 +121,25 @@ What still models the PS2 rather than doing the job natively, in the order the p
 
 ✅ done · 🔧 partly · ⏳ to do
 
+### Function map
+
+`scripts/func_map.py` draws every EE function of the ELF as one square, in address order, coloured by how far it
+is from running without emulation: native C++ (game overrides, VU program ports), recompiled and clean, touching
+emulated hardware itself (DMA, VIF, GIF, GS privileged registers, VU memory and control, timers, INTC), calling such a
+function one or two levels down, or answered by a runtime stub (native or emulation-backed). The eight recompiled IRX
+modules get a smaller map of their own. It is static analysis of the MIPS plus the overrides and PS2Recomp's stub
+sources; the page lists its rules and blind spots.
+
+```sh
+python3 scripts/func_map.py --out build/funcmap          # after scripts/recomp.sh; PS2Recomp submodule checked out
+python3 scripts/func_map.py --elf <SLUS_212.16> --generated <generated/> --ps2recomp <PS2Recomp/> --out <dir>
+```
+
+Python 3 with the standard library only, on Linux and Windows. It writes `map.html` (interactive, one
+self-contained page), `map.svg`, `map.json` and appends the counts to `history.json` in `--out` (`--history` puts
+the trend elsewhere), so each run adds a point to the "functions still touching emulation" line. `--coverage <file>`
+overlays a list of function addresses that ran. The outputs name game addresses: keep them out of the repository.
+
 [RECOMP_NOTES.md](RECOMP_NOTES.md) records how the port was brought up, every fix and how it was found.
 
 ## Goal
