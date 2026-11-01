@@ -15,6 +15,12 @@ the GS F) as a float; one strip (the tag's PRIM, its word 3 as the material word
 words the UNPACKs leave in VU memory: u32 vertex count, u32 fields (bit 0 normals, bit 1 one colour for all, an S-32
 UNPACK), the 16-byte GIF tag, then per vertex 16 u32: ST, colour, position, normal (normal zero without them).
 
+Chain parts (the lists 0x10A4E8 CALLs: a REF and a CNT per batch, then a RET, REF addresses relative to the model
+the list is in): kind 2 at the list's offset, section 'SC3C': per batch u32 leaf offset and u32 quadword count of its
+block. A program A block is a raw part (kind 1); a program B block (B:0x1388's skinned vertices) is kind 3, section
+'SC3B': the quadwords its UNPACK writes from VU TOP + 0 (the GIF tag, then per vertex its bone influences, texture
+coordinates and colour).
+
 Register blocks: every GS A+D block of a leaf (a PACKED GIF tag of 1-8 A+D writes, the model's materials, the block the
 game REFs to VU TOP + 0x19F), at the tag's offset, with its writes (the register in the address's low byte: the game
 keeps other bits above it) and, as register 0x100 (no GS register), the tag's
