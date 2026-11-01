@@ -7,6 +7,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 name=$1; secs=$2; shift 2
 runs=${SC3_RUNS:-$root/build/runs}
 runner=${SC3_RUNNER:-$root/build/game/PS2Recomp/ps2xRuntime/ps2EntryRunner}
+[ -n "${SC3_TEXTURE_PACK+x}" ] || [ ! -f "$root/build/sc3_textures.pack" ] || export SC3_TEXTURE_PACK="$root/build/sc3_textures.pack"
 elf=${SC3_ELF:-$root/game/SLUS_212.16}
 mkdir -p "$runs"; cd "$runs"
 env PS2X_DEBUG_UI=0 PS2X_STATE_DUMP=5 "$@" timeout $((secs + 15)) \

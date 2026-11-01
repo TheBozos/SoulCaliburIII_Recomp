@@ -4,6 +4,7 @@
 #include "runtime/ee_scheduler.h"
 #include "sc3_census.h"
 #include "sc3_native.h"
+#include "sc3_textures.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1411,6 +1412,7 @@ namespace
             runtime.registerFunction(kCreateTask, createTaskTraced);
         sc3::installNativeVu1(runtime, nativeGs);
         sc3::installNativeVu0(runtime);
+        sc3::installTexturePack(runtime, nativeGs);
         sc3::installCensus(runtime);
     }
 }

@@ -1,9 +1,11 @@
 #include "sc3_draw_sink.h"
 #include "sc3_census.h"
+#include "sc3_textures.h"
 
 #include "runtime/gs/gs_registers.h"
 #include "runtime/native/native_renderer.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace sc3
@@ -155,6 +157,7 @@ namespace sc3
             m.tex0 = ps2x::gs::decodeTex0(value);
             m.loadClut = true;
             m_rawTex0[&m == &m_material[1] ? 1 : 0] = value;
+            m_texSize[&m == &m_material[1] ? 1 : 0] = static_cast<uint32_t>(m_materialTag >> 32);
             break;
         case 0x08u:
         case 0x09u:
@@ -231,6 +234,16 @@ namespace sc3
         ps2x::native::GsMaterial draw = material;
         draw.prim = ps2x::gs::decodePrim(m_prim);
         material.loadClut = false;
+        const int ctxt = draw.prim.ctxt ? 1 : 0;
+        if (draw.prim.tme)
+        {
+            const auto used = [](uint32_t size, uint32_t log2) {
+                const uint32_t whole = 1u << std::min<uint32_t>(log2, 10u);
+                return size != 0u && size < whole ? size : whole;
+            };
+            const uint32_t width = used(m_texSize[ctxt] & 0xFFFFu, draw.tex0.tw), height = used(m_texSize[ctxt] >> 16, draw.tex0.th);
+            draw.texture = packTexture(m_rawTex0[ctxt], width, height);
+        }
         if (censusTracingDraws())
             censusNoteDraw(m_rawTex0[draw.prim.ctxt ? 1 : 0], m_materialTag, static_cast<uint32_t>(m_triangles.size() / 3u));
         if (m_capture)

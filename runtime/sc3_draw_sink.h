@@ -102,6 +102,7 @@ namespace sc3
         uint64_t m_prim = 0;
         uint64_t m_rawTex0[2] = {};
         uint64_t m_materialTag = 0;
+        uint32_t m_texSize[2] = {};
         std::vector<ps2x::native::GsVertex> m_triangles;
         std::vector<Draw> *m_capture = nullptr;
         Stats m_stats;
