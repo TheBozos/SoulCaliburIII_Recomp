@@ -815,44 +815,19 @@ namespace sc3
             spSet(0x36Cu, 0u);
         }
 
-        bool drawRawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        struct PartSource
+        {
+            uint32_t file = 0, offset = 0, object = 0;
+        };
+
+        // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
+        // the header and material the game sent last. False: nothing drawn, the reason counted.
+        bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw)
         {
             State &s = g_state;
-            const uint32_t address = getRegU32(ctx, 4) & PS2_RAM_MASK, qwc = getRegU32(ctx, 5), flags = getRegU32(ctx, 6);
-            const uint32_t routine = flags & 0xFFFFu;
-            ++s.stats.parts;
-            Shade mode;
-            const bool header = sp32(0x368u) != 0u;
-            noteState(flags, routine >> 3);
-            if (s.frames == g_traceFrame)
-                std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
-                             getRegU32(ctx, 31), sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
-            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) || (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
-                s.header.shine != mode.environment)
-            {
-                ++s.stats.unsupported;
-                ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | routine];
-                return false;
-            }
-            packs::LoadedImages::Image image;
-            const packs::MeshObject *object = nullptr;
-            if (s.loaded.find(address, image) && image.file)
-                object = image.file->object(address - image.base);
-            if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != qwc * 16u)
-            {
-                ++s.stats.notInPack;
-                return false;
-            }
             if (s.material.tex0 == 0u)
             {
                 ++s.stats.noMaterial;
-                return false;
-            }
-            std::vector<In> in;
-            uint32_t tag[4];
-            if (!readVertices(*object, in, tag))
-            {
-                ++s.stats.notInPack;
                 return false;
             }
             const uint32_t prim = (tag[1] >> 15) & 0x7FFu;
@@ -884,11 +859,10 @@ namespace sc3
             shade(s.header, mode, in, out);
             if (s.mode == Mode::Check)
                 checkPart(s.header, routine, tag, in, out);
-            Sc3Draw draw;
             draw.screenSpace = true;
-            draw.file = image.index;
-            draw.offset = address - image.base;
-            draw.object = address;
+            draw.file = source.file;
+            draw.offset = source.offset;
+            draw.object = source.object;
             MeshBatch batch;
             batch.gs = true;
             batch.gsMaterial = material;
@@ -901,9 +875,56 @@ namespace sc3
             draw.batches.push_back(std::move(batch));
             draw.mark = s.nextMark;
             s.nextMark = static_cast<uint16_t>(s.nextMark == 0xFFFFu ? 1u : s.nextMark + 1u);
-            writePlaceholder(ctx, runtime, draw.mark);
+            return true;
+        }
+
+        void queueDraw(Sc3Draw &&draw)
+        {
+            State &s = g_state;
             s.unflushed.push_back(s.pendingDraws.size());
             s.pendingDraws.push_back(std::move(draw));
+        }
+
+        bool drawRawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t address = getRegU32(ctx, 4) & PS2_RAM_MASK, qwc = getRegU32(ctx, 5), flags = getRegU32(ctx, 6);
+            const uint32_t routine = flags & 0xFFFFu;
+            ++s.stats.parts;
+            Shade mode;
+            const bool header = sp32(0x368u) != 0u;
+            noteState(flags, routine >> 3);
+            if (s.frames == g_traceFrame)
+                std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
+                             getRegU32(ctx, 31), sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
+            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) || (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
+                s.header.shine != mode.environment)
+            {
+                ++s.stats.unsupported;
+                ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | routine];
+                return false;
+            }
+            packs::LoadedImages::Image image;
+            const packs::MeshObject *object = nullptr;
+            if (s.loaded.find(address, image) && image.file)
+                object = image.file->object(address - image.base);
+            if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != qwc * 16u)
+            {
+                ++s.stats.notInPack;
+                return false;
+            }
+            std::vector<In> in;
+            uint32_t tag[4];
+            if (!readVertices(*object, in, tag))
+            {
+                ++s.stats.notInPack;
+                return false;
+            }
+            Sc3Draw draw;
+            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address}, draw))
+                return false;
+            writePlaceholder(ctx, runtime, draw.mark);
+            queueDraw(std::move(draw));
             ++s.stats.native;
             return true;
         }
