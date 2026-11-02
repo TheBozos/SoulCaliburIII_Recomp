@@ -50,6 +50,11 @@
 #                     menu_2d.png (menu_2d_psnr, against menu_2d_off.png) and off again; in the pause menu
 #                     pause_2d_off.png a little after pause.png (pause_2d_floor_psnr), then on for pause_2d.png
 #                     (pause_2d_psnr, against pause.png)
+#   REGRESS_MENU_SERIES=<n>
+#                     with REGRESS_NATIVE_2D_AB=1: in the main menu and in Single Player Modes, n rounds of four
+#                     stills a presented frame apart, two with the native 2D off and two on (menu_<screen>_<i>_<off|on>.png);
+#                     menu_<screen>_floor_psnr is the mean psnr of neighbours drawn the same way, menu_<screen>_psnr of
+#                     neighbours drawn one each way (animated backdrops: no two stills are the same scene)
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -96,7 +101,7 @@ frames=$out/frames
 shots=$out/shots
 log=$out/run.log
 input=$out/pad_input.txt
-rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_2d*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
+rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
 user=$out/user
 rm -rf "$user"
@@ -226,13 +231,29 @@ await()
     done
 }
 
+menu_series()
+{
+    local i
+    [ -n "$native2d_switch" ] && [ "${REGRESS_MENU_SERIES:-0}" -gt 0 ] || return 0
+    for i in $(seq "$REGRESS_MENU_SERIES"); do
+        echo 0 > "$native2d_switch"; await 1 || return 1; pause_still "menu_$1_${i}a_off.png"
+        await 1 || return 1; pause_still "menu_$1_${i}b_off.png"
+        echo 1 > "$native2d_switch"; await 1 || return 1; pause_still "menu_$1_${i}c_on.png"
+        await 1 || return 1; pause_still "menu_$1_${i}d_on.png"
+    done
+    echo 0 > "$native2d_switch"
+    await 1
+}
+
 route()
 {
     local i
     await 26 || return 1
     for i in 1 2 3 4; do press START; await 3 || return 1; done
     await 6 || return 1
+    menu_series main || return 1
     press CROSS; await 4 || return 1
+    menu_series single || return 1
     if [ -n "$native2d_switch" ]; then
         await 2 || return 1
         pause_still menu_2d_off.png
@@ -407,6 +428,22 @@ menu_psnr()
 }
 menu_2d_floor_psnr=$(menu_psnr menu_2d_off2.png)
 menu_2d_psnr=$(menu_psnr menu_2d.png)
+series_psnr()
+{
+    local prev= kind= still now p
+    for still in $(ls "$out" | grep -E "^menu_$1_[0-9]+[a-d]_(off|on)\.png$" | sort -V); do
+        now=${still##*_}
+        if [ -n "$prev" ]; then
+            p=$(python3 -I "$root/scripts/imgdiff.py" "$out/$prev" "$out/$still" | sed -n 's/^psnr=\([^ ]*\).*/\1/p')
+            [ -z "$p" ] || echo "$([ "$now" = "$kind" ] && echo same || echo mixed) $p"
+        fi
+        prev=$still; kind=$now
+    done | awk '$2 ~ /^[0-9.]+$/ { s[$1] += $2; n[$1]++ }
+        END { if (n["same"] && n["mixed"]) printf "%.2f %.2f %d %d\n", s["same"] / n["same"], s["mixed"] / n["mixed"], n["same"], n["mixed"];
+              else print "NA NA 0 0" }'
+}
+read -r menu_main_floor_psnr menu_main_psnr menu_main_same_pairs menu_main_mixed_pairs < <(series_psnr main)
+read -r menu_single_floor_psnr menu_single_psnr menu_single_same_pairs menu_single_mixed_pairs < <(series_psnr single)
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -452,6 +489,12 @@ pause_2d_floor_psnr=$pause_2d_floor_psnr
 pause_2d_psnr=$pause_2d_psnr
 menu_2d_floor_psnr=$menu_2d_floor_psnr
 menu_2d_psnr=$menu_2d_psnr
+menu_main_floor_psnr=$menu_main_floor_psnr
+menu_main_psnr=$menu_main_psnr
+menu_main_pairs=$menu_main_same_pairs/$menu_main_mixed_pairs
+menu_single_floor_psnr=$menu_single_floor_psnr
+menu_single_psnr=$menu_single_psnr
+menu_single_pairs=$menu_single_same_pairs/$menu_single_mixed_pairs
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s
