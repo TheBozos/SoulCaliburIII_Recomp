@@ -302,9 +302,10 @@ namespace sc3
 
         // The page `index` of a texture file (0x1177E0's choice: the last one past its count) from the 2D pack, its texture
         // the one the file's own uploads write (decoded on first use, kept for the program's life).
+        bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp);
+
         bool page(uint32_t file, uint32_t index, Page &out, BuilderStats &stats, uint32_t cbp = ~0u)
         {
-            State &s = g_state;
             if (!fileAddress(file))
             {
                 ++stats.noFile;
@@ -317,6 +318,13 @@ namespace sc3
                 return false;
             }
             const uint32_t block = peek32(peek32(file + 0xCu) + std::min(index, pages - 1u) * 4u) & ~0xFu;
+            return blockPage(block, out, stats, cbp);
+        }
+
+        // A register block inside a loaded leaf, as the 2D pack has it (a page's TEX0 / TEX1 / CLAMP and its texture).
+        bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp)
+        {
+            State &s = g_state;
             packs::LoadedImages::Image image;
             const packs::RegisterBlock *registers = nullptr;
             if (s.loaded.find(block, image) && image.file)
@@ -479,9 +487,8 @@ namespace sc3
             NotHere,
         };
 
-        Linked insert2d(uint64_t key, float depth)
+        Linked insert2d(uint64_t key, uint32_t mode, float depth)
         {
-            const uint32_t mode = peek32(kInsertMode);
             if (mode == 1u)
             {
                 if (peek32(kRenderer) != 0u || depth < 0.0f || depth > 12.5f)
@@ -505,6 +512,8 @@ namespace sc3
                 return Linked::Dropped;
             return linkMarker(key, bucket) ? Linked::Yes : Linked::Dropped;
         }
+
+        Linked insert2d(uint64_t key, float depth) { return insert2d(key, peek32(kInsertMode), depth); }
 
         // A key's batches dropped (their marker could not be linked). Batches go in before the marker: the GIF list can be
         // read while the frame is still being built.
@@ -1781,10 +1790,10 @@ namespace sc3
             uint32_t mode = 0, entry = 0, before = 0;
         };
 
-        InsertWatch watchInsert(float depth)
+        InsertWatch watchInsert(uint32_t mode, float depth)
         {
             InsertWatch w;
-            w.mode = peek32(kInsertMode);
+            w.mode = mode;
             if (w.mode == 0u)
             {
                 w.before = peek32(kRenderer + 8u);
@@ -1805,6 +1814,8 @@ namespace sc3
             w.before = peek32(w.entry + 4u);
             return w;
         }
+
+        InsertWatch watchInsert(float depth) { return watchInsert(peek32(kInsertMode), depth); }
 
         std::vector<Qword> insertedQwords(const InsertWatch &w)
         {
