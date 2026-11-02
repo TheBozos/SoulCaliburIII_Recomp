@@ -117,6 +117,20 @@ class GsMemory:
                 written[a:a + 4] = mark
                 i += 4
 
+    def write_high(self, psm, bp, bw, sx, sy, w, h, data):
+        mem, written = self.mem, self.written
+        i = 0
+        for y in range(sy, sy + h):
+            for x in range(sx, sx + w):
+                a = addr32(bp, bw, x, y) + 3
+                if psm == PSM_T8H:
+                    mem[a] = data[i]
+                else:
+                    v = (data[i >> 1] >> ((i & 1) * 4)) & 0xF
+                    mem[a] = (mem[a] & 0xF0) | v if psm == PSM_T4HL else (mem[a] & 0x0F) | (v << 4)
+                written[a] = self.entry
+                i += 1
+
     def ct32(self, bp, bw, x, y, touched):
         a = addr32(bp, bw, x, y)
         e = self.written[a]
@@ -282,11 +296,15 @@ def play_gif(gs, data):
             dbp, dbw, dpsm = (bitbltbuf >> 32) & 0x3FFF, (bitbltbuf >> 48) & 0x3F, (bitbltbuf >> 56) & 0x3F
             dsx, dsy = (trxpos >> 32) & 0x7FF, (trxpos >> 48) & 0x7FF
             w, h = trxreg & 0xFFF, (trxreg >> 32) & 0xFFF
-            if dpsm != PSM_CT32 or ((trxpos >> 59) & 3):
+            if dpsm not in (PSM_CT32, PSM_T8H, PSM_T4HL, PSM_T4HH) or ((trxpos >> 59) & 3):
                 raise Unsupported('upload psm %#x dir %d' % (dpsm, (trxpos >> 59) & 3))
-            if len(payload) < w * h * 4:
+            bits = 32 if dpsm == PSM_CT32 else 8 if dpsm == PSM_T8H else 4
+            if len(payload) * 8 < w * h * bits:
                 raise Unsupported('short IMAGE')
-            gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload)
+            if dpsm == PSM_CT32:
+                gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload)
+            else:
+                gs.write_high(dpsm, dbp, dbw, dsx, dsy, w, h, payload)
             transfers += 1
         else:
             raise Unsupported('GIF format %d' % flg)
