@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <map>
 #include <sstream>
@@ -38,7 +39,7 @@ namespace sc3
         // Where 2D packets join the frame: the 2D insertion dispatcher (by the mode at 0x468CB0), fixed OT buckets, the
         // text layers' buckets, and the in-order GIF list.
         constexpr uint32_t kInserts[] = {0x00120978u, 0x0010DDF8u, 0x0010DF30u, 0x0010E068u, 0x0010E1C8u, 0x0010E368u,
-                                         0x0010D9A0u, 0x0010DC90u, 0x0010E1F8u, 0x0010D2F0u};
+                                         0x0010D9A0u, 0x0010DC90u, 0x0010E1F8u, 0x0010D2F0u, 0x001132A8u};
 
         constexpr uint32_t kRenderer = 0x005BE700u;   // +0 frame not built, +0x2c heap qwords used, +0x30 heap cursor, +0x54 the OT
         constexpr uint32_t kOtLayerBase = 0x00467490u; // bucket offset of the current layer
@@ -75,6 +76,8 @@ namespace sc3
         struct Page
         {
             uint64_t tex0 = 0, tex1 = 0, clamp = 0;
+            uint64_t alpha = 0, test = 0; // the block's own ALPHA / TEST writes, when it has them
+            bool hasAlpha = false, hasTest = false;
             uint32_t width = 0, height = 0;
             const ps2x::native::NativeTexture *texture = nullptr;
         };
@@ -139,7 +142,17 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, icons, effects;
+            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips;
+            std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
+            struct PageCopy
+            {
+                uint32_t file = 0, page = 0, clut = 0;
+                bool absolute = false; // clut is the CBP itself
+            };
+            std::map<uint32_t, PageCopy> pageCopies; // 0x119318's copies of page blocks, by where they went
+            uint64_t pageCopyChecks = 0, pageCopyMisses = 0; // check mode: head-2 strips whose copy is the recorded page's / not
+            bool stripCapture = false;                // check mode: the packets the strips' insertions get, from the scratch base
+            std::vector<std::vector<std::array<uint32_t, 4>>> stripPackets;
             uint64_t uploadsDropped = 0;
             Function format = nullptr; // 0x11CBC8, the text renderer's formatter
             bool capture = false;      // check mode: the game's text packets kept as its insertions get them
@@ -352,6 +365,16 @@ namespace sc3
                 case 0x08:
                 case 0x09:
                     out.clamp = value;
+                    break;
+                case 0x42:
+                case 0x43:
+                    out.alpha = value;
+                    out.hasAlpha = true;
+                    break;
+                case 0x47:
+                case 0x48:
+                    out.test = value;
+                    out.hasTest = true;
                     break;
                 default:
                     break;
@@ -1868,8 +1891,8 @@ namespace sc3
                 callOriginal(kQuad, rdram, ctx, runtime);
                 return;
             }
-            // In the GIF list (mode 0) the quad's ALPHA_2 is the one the textured strips 0x1134A0 inserted after it draw with
-            // (they set none): the game's packet until that builder is native.
+            // In the GIF list (mode 0) a native quad hides the pause panel and its text (seen with the strips after it native
+            // too): the game's packet there until the cause is found.
             if (s.mode == Mode::On && peek32(kInsertMode) == 0u)
             {
                 ++stats.toGs;
@@ -2143,6 +2166,556 @@ namespace sc3
                 return;
             }
             ++s.uploadsDropped;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // ---- 0x1134A0 (a0 -> item): textured triangle strips, VU0 macro code. The item: +0 ALPHA_2 (0: 0x2A), +8 the vertex
+        // count, +0xA & 3 the insertion (the table at 0x467510: 0x1132A8 the GIF list, 0x10D9A0, 0x110D78, 0x113250, as
+        // 0x120978's modes), +0xB more PRIM bits, +0xC the vertices (0x40 bytes: ST, a restart word at +0xC, position,
+        // colour), +0x10 a matrix +0x1D multiplies the view's with, +0x14 / +0x18 the texture file and its page, +0x1A its
+        // uploads, +0x1C the head (0: a REF of the page; PRIM 0x54 in context 1 when 1, else 0x254), +0x1F Z from the
+        // view's projection, +0x20 an ST offset (z: Z scale), +0x28 a fixed depth when negative, +0x2C out: the mean w.
+        // A packet takes 0x9C vertices and the two before them; a vertex behind w 0.08 or off the GS's range and the two
+        // after it carry ADC.
+
+        constexpr uint32_t kStrips = 0x001134A0u;
+        constexpr uint32_t kStripTable = 0x00467510u, kStripInsertion = 0x00467520u;
+        constexpr uint32_t kStripInserts[] = {0x001132A8u, 0x0010D9A0u, 0x00110D78u, 0x00113250u};
+        constexpr uint32_t kStripClip = 0x00467690u, kStripColourMax = 0x00467600u, kStripDepthMin = 0x0058A560u;
+        constexpr uint32_t kStripPacketVertices = 0x9Cu;
+        constexpr uint32_t kUnknownWord = 0xFFFFFFFFu;
+
+        using Vec = __m128;
+
+        Vec lane(Vec v, int i)
+        {
+            switch (i)
+            {
+            case 0:
+                return _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
+            case 1:
+                return _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
+            case 2:
+                return _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
+            default:
+                return _mm_shuffle_ps(v, v, _MM_SHUFFLE(3, 3, 3, 3));
+            }
+        }
+
+        // fd with the lanes of `mask` (1 x, 2 y, 4 z, 8 w) from r.
+        Vec put(Vec fd, Vec r, unsigned mask)
+        {
+            const __m128i m = _mm_set_epi32((mask & 8u) ? -1 : 0, (mask & 4u) ? -1 : 0, (mask & 2u) ? -1 : 0, (mask & 1u) ? -1 : 0);
+            return _mm_blendv_ps(fd, r, _mm_castsi128_ps(m));
+        }
+
+        Vec loadVec(uint32_t address)
+        {
+            address &= ~0xFu;
+            return _mm_castsi128_ps(_mm_set_epi32(static_cast<int32_t>(peek32(address + 12u)), static_cast<int32_t>(peek32(address + 8u)),
+                                                  static_cast<int32_t>(peek32(address + 4u)), static_cast<int32_t>(peek32(address))));
+        }
+
+        // vftoi0 / vftoi4 / vftoi12 / vftoi15 as the recompiler does them (truncated, saturated).
+        Vec ftoiVec(Vec v, float scale)
+        {
+            const __m128 src = _mm_mul_ps(v, _mm_set1_ps(scale));
+            const __m128i positiveOverflow =
+                _mm_andnot_si128(_mm_srai_epi32(_mm_castps_si128(src), 31), _mm_castps_si128(_mm_cmpnlt_ps(src, _mm_set1_ps(2147483648.0f))));
+            return _mm_castsi128_ps(_mm_xor_si128(_mm_cvttps_epi32(src), positiveOverflow));
+        }
+
+        Qword vecWords(Vec v)
+        {
+            Qword q;
+            std::memcpy(q.data(), &v, 16);
+            return q;
+        }
+
+        float vecLane(Vec v, int i)
+        {
+            float f[4];
+            std::memcpy(f, &v, 16);
+            return f[i];
+        }
+
+        // Words off the GS's coordinate range (vftoi4 X or Y above 0xFFFF): psrlw 16, ppach, and with the X / Y halves.
+        bool offRange(Vec xyz)
+        {
+            const Qword w = vecWords(xyz);
+            return ((w[0] >> 16) | (w[1] >> 16)) != 0u;
+        }
+
+        struct Vu0
+        {
+            Vec vf[32];
+            Vec acc;
+            float q = 0;
+        };
+
+        // 0x101058 (out a0, a a1, b a2): out row i = a times b's row i (vf1 .. vf8, ACC).
+        void matrixMultiply(Vu0 &vu, uint32_t a, uint32_t b, Vec out[4])
+        {
+            for (int i = 0; i < 4; ++i)
+                vu.vf[5 + i] = loadVec(a + static_cast<uint32_t>(i) * 16u);
+            for (int i = 0; i < 4; ++i)
+            {
+                Vec &r = vu.vf[1 + i];
+                r = loadVec(b + static_cast<uint32_t>(i) * 16u);
+                vu.acc = ps2_vmul(vu.vf[5], lane(r, 0));
+                vu.acc = ps2_vadd(vu.acc, ps2_vmul(vu.vf[6], lane(r, 1)));
+                vu.acc = ps2_vadd(vu.acc, ps2_vmul(vu.vf[7], lane(r, 2)));
+                r = ps2_vadd(vu.acc, ps2_vmul(vu.vf[8], lane(r, 3)));
+                out[i] = r;
+            }
+        }
+
+        struct StripPacket
+        {
+            std::vector<Qword> words; // from the packet's first CNT: A+D tag, ALPHA_2, a stale A+D, the DMA tag, GIF tag, vertices
+            uint32_t qwc = 0;
+            bool inserted = false;
+            float depth = 0;
+        };
+
+        struct StripCall
+        {
+            uint32_t mode = 0, insertion = 0, file = 0, page = 0, prim = 0;
+            uint64_t alpha = 0;
+            std::vector<StripPacket> packets;
+            std::vector<float> meanW; // +0x2C after each packet
+        };
+
+        // The packets 0x1134A0 builds for `item` (false: it returns before any), on a copy of VU0 that ends as the game's.
+        bool stripBuild(uint32_t item, Vu0 &vu, StripCall &call)
+        {
+            if (peek8(item + 0x1Eu) == 0u)
+                return false;
+            const uint32_t count = peek16(item + 8u);
+            call.mode = peek8(item + 0xAu) & 3u;
+            call.insertion = peek32(kStripTable + call.mode * 4u);
+            uint32_t p = peek32(item + 0xCu);
+            call.file = peek32(item + 0x14u);
+            if (p == 0u || (p & 0xFu) != 0u || call.file == 0u || (call.file & 0xFu) != 0u)
+                return false;
+            call.page = peek8(item + 0x18u);
+            call.prim = (peek8(item + 0x1Cu) == 1u ? 0x54u : 0x254u) | peek8(item + 0xBu);
+            const uint64_t tag = (static_cast<uint64_t>(call.prim) << 47) | (0x30004000ull << 32) | 0x8000u;
+            call.alpha = peek64(item);
+            if (call.alpha == 0u)
+                call.alpha = 0x2Au;
+            const uint32_t view = peek32(kView);
+            Vec matrix[4];
+            const uint32_t kind = peek8(item + 0x1Du);
+            if (kind == 1u || kind == 2u)
+                matrixMultiply(vu, peek32(view + (kind == 1u ? 0x448u : 0x454u)), peek32(item + 0x10u), matrix);
+            else
+                for (int i = 0; i < 4; ++i)
+                    matrix[i] = loadVec(peek32(view + 0x448u) + static_cast<uint32_t>(i) * 16u);
+            Vec *vf = vu.vf;
+            const Vec one = lane(vf[0], 3);
+            vf[23] = loadVec(kStripClip);
+            vf[24] = loadVec(item + 0x20u);
+            vf[25] = ps2_vsub(vf[0], one);
+            vf[24] = put(vf[24], ps2_vadd(vf[0], lane(vf[23], 2)), 8u);
+            vf[26] = loadVec(kStripColourMax);
+            vf[27] = loadVec(view + 0x380u);
+            for (int i = 0; i < 4; ++i)
+                vf[28 + i] = matrix[i];
+            vf[24] = put(vf[24], ftoiVec(vf[24], 1.0f), 8u);
+            const float nearW = 0.08f;
+            const bool projected = peek8(item + 0x1Fu) != 0u;
+            bool fixedDepth = false;
+            if (projected)
+            {
+                const uint32_t projection = peek32(view + 0x454u);
+                vf[18] = loadVec(kStripDepthMin);
+                vf[21] = loadVec(projection + 0x20u);
+                vf[22] = loadVec(projection + 0x30u);
+                vf[24] = put(vf[24], ps2_vsub(vf[0], lane(vf[24], 2)), 4u);
+            }
+            else
+                fixedDepth = FPU_C_OLT_S(peekFloat(item + 0x28u), 0.0f);
+            int32_t restart = 0;
+            int32_t left = static_cast<int32_t>(count);
+            const std::vector<Qword> *previous = nullptr;
+            while (left > 0)
+            {
+                const int32_t total = left;
+                left -= static_cast<int32_t>(kStripPacketVertices);
+                const uint32_t n = left < 0 ? static_cast<uint32_t>(total) : kStripPacketVertices;
+                StripPacket &packet = call.packets.emplace_back();
+                if (call.packets.size() > 1u)
+                    previous = &call.packets[call.packets.size() - 2u].words;
+                std::vector<Qword> &w = packet.words;
+                w.push_back({0x10000003u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({2u, 0x10000000u, 0xEu, 0u});
+                w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+                w.push_back({kUnknownWord, kUnknownWord, 3u, 0u});
+                w.push_back({kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord});
+                uint32_t vertices = n;
+                const size_t tagAt = w.size();
+                w.push_back({});
+                if (previous)
+                {
+                    w.insert(w.end(), previous->end() - 6, previous->end());
+                    vertices += 2u;
+                }
+                const uint64_t gifTag = vertices | tag;
+                w[tagAt] = {static_cast<uint32_t>(gifTag), static_cast<uint32_t>(gifTag >> 32), 0x412u, 0u};
+                vf[20] = ps2_vsub(vf[0], one);
+                for (uint32_t i = 0; i < n; ++i, p += 0x40u)
+                {
+                    vf[3] = loadVec(p + 0x10u);
+                    vu.acc = ps2_vmul(vf[31], one);
+                    vf[2] = loadVec(p);
+                    vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[28], lane(vf[3], 0)));
+                    vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[29], lane(vf[3], 1)));
+                    vf[3] = ps2_vadd(vu.acc, ps2_vmul(vf[30], lane(vf[3], 2)));
+                    const uint32_t restartWord = peek32(p + 0xCu);
+                    vf[4] = loadVec(p + 0x20u);
+                    if (projected)
+                        vf[19] = put(vf[19], ps2_vadd(vf[24], lane(vf[3], 3)), 4u);
+                    vu.q = ps2_fdiv(1.0f, vecLane(vf[3], 3));
+                    if (!projected)
+                        vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[24], 2)), 4u);
+                    vf[4] = ps2_vmul(vf[4], lane(vf[27], 1));
+                    vf[2] = put(vf[2], ps2_vadd(vf[2], vf[24]), 3u);
+                    vf[2] = put(vf[2], ps2_vadd(vf[0], one), 4u);
+                    if (projected)
+                        vf[19] = put(vf[19], _mm_max_ps(vf[19], vf[18]), 4u);
+                    const float w3 = vecLane(vf[3], 3);
+                    if (restart <= 0 && restartWord != 0u)
+                        restart = 1;
+                    vf[4] = _mm_max_ps(vf[4], vf[25]);
+                    const bool behind = FPU_C_OLT_S(w3, nearW);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], _mm_set1_ps(vu.q)), 7u);
+                    bool clipped = behind;
+                    if (!behind)
+                    {
+                        vf[2] = put(vf[2], ps2_vmul(vf[2], _mm_set1_ps(vu.q)), 7u);
+                        if (projected)
+                            vu.q = ps2_fdiv(1.0f, vecLane(vf[19], 2));
+                        vf[2] = put(vf[2], ps2_vsub(vf[2], lane(vf[2], 3)), 8u);
+                        vf[4] = _mm_min_ps(vf[4], vf[26]);
+                        vf[5] = put(vf[5], ftoiVec(vf[3], 16.0f), projected ? 3u : 7u);
+                        vf[4] = ftoiVec(vf[4], 1.0f);
+                        if (projected)
+                        {
+                            vf[19] = put(vf[19], ps2_vmul(vf[19], lane(vf[21], 2)), 4u);
+                            vf[19] = put(vf[19], ps2_vadd(vf[19], lane(vf[22], 2)), 4u);
+                        }
+                        clipped = offRange(vf[5]);
+                        vf[5] = put(vf[5], ps2_vsub(vf[0], one), 8u);
+                        if (!clipped)
+                        {
+                            if (projected)
+                                vf[19] = put(vf[19], ps2_vmul(vf[19], _mm_set1_ps(vu.q)), 4u);
+                            vf[20] = put(vf[20], ps2_vadd(vf[20], one), 2u);
+                            if (restart != 0)
+                            {
+                                vf[5] = put(vf[5], vf[24], 8u);
+                                --restart;
+                            }
+                            if (projected)
+                                vf[5] = put(vf[5], ftoiVec(vf[19], 16.0f), 4u);
+                            vf[20] = put(vf[20], ps2_vadd(vf[20], lane(vf[3], 3)), 1u);
+                        }
+                    }
+                    if (clipped)
+                    {
+                        vf[5] = put(vf[5], vf[24], 8u);
+                        restart = 2;
+                    }
+                    w.push_back(vecWords(vf[2]));
+                    w.push_back(vecWords(vf[4]));
+                    w.push_back(vecWords(vf[5]));
+                }
+                packet.qwc = vertices * 3u + 1u;
+                const float x = vecLane(vf[20], 0), y = vecLane(vf[20], 1);
+                float depth = ps2_fdiv(y, x);
+                vu.q = ps2_fdiv(x, y);
+                if (FPU_C_OLT_S(0.0f, x))
+                {
+                    if (fixedDepth)
+                    {
+                        depth = -peekFloat(item + 0x28u);
+                        if (peek8(item + 0xAu) == 1u)
+                            depth = ps2_fmul(depth, 12.5f);
+                    }
+                    packet.inserted = true;
+                    packet.depth = depth;
+                    call.meanW.push_back(vu.q);
+                }
+                else
+                    call.meanW.push_back(-1.0f);
+            }
+            return true;
+        }
+
+        GsVertex stripVertex(const Qword &st, const Qword &rgba, const Qword &xyz)
+        {
+            GsVertex v;
+            v.x = static_cast<float>(xyz[0] & 0xFFFFu) / 16.0f;
+            v.y = static_cast<float>(xyz[1] & 0xFFFFu) / 16.0f;
+            v.z = xyz[2];
+            std::memcpy(&v.s, &st[0], 4);
+            std::memcpy(&v.t, &st[1], 4);
+            std::memcpy(&v.q, &st[2], 4);
+            v.rgba = (rgba[0] & 0xFFu) | ((rgba[1] & 0xFFu) << 8) | ((rgba[2] & 0xFFu) << 16) | ((rgba[3] & 0xFFu) << 24);
+            return v;
+        }
+
+        // A strip's triangles as the GS draws them: each vertex without ADC from the third on closes one with the two before.
+        std::vector<GsVertex> stripTriangles(const StripPacket &packet)
+        {
+            std::vector<GsVertex> out;
+            const size_t first = 6u;
+            const size_t count = (packet.words.size() - first) / 3u;
+            for (size_t i = 2; i < count; ++i)
+            {
+                const Qword &xyz = packet.words[first + i * 3u + 2u];
+                if ((xyz[3] & 0x8000u) != 0u)
+                    continue;
+                for (size_t k = i - 2u; k <= i; ++k)
+                    out.push_back(stripVertex(packet.words[first + k * 3u], packet.words[first + k * 3u + 1u], packet.words[first + k * 3u + 2u]));
+            }
+            return out;
+        }
+
+        void loadVu0(Vu0 &vu, const R5900Context *ctx)
+        {
+            std::memcpy(vu.vf, ctx->vu0_vf, sizeof(vu.vf));
+            vu.acc = ctx->vu0_acc;
+            vu.q = ctx->vu0_q;
+        }
+
+        void storeVu0(const Vu0 &vu, R5900Context *ctx)
+        {
+            std::memcpy(ctx->vu0_vf, vu.vf, sizeof(vu.vf));
+            ctx->vu0_acc = vu.acc;
+            ctx->vu0_q = vu.q;
+        }
+
+        // The REF 0x1177E0 puts in front: the page's register block (the last page past the file's count).
+        Qword pageRef(uint32_t file, uint32_t index)
+        {
+            const uint32_t pages = peek8(file + 5u) + peek8(file + 7u) * 256u;
+            const uint32_t entry = peek32(peek32(file + 0xCu) + (index < pages ? index : pages - 1u) * 4u);
+            const uint32_t qwc = (entry & 0xFu) + 1u;
+            return {0x30000000u | qwc, entry & ~0xFu, 0u, 0x51000000u | qwc};
+        }
+
+        void compareStrips(BuilderStats &stats, const StripCall &call, bool refHead, const std::vector<std::vector<Qword>> &game)
+        {
+            size_t inserted = 0;
+            for (const StripPacket &p : call.packets)
+                inserted += p.inserted ? 1u : 0u;
+            ++stats.checked;
+            if (inserted != game.size())
+            {
+                if (++stats.checkCountDiffs <= 4u)
+                    std::fprintf(stderr, "[sc3:2d] check strips: %zu packets native, %zu game\n", inserted, game.size());
+                return;
+            }
+            size_t g = 0;
+            for (const StripPacket &p : call.packets)
+            {
+                if (!p.inserted)
+                    continue;
+                const std::vector<Qword> &words = game[g++];
+                if (words.size() < p.words.size())
+                {
+                    if (++stats.checkCountDiffs <= 4u)
+                        std::fprintf(stderr, "[sc3:2d] check strips: %zu quadwords native, %zu game\n", p.words.size(), words.size());
+                    continue;
+                }
+                const size_t at = words.size() - p.words.size();
+                if (refHead && (at != 1u || words[0] != pageRef(call.file, call.page)))
+                {
+                    if (++stats.checkDiffs <= 8u)
+                        std::fprintf(stderr, "[sc3:2d] check strips: head of %zu quadwords, %08x %08x %08x %08x\n", at, words[0][0], words[0][1],
+                                     words[0][2], words[0][3]);
+                }
+                for (size_t i = 0; i < p.words.size(); ++i)
+                {
+                    ++stats.checkSprites;
+                    bool same = true;
+                    for (int k = 0; k < 4; ++k)
+                        same &= p.words[i][k] == kUnknownWord || p.words[i][k] == words[at + i][k];
+                    if (same)
+                        continue;
+                    if (++stats.checkDiffs <= 8u)
+                        std::fprintf(stderr, "[sc3:2d] check strips qword %zu of %zu: native %08x %08x %08x %08x; game %08x %08x %08x %08x\n", i,
+                                     p.words.size(), p.words[i][0], p.words[i][1], p.words[i][2], p.words[i][3], words[at + i][0], words[at + i][1],
+                                     words[at + i][2], words[at + i][3]);
+                }
+            }
+        }
+
+        // ---- copies of a texture file's page block (TEX1, TEX0, CLAMP) into draw items (their head 2), (file, out, page):
+        // 0x1191D0 as it is (0x1FB128's table of 15 pages, 0x13BB08), 0x119318 with a CLUT offset a3 added to TEX0's CBP
+        // (times 4 for 8-bit pages; 0x215998, 0x36C3D0 and others), 0x119248 with CBP a3 + (t1 ? the file's CLUT t0's
+        // base +4 + t2 * 4 : t2). Recorded by where the copy goes, so a head-2 draw finds its page and CLUT without
+        // reading the copy.
+
+        constexpr uint32_t kPageCopy = 0x001191D0u, kPageCopyClut = 0x00119318u, kPageCopyCbp = 0x00119248u;
+
+        void pageCopy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t at = ctx->pc, file = getRegU32(ctx, 4);
+            State::PageCopy &copy = g_state.pageCopies[getRegU32(ctx, 5)];
+            copy = {file, getRegU32(ctx, 6), at == kPageCopyClut ? getRegU32(ctx, 7) : 0u, false};
+            if (at == kPageCopyCbp)
+            {
+                uint32_t base = getRegU32(ctx, 10);
+                if (getRegU32(ctx, 9) != 0u)
+                    base = peek16(peek32(file + 0x10u) + getRegU32(ctx, 8) * 8u + 4u) + base * 4u;
+                copy.clut = (getRegU32(ctx, 7) + base) & 0x3FFFu;
+                copy.absolute = true;
+            }
+            callOriginal(at, rdram, ctx, runtime);
+        }
+
+        // The page a head-2 item's copy came from, with its CLUT (false: not copied by 0x119318, or no pack texture).
+        bool copiedPage(uint32_t block, Page &out, BuilderStats &stats)
+        {
+            State &s = g_state;
+            const auto copy = s.pageCopies.find(block);
+            if (copy == s.pageCopies.end())
+            {
+                ++stats.noBlock;
+                return false;
+            }
+            Page base;
+            if (!page(copy->second.file, copy->second.page, base, stats))
+                return false;
+            if (copy->second.clut == 0u && !copy->second.absolute)
+            {
+                out = base;
+                return true;
+            }
+            const uint32_t psm = static_cast<uint32_t>((base.tex0 >> 20) & 0x3Fu);
+            const uint32_t cbp = copy->second.absolute ? copy->second.clut
+                                                       : (static_cast<uint32_t>((base.tex0 >> 37) & 0x3FFFu) +
+                                                          ((psm & 1u) == 0u ? copy->second.clut : copy->second.clut * 4u)) & 0x3FFFu;
+            if (!page(copy->second.file, copy->second.page, out, stats, cbp))
+                return false;
+            out.tex0 = (out.tex0 & ~(0x3FFFull << 37)) | (static_cast<uint64_t>(cbp) << 37);
+            return true;
+        }
+
+        void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            BuilderStats &stats = s.strips;
+            ++stats.calls;
+            const uint32_t item = getRegU32(ctx, 4);
+            if (s.mode == Mode::Off)
+            {
+                callOriginal(kStrips, rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
+            ++s.stripForms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | (peek8(item + 0x1Fu) << 4) | (peek8(item + 0xAu) & 3u)];
+            if (s.mode == Mode::Check)
+            {
+                Vu0 vu;
+                loadVu0(vu, ctx);
+                StripCall call;
+                const bool built = stripBuild(item, vu, call);
+                s.stripCapture = true;
+                s.stripPackets.clear();
+                runOriginal(kStrips, rdram, ctx, runtime);
+                s.stripCapture = false;
+                if (head == 2u)
+                {
+                    ++s.pageCopyChecks;
+                    Page copied;
+                    BuilderStats why;
+                    const uint32_t at = peek32(item + 0x14u);
+                    const bool same = copiedPage(at, copied, why) && copied.tex0 == peek64(at + 0x20u) && copied.tex1 == peek64(at + 0x10u) &&
+                                      copied.clamp == peek64(at + 0x30u);
+                    if (!same && s.pageCopyMisses < 4u)
+                    {
+                        const auto copy = s.pageCopies.find(at);
+                        packs::LoadedImages::Image image;
+                        const uint32_t file = copy != s.pageCopies.end() ? copy->second.file : 0u;
+                        const bool bound = s.loaded.find(file, image) && image.file;
+                        std::fprintf(stderr, "[sc3:2d] check strips: the copy at %#x is not the recorded page's (TEX0 %llx recorded, %llx copied): file %#x (%s) page %u clut %u, no file %llu no block %llu no texture %llu\n", at,
+                                     static_cast<unsigned long long>(copied.tex0), static_cast<unsigned long long>(peek64(at + 0x20u)), file,
+                                     bound ? image.file->name.c_str() : "not a packed leaf", copy != s.pageCopies.end() ? copy->second.page : 0u,
+                                     copy != s.pageCopies.end() ? copy->second.clut : 0u, static_cast<unsigned long long>(why.noFile),
+                                     static_cast<unsigned long long>(why.noBlock), static_cast<unsigned long long>(why.noTexture));
+                    }
+                    if (!same)
+                        ++s.pageCopyMisses;
+                }
+                if (built && peek32(kRenderer) == 0u)
+                {
+                    compareStrips(stats, call, head == 0u && uploads == 0u, s.stripPackets);
+                    if (!call.meanW.empty() && std::memcmp(&call.meanW.back(), guest(item + 0x2Cu, 4), 4) != 0 && ++stats.checkDiffs <= 8u)
+                        std::fprintf(stderr, "[sc3:2d] check strips: mean w %g native, %g game\n", call.meanW.back(), peekFloat(item + 0x2Cu));
+                }
+                return;
+            }
+            const uint32_t file = peek32(item + 0x14u);
+            const uint32_t prim = (head == 1u ? 0x54u : 0x254u) | peek8(item + 0xBu);
+            if (head == 1u || (prim & 0x100u) != 0u)
+            {
+                ++stats.toGs;
+                callOriginal(kStrips, rdram, ctx, runtime);
+                return;
+            }
+            if (uploads != 0u && fileAddress(file) && (peek8(file) == 2u || peek8(file) == 3u))
+            {
+                ++stats.toGs;
+                callOriginal(kStrips, rdram, ctx, runtime);
+                return;
+            }
+            Page pageRegs;
+            if (peek8(item + 0x1Eu) != 0u && fileAddress(file) &&
+                !(head == 2u ? copiedPage(file, pageRegs, stats) : page(file, peek8(item + 0x18u), pageRegs, stats)))
+            {
+                ++stats.toGs;
+                callOriginal(kStrips, rdram, ctx, runtime);
+                return;
+            }
+            Vu0 vu;
+            loadVu0(vu, ctx);
+            StripCall call;
+            if (!stripBuild(item, vu, call))
+            {
+                if (peek8(item + 0x1Eu) != 0u)
+                    poke32(kStripInsertion, call.insertion);
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            poke32(kStripInsertion, call.insertion);
+            GsMaterial m = spriteMaterial(pageRegs, call.alpha);
+            m.prim = ps2x::gs::decodePrim(call.prim);
+            m.prim.type = GS_PRIM_TRIANGLE;
+            for (size_t i = 0; i < call.packets.size(); ++i)
+            {
+                pokeFloat(item + 0x2Cu, call.meanW[i]);
+                const StripPacket &packet = call.packets[i];
+                if (!packet.inserted)
+                    continue;
+                const uint64_t key = newKey();
+                const std::vector<GsVertex> triangles = stripTriangles(packet);
+                if (!triangles.empty())
+                    ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles.data(), static_cast<uint32_t>(triangles.size()));
+                const Linked linked = insert2d(key, call.mode, packet.depth);
+                if (linked != Linked::Yes && !triangles.empty())
+                    discardKeyed(key);
+                if (linked == Linked::Yes)
+                {
+                    stats.sprites += triangles.size() / 3u;
+                    ++stats.markers;
+                }
+            }
+            storeVu0(vu, ctx);
+            ++stats.native;
             ctx->pc = getRegU32(ctx, 31);
         }
 
@@ -2644,6 +3217,17 @@ namespace sc3
             const uint32_t end = getRegU32(ctx, 4);
             if (s.capture && (at == kInsertText || at == kInsertLayer || at == kInsertList))
                 s.captured.push_back(capturedPacket(end, getRegU32(ctx, 5), at, getRegU32(ctx, 7) & 0xFFu));
+            if (s.stripCapture && std::find(std::begin(kStripInserts), std::end(kStripInserts), at) != std::end(kStripInserts))
+            {
+                std::vector<Qword> &words = s.stripPackets.emplace_back();
+                for (uint32_t q = base; q < end && words.size() < 0x400u; q += 16u)
+                    words.push_back({peek32(q), peek32(q + 4u), peek32(q + 8u), peek32(q + 12u)});
+            }
+            if (std::find(std::begin(kInserts), std::end(kInserts), at) == std::end(kInserts))
+            {
+                callOriginal(at, rdram, ctx, runtime);
+                return;
+            }
             auto &counted = s.inserted[{getRegU32(ctx, 31), at}];
             ++counted.first;
             if (end > base && end - base < 0x4000u)
@@ -2694,6 +3278,17 @@ namespace sc3
             reportBuilder("lines 0x1223D0", s.lines);
             reportBuilder("icons 0x1280F8", s.icons);
             reportBuilder("screen effects 0x12C690 / 0x12C7E0", s.effects);
+            reportBuilder("strips 0x1134A0", s.strips);
+            std::fprintf(stderr, "[sc3:2d]   page copies %zu recorded; head-2 strips checked %llu, %llu not as recorded\n", s.pageCopies.size(),
+                         static_cast<unsigned long long>(s.pageCopyChecks), static_cast<unsigned long long>(s.pageCopyMisses));
+            std::string forms;
+            for (const auto &[form, n] : s.stripForms)
+            {
+                std::snprintf(item, sizeof(item), " %08x:%llu", form, static_cast<unsigned long long>(n));
+                forms += item;
+            }
+            s.stripForms.clear();
+            std::fprintf(stderr, "[sc3:2d]   strips by uploads / head / matrix / Z / insertion:%s\n", forms.c_str());
             std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu\n", static_cast<unsigned long long>(s.uploadsDropped));
             s.uploadsDropped = 0;
             std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>>> sorted(s.inserted.begin(), s.inserted.end());
@@ -2812,12 +3407,18 @@ namespace sc3
         wrap(runtime, kIcon, icon);
         wrap(runtime, kEffectLayer, screenEffectLayer);
         wrap(runtime, kEffectInline, screenEffectInline);
+        wrap(runtime, kStrips, strips);
+        for (const uint32_t address : {kPageCopy, kPageCopyClut, kPageCopyCbp})
+            wrap(runtime, address, pageCopy);
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         s.format = runtime.lookupFunction(kTextFormat);
         wrap(runtime, kFrameKick, frameKick);
         for (const uint32_t address : kInserts)
             wrap(runtime, address, insertion);
+        for (const uint32_t address : kStripInserts)
+            if (!g_state.originals.count(address))
+                wrap(runtime, address, insertion);
         ps2x::native::setGifChainMarkGate(markerGate);
         s.installed = true;
         std::fprintf(stderr, "[sc3:2d] native 2D%s: %s, %zu leaves with texture pages\n", s.switchPath.empty() ? "" : " (as its switch file says)",
