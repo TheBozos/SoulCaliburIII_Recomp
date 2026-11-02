@@ -626,14 +626,16 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   scratchpad's packet half as the game's insertions do: no scratchpad packet, SPR DMA or GIF packet. The GIF channel
   finds the marker (PS2Recomp `setGifChainMarkGate`) and the GS front end draws the key's batches between the packets
   around it. Batches go in before the marker: the GIF list can be read while the frame is still being built. A call
-  whose file, page or texture is missing goes to the game's packet, counted.
+  whose file, page or texture is missing goes to the game's packet, counted. A vertex written as PACKED XYZF2 (the
+  quads, lines, icons, labels, triangles, strips and object sprites) takes Z from bits 4..27 of its third word, as the
+  GS does (XYZ2 the whole word): drawn with the word itself, Z was 16 times the game's and wrapped in the 24-bit Z
+  buffer, so later draws testing GEQUAL failed (the pause panel's fill and text vanished with the mode-0 quad native).
 - Rewritten: 0x1388E8 (labels: 0x28-byte items, two passes by page, sprites into bucket 0x1FF2), 0x124C80 (a
   Gouraud-shaded blended triangle through 0x120978, every mode), 0x11EA80 (the text renderer: the state at 0x468540,
   the call frame on the guest stack as the game's, glyph runs 0x11E160, measure 0x11E740, flushes 0x11E898 /
   0x11E9B0, placement 0x11E068, TEX2_2 / ALPHA_2 writes 0x11DF40 / 0x11DFC8 with the packet's bookkeeping kept as
   offsets so packets end where the game's do; the control codes 0x23..0x25 go to the game's formatter 0x11CBC8, game
-  logic that builds no packet), 0x123340 (untextured sprite; in the GIF list, mode 0, it stays the game's: native there it hides the pause panel and
-  its text, cause not found yet; the strips after it set their own ALPHA_2, so that is not it), 0x1223D0 (antialiased line), 0x1280F8 (menu
+  logic that builds no packet), 0x123340 (untextured sprite, every mode), 0x1223D0 (antialiased line), 0x1280F8 (menu
   icons), the screen-effect layer 0x12C690 / 0x12C7E0 (the background behind the 3D: a sky and a ground band split at
   the projected horizon, opaque, Z written 0, context 1; a rolled camera and mode 1 stay the game's), 0x1134A0 and
   0x110E50 (below). The once-a-frame uploads of the font (0x11FCF0), the labels' file (0x138860) and the icons
@@ -643,7 +645,8 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   0x10FE50): +0x1C 0 a REF of page +0x18 of the file +0x14; 1 a REF of a register block at +0x14 (for object sprites a
   context-1 block in a leaf: TEX0_1, ALPHA_1, TEST_1 and the page's texture, from the 2D pack); 2 a copy of a page's
   block made earlier by 0x1191D0 / 0x119318 / 0x119248 (file, out, page, CLUT: CBP as it is, plus an offset, or set),
-  recorded by where it went so the draw finds the page and its CLUT in the pack without reading the copy. Insertion by
+  recorded by where it went and resolved there (the page and its CLUT in the pack, found while the file is loaded: it
+  can be gone by the draw) so the draw needs neither the copy nor the file. Insertion by
   +0xA & 3 through the table at 0x467510 (0x1132A8 the GIF list, 0x10D9A0, 0x110D78, 0x113250: 0x120978's modes).
 - 0x1134A0 (VU0 macro code, in C++ on a copy of VU0 with the recompiler's float operations): packets of up to 0x9C
   vertices (+0 ST, +0xC a restart word, +0x10 position, +0x20 colour) and the two before them, through the matrix +0x1D
@@ -668,7 +671,13 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
   still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
   included): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on.
-- Still the game's on the pause menu: 0x115600 (an upload and TEXFLUSH), 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET.
+- 0x115600 (draw item 13: CALLs of a texture file's upload lists, then TEXFLUSH) is dropped while every page of its
+  file is in the pack, the file's items (0x1134A0 / 0x110E50, a head-2 item counting for the file its copy came from)
+  were drawn natively in the last two frames and none went to the GS for 120 frames (the item types still the game's,
+  0x110258, 0x1107E0 and the rest of the table, mark their file: they draw from those uploads).
+- The offline GS memory model (`scripts/sc3_texture_pack.py`) takes PSMT8H / PSMT4HL / PSMT4HH uploads: the pause
+  menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack.
+- Still the game's on the pause menu: 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET (frame context, M7).
 
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
