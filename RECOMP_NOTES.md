@@ -671,10 +671,11 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
   still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
   included): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on.
-- 0x115600 (draw item 13: CALLs of a texture file's upload lists, then TEXFLUSH) is dropped while every page of its
-  file is in the pack, the file's items (0x1134A0 / 0x110E50, a head-2 item counting for the file its copy came from)
-  were drawn natively in the last two frames and none went to the GS for 120 frames (the item types still the game's,
-  0x110258, 0x1107E0 and the rest of the table, mark their file: they draw from those uploads).
+- 0x115600 (draw item 13: CALLs of a texture file's upload lists, or of a block +0x10, then TEXFLUSH) is dropped
+  while every page of its file +0x14 is in the pack and no item of that file linked a game packet for 120 frames (an
+  item type still the game's, 0x110258, 0x1107E0 and the rest of the table, marks the file of the item that runs when
+  a packet is linked from inside it: they draw from those uploads; a 0x1134A0 / 0x110E50 item left to the GS marks its
+  file too, a head-2 one the file its copy came from), never in the first two frames the upload is seen.
 - The offline GS memory model (`scripts/sc3_texture_pack.py`) takes PSMT8H / PSMT4HL / PSMT4HH uploads: the pause
   menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack.
 - Still the game's on the pause menu: 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET (frame context, M7).
