@@ -1098,7 +1098,7 @@ namespace sc3
                 };
                 const uint32_t width = used(static_cast<uint32_t>(s.material.tagRegs >> 32) & 0xFFFFu, material.tex0.tw);
                 const uint32_t height = used(static_cast<uint32_t>(s.material.tagRegs >> 48) & 0xFFFFu, material.tex0.th);
-                material.texture = packTextureAtHook(s.material.tex0, width, height);
+                material.texture = packTextureAtHook(s.material.tex0, width, height, source.object & PS2_RAM_MASK);
                 if (!material.texture)
                 {
                     ++s.stats.noTexture;

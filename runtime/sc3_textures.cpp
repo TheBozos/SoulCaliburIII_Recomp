@@ -519,12 +519,28 @@ namespace sc3
         texpack::g_gsMiss = true;
     }
 
-    const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height)
+    const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height, uint32_t part)
     {
-        for (size_t g = texpack::g_building.size(); g-- > 0;)
-            if (const TextureKeys::Entry *entry = texpack::g_building[g].entry)
-                if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*entry, tex0, width, height, &texpack::g_building[g].game))
+        for (const bool ownOnly : {true, false})
+        {
+            if (ownOnly && part == 0u)
+                continue;
+            for (size_t g = texpack::g_building.size(); g-- > 0;)
+            {
+                texpack::Group &group = texpack::g_building[g];
+                if (!group.entry || (ownOnly && (part < group.game.lo || part >= group.game.hi)))
+                    continue;
+                if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*group.entry, tex0, width, height, &group.game))
+                {
+                    if (censusTracingDraws())
+                        std::fprintf(stderr, "[sc3:trace] hook tex0=%#llx %ux%u part %#x: group %zu/%zu %s entry %u leaf at %#x%s, %s\n",
+                                     static_cast<unsigned long long>(tex0), width, height, part, g, texpack::g_building.size(),
+                                     group.entry->list->name.c_str(), group.entry->index, group.game.leaf, ownOnly ? " (the part's)" : "",
+                                     (texture->key >> 63) ? "game palette" : "pack");
                     return texture;
+                }
+            }
+        }
         return nullptr;
     }
 
