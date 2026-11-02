@@ -165,6 +165,8 @@ namespace sc3
             // insertion function: calls and quadwords.
             std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> inserted;
             uint64_t frames = 0, bound = 0, boundBad = 0;
+            // Texture files of draw items, by the last frame an item of theirs was drawn natively / left to the GS.
+            std::map<uint32_t, uint64_t> itemFilesNative, itemFilesGs;
         };
 
         State g_state;
@@ -2172,6 +2174,39 @@ namespace sc3
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        // 0x115600 (a0 -> item, type 13 of the draw items): CALLs of the upload lists of the texture file +0x14 (0x117920 /
+        // 0x118430) or of the block +0x10 (0x117B80 / 0x118700), then TEXFLUSH, for later draws. Dropped while the native 2D
+        // is on, every page of the file is in the pack with its texture, the file's items were drawn natively in the last
+        // frames and none of them went to the GS for a while (the other item types draw from these uploads on the GS).
+
+        constexpr uint32_t kUploadItem = 0x00115600u;
+        constexpr uint64_t kGsItemFrames = 120u;
+
+        void uploadItem(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t item = getRegU32(ctx, 4), file = peek32(item + 0x14u);
+            const auto native = s.itemFilesNative.find(file);
+            const auto gs = s.itemFilesGs.find(file);
+            bool packed = s.mode == Mode::On && peek32(item + 0x10u) == 0u && fileAddress(file) && native != s.itemFilesNative.end() &&
+                          native->second + 2u >= s.frames && (gs == s.itemFilesGs.end() || gs->second + kGsItemFrames < s.frames);
+            const uint32_t pages = packed ? peek8(file + 5u) + peek8(file + 7u) * 256u : 0u;
+            packed = packed && pages != 0u;
+            for (uint32_t i = 0; packed && i < pages; ++i)
+            {
+                Page p;
+                BuilderStats unused;
+                packed = page(file, i, p, unused);
+            }
+            if (!packed)
+            {
+                callOriginal(kUploadItem, rdram, ctx, runtime);
+                return;
+            }
+            ++s.uploadsDropped;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
         // ---- 0x1134A0 (a0 -> item): textured triangle strips, VU0 macro code. The item: +0 ALPHA_2 (0: 0x2A), +8 the vertex
         // count, +0xA & 3 the insertion (the table at 0x467510: 0x1132A8 the GIF list, 0x10D9A0, 0x110D78, 0x113250, as
         // 0x120978's modes), +0xB more PRIM bits, +0xC the vertices (0x40 bytes: ST, a restart word at +0xC, position,
@@ -2622,7 +2657,47 @@ namespace sc3
             return resolveCopy(copy->second, out, stats);
         }
 
-        void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        // The texture file a draw item's head names: +0x14, or for a head-2 item the file its page copy came from.
+        uint32_t itemTextureFile(uint32_t item)
+        {
+            const uint32_t file = peek32(item + 0x14u);
+            if (peek8(item + 0x1Cu) != 2u)
+                return file;
+            const auto copy = g_state.pageCopies.find(file);
+            return copy != g_state.pageCopies.end() ? copy->second.file : file;
+        }
+
+        void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+        void objectsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+
+        void trackItem(void (*draw)(uint8_t *, R5900Context *, PS2Runtime *), BuilderStats &stats, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t file = itemTextureFile(getRegU32(ctx, 4));
+            const uint64_t toGs = stats.toGs, native = stats.native;
+            draw(rdram, ctx, runtime);
+            if (stats.toGs != toGs || s.mode != Mode::On)
+                s.itemFilesGs[file] = s.frames;
+            else if (stats.native != native)
+                s.itemFilesNative[file] = s.frames;
+        }
+
+        void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(stripsDraw, g_state.strips, rdram, ctx, runtime); }
+        void objects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(objectsDraw, g_state.objects, rdram, ctx, runtime); }
+
+        // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600).
+        constexpr uint32_t kGsItems[] = {0x00110258u, 0x00112148u, 0x001107E0u, 0x001124B8u, 0x001117D8u, 0x00113AF8u,
+                                         0x00114B50u, 0x00115018u, 0x00115BE0u, 0x00115E48u, 0x00116128u};
+
+        void gsItem(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t at = ctx->pc;
+            s.itemFilesGs[itemTextureFile(getRegU32(ctx, 4))] = s.frames;
+            callOriginal(at, rdram, ctx, runtime);
+        }
+
+        void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
             BuilderStats &stats = s.strips;
@@ -3588,7 +3663,7 @@ namespace sc3
             }
         }
 
-        void objects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        void objectsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
             BuilderStats &stats = s.objects;
@@ -3903,6 +3978,9 @@ namespace sc3
         wrap(runtime, kObjects, objects);
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
+        wrap(runtime, kUploadItem, uploadItem);
+        for (const uint32_t address : kGsItems)
+            wrap(runtime, address, gsItem);
         s.format = runtime.lookupFunction(kTextFormat);
         wrap(runtime, kFrameKick, frameKick);
         for (const uint32_t address : kInserts)
