@@ -23,7 +23,7 @@ while kill -0 $pid 2>/dev/null && [ $(( $(date +%s) - start )) -lt "$secs" ]; do
 if kill -0 $pid 2>/dev/null; then
   geo=$(command -v hyprctl >/dev/null && hyprctl clients -j | python3 -I -c 'import json,sys
 for c in json.load(sys.stdin):
-    if c["title"].startswith("PS2-Recomp"):
+    if c["title"].startswith(("PS2-Recomp", "Soulcalibur III")):
         print("%d,%d %dx%d" % (c["at"][0], c["at"][1], c["size"][0], c["size"][1])); break')
   [ -n "$geo" ] && timeout 10 grim -g "$geo" "$name.png" && echo "shot $runs/$name.png"
   kill $pid 2>/dev/null
