@@ -84,6 +84,7 @@ namespace sc3
 
         std::atomic<PackMode> g_mode{PackMode::Off};
         std::string g_switchPath;
+        std::string g_dumpDir;
         TextureKeys g_pack;
         uint8_t *g_rdram = nullptr;
         uint8_t *g_scratchpad = nullptr;
@@ -374,10 +375,31 @@ namespace sc3
             g_mode = mode;
         }
 
+        // SC3_TEXTURE_DUMP=<dir> (diagnosis): when <dir>/request appears, RDRAM, the ROOT.OLK read map and the frame's
+        // upload groups go to <dir>/rdram.bin, reads.txt and groups.txt.
+        void dumpOnRequest()
+        {
+            const std::string request = g_dumpDir + "/request";
+            if (!std::ifstream(request))
+                return;
+            std::remove(request.c_str());
+            std::ofstream(g_dumpDir + "/rdram.bin", std::ios::binary).write(reinterpret_cast<const char *>(g_rdram), PS2_RAM_SIZE);
+            std::ofstream reads(g_dumpDir + "/reads.txt");
+            for (const auto &[start, read] : g_reads)
+                reads << std::hex << start << ' ' << read.end << ' ' << read.olk << '\n';
+            std::ofstream groups(g_dumpDir + "/groups.txt");
+            for (const Group &g : g_building)
+                groups << std::hex << g.target << ' ' << (g.entry ? g.entry->list->name : std::string("-")) << ' ' << std::dec
+                       << (g.entry ? g.entry->index : 0u) << '\n';
+            std::fprintf(stderr, "[sc3] texture pack: dumped RDRAM, %zu reads, %zu groups to %s\n", g_reads.size(), g_building.size(), g_dumpDir.c_str());
+        }
+
         void frameKick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (!g_switchPath.empty() && (g_frames & 15u) == 0u)
                 followSwitch();
+            if (!g_dumpDir.empty() && (g_frames & 15u) == 0u)
+                dumpOnRequest();
             if (g_mode == PackMode::On)
                 leaveOutUploads();
             g_gsMiss = false;
@@ -554,6 +576,8 @@ namespace sc3
         }
         else
             texpack::g_mode = std::strcmp(mode, "keep") == 0 ? texpack::PackMode::Keep : texpack::PackMode::On;
+        if (const char *dump = std::getenv("SC3_TEXTURE_DUMP"); dump && *dump)
+            texpack::g_dumpDir = dump;
         texpack::g_runtime = &runtime;
         texpack::g_rdram = runtime.memory().getRDRAM();
         texpack::g_scratchpad = runtime.memory().getScratchpad();

@@ -44,6 +44,7 @@ namespace sc3
         };
         struct List
         {
+            std::string name;
             const std::vector<ps2x::native::packs::TextureRecord> *records = nullptr;
             std::vector<Key> keys;
             std::unordered_multimap<uint64_t, uint32_t> byKey;

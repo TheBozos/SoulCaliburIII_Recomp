@@ -71,6 +71,7 @@ namespace sc3
                 !texture_keys::read(file, keys))
                 return false;
             List &list = m_lists.emplace_back();
+            list.name = name;
             list.records = m_pack.file(name);
             Leaf &leaf = leaves[offset];
             leaf.offset = offset;
