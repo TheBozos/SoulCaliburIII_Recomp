@@ -563,6 +563,15 @@ namespace sc3
             int32_t x = 0, y = 0, z = 0;
         };
 
+        // Z of a PACKED XYZF2 / XYZF3 write: bits 4..27 of its third word (XYZ2 takes the whole word).
+        uint32_t xyzfZ(uint32_t word) { return (word >> 4) & 0xFFFFFFu; }
+
+        GsPoint xyzfPoint(GsPoint p)
+        {
+            p.z = static_cast<int32_t>(xyzfZ(static_cast<uint32_t>(p.z)));
+            return p;
+        }
+
         GsPoint toGs(const float m[16], float x, float y, float z)
         {
             const float q = 1.0f / z;
@@ -636,7 +645,7 @@ namespace sc3
         // texture file's page of that number), sprites of 0x28-byte items into bucket 0x1FF2
 
         // The sprites of a packet the game linked in front of `stop` from `head` (diagnostic, check mode): each block's GIF
-        // tag after its NEXT, its NLOOP sprites of five quadwords (RGBAQ, ST, XYZ2, ST, XYZ2).
+        // tag after its NEXT, its NLOOP sprites of five quadwords (RGBAQ, ST, XYZF2, ST, XYZF2).
         std::vector<std::vector<Sprite>> packetSprites(uint32_t head, uint32_t stop)
         {
             std::vector<std::vector<Sprite>> out;
@@ -800,7 +809,7 @@ namespace sc3
                     continue;
                 triangles.clear();
                 for (const Sprite &sp : list)
-                    spriteCorners(triangles, GsPoint{sp.x0, sp.y0, sp.z0}, GsPoint{sp.x1, sp.y1, sp.z1}, sp.s0, sp.t0, sp.s1, sp.t1, sp.rgba);
+                    spriteCorners(triangles, xyzfPoint(GsPoint{sp.x0, sp.y0, sp.z0}), xyzfPoint(GsPoint{sp.x1, sp.y1, sp.z1}), sp.s0, sp.t0, sp.s1, sp.t1, sp.rgba);
                 const uint64_t key = newKey();
                 ps2x::native::Renderer::instance().drawGsKeyed(key, spriteMaterial(pages[pass], alpha), triangles.data(),
                                                                static_cast<uint32_t>(triangles.size()));
@@ -833,7 +842,7 @@ namespace sc3
             GsVertex v;
             v.x = static_cast<float>(xyz[0] & 0xFFFFu) / 16.0f;
             v.y = static_cast<float>(xyz[1] & 0xFFFFu) / 16.0f;
-            v.z = xyz[2];
+            v.z = xyzfZ(xyz[2]);
             v.rgba = (rgba[0] & 0xFFu) | ((rgba[1] & 0xFFu) << 8) | ((rgba[2] & 0xFFu) << 16) | ((rgba[3] & 0xFFu) << 24);
             return v;
         }
@@ -1938,7 +1947,7 @@ namespace sc3
             }
             const uint64_t key = newKey();
             std::vector<GsVertex> corners;
-            spriteCorners(corners, p0, p1, 0.0f, 0.0f, 0.0f, 0.0f, colour[0] | (colour[1] << 8) | (colour[2] << 16) | (colour[3] << 24));
+            spriteCorners(corners, xyzfPoint(p0), xyzfPoint(p1), 0.0f, 0.0f, 0.0f, 0.0f, colour[0] | (colour[1] << 8) | (colour[2] << 16) | (colour[3] << 24));
             ps2x::native::Renderer::instance().drawGsKeyed(key, flatMaterial(GS_PRIM_SPRITE, 0x246u, alpha), corners.data(),
                                                            static_cast<uint32_t>(corners.size()));
             const Linked linked = insert2d(key, depth);
@@ -2006,7 +2015,7 @@ namespace sc3
                 {
                     ends[i].x = static_cast<float>(xyz[i][0] & 0xFFFFu) / 16.0f;
                     ends[i].y = static_cast<float>(xyz[i][1] & 0xFFFFu) / 16.0f;
-                    ends[i].z = xyz[i][2];
+                    ends[i].z = xyzfZ(xyz[i][2]);
                     ends[i].rgba = rgba;
                 }
                 ps2x::native::Renderer::instance().drawGsKeyed(key, flatMaterial(GS_PRIM_LINE, 0x2C1u, alpha), ends, 2u);
@@ -2131,7 +2140,7 @@ namespace sc3
             float fs0, ft0, fs1, ft1;
             std::memcpy(&fs0, &s0, 4), std::memcpy(&ft0, &t0, 4), std::memcpy(&fs1, &s1, 4), std::memcpy(&ft1, &t1, 4);
             std::vector<GsVertex> corners;
-            spriteCorners(corners, p0, p1, fs0, ft0, fs1, ft1, colour[0] | (colour[1] << 8) | (colour[2] << 16) | (colour[3] << 24));
+            spriteCorners(corners, xyzfPoint(p0), xyzfPoint(p1), fs0, ft0, fs1, ft1, colour[0] | (colour[1] << 8) | (colour[2] << 16) | (colour[3] << 24));
             const uint64_t key = newKey();
             ps2x::native::Renderer::instance().drawGsKeyed(key, spriteMaterial(pageRegs, alpha), corners.data(),
                                                            static_cast<uint32_t>(corners.size()));
@@ -2459,7 +2468,7 @@ namespace sc3
             GsVertex v;
             v.x = static_cast<float>(xyz[0] & 0xFFFFu) / 16.0f;
             v.y = static_cast<float>(xyz[1] & 0xFFFFu) / 16.0f;
-            v.z = xyz[2];
+            v.z = xyzfZ(xyz[2]);
             std::memcpy(&v.s, &st[0], 4);
             std::memcpy(&v.t, &st[1], 4);
             std::memcpy(&v.q, &st[2], 4);
