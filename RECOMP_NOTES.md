@@ -694,6 +694,32 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
 - The offline GS memory model (`scripts/sc3_texture_pack.py`) takes PSMT8H / PSMT4HL / PSMT4HH uploads: the pause
   menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack.
 - Still the game's on the pause menu: 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET (frame context, M7).
+- Menu preview movies (Single Player Modes: a 256x192 and a 128x96 alpha movie, both drawn through pages at TBP
+  0x3D00 of the 0x130-byte leaves /2/33 and /2/34, whose upload list has no texels on disc): the movie task 0x217F78
+  with flag 1 copies `mwPlyGetCurFrm`'s macroblocks into a texture file's pixels (0x217E28: rows of width x 4 bytes;
+  flag 8 copies the top half of the macroblock rows only) and points the file's upload there (0x118B68 -> 0x119BB0 ->
+  0x11A4F0); type-2 draw items (uploads 1, head 0) draw it: the picture and a dim copy over the whole screen (colour
+  19, ALPHA 0x52). With the native 2D on, 0x217E28 is skipped, the pages of a file 0x118B68 points at those pixels
+  take the host decoder's picture as a native texture (alpha from the mask half, 0x80 = 1.0; a version per picture in
+  three slots, PS2Recomp's `NativeTexture::version`), `mwPlyGetCurFrm` writes no macroblocks for a player the task
+  copied in the last 60 frames, and the items' uploads go with their packets. Check mode compares the game's copy
+  with the host picture over the rows it writes (regress route: 1,680 pictures, 0 texels differing). The GS path shows the top half of these previews only (flag 8
+  halves the height `mwPlyGetCurFrm` reports, already without the mask half): the native one shows the whole
+  picture, so off / on stills differ over the preview and the dim copy. The flag 0x20 path (0x2174C0 -> 0x216E60,
+  16x16 GIF image transfers to TBP 0x2C40 and a sprite) was not seen on the route.
+- 0x21A8A8 and 0x2286B8 are not the fight's HUD: hidden in a fight (`SC3_HIDE_EE`) the attack data panel, the
+  HIGH / MID labels and the combo count stay; they run about once every two frames during hits, build vertices into a
+  buffer of their task (0x226FF0) and mark a group bit (0x2154F0): hit effects, drawn elsewhere (3D / effects).
+- 0x12DB20 is the frame (from the main loop through 0x18E240): its own append (~24 quadwords) is SCANMSK, TEXA,
+  PABE, FBA_1 / FBA_2 and the two drawing environments of 0x13B3F0 (FRAME, ZBUF, XYOFFSET, SCISSOR, TEST, DTHE);
+  0x127620 appends one A+D write: TEXFLUSH from 0x12A400, TEXA (TA1 0x80) and TEXFLUSH from 0x12A8A0. Frame context,
+  M7.
+- Census with the native 2D on (regress route, nested item insertions counted for the item's caller): menus and
+  pause: only frame context (0x1214D8, 0x12CB40, 0x12DB20, 0x12A400 / 0x127620: M7) and the frame-buffer-sampling
+  pass 0x1410E8 / 0x1415E8 (also from 0x141B24 / 0x141C48 during loads, M5). Still the game's: 0x1220C0 (one
+  untextured ALPHA_1 quad through 0x120978, ~150 a frame in one window after the menus) and, in the fight, the draw
+  item type at 0x112148 (~0.6 a frame through 0x110D78, page file /2/165, whose upload items stay for it). Type-2
+  sprites of a CT24 page at TBP 0x2C40 or 0 (a render target of the M5 pass) go to the GS after the menus.
 
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
