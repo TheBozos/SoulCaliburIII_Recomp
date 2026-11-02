@@ -592,8 +592,9 @@ REF of a 64-qword upload unit) rewritten in place for the colour edits (REF addr
 `SC3_TEXTURE_DUMP=<dir>`, which writes RDRAM, the ROOT.OLK read map and the frame's groups when `<dir>/request`
 appears), so the pack drew the character in the disc's colours (all green). The converter records, per texture, the
 leaf offset of each palette entry's upload word and the runs of its texels' upload words with their CRC-32 as on the
-disc (`SC3KEYS2`). At the per-part hook a texture is checked once a frame against the game's copy of that data, where
-the group's leaf was read or copied: a changed palette gives the pack's texels decoded under the game's colours (kept
+disc (`SC3KEYS2`). At the per-part hook a texture is checked against the game's copy of that data, where the group's
+leaf was read or copied (the reads next to it that continue it both in RDRAM and in ROOT.OLK included), the palette
+once a frame, the texels one frame in eight (a fight: about 110 textures and 165 KB a frame): a changed palette gives the pack's texels decoded under the game's colours (kept
 by content, a new native texture key per palette); changed texels are counted (none seen so far) and keep the pack's.
 `[sc3:gs]` reports the textures checked, the bytes read, palettes and texels changed, and data outside what the game
 read. Creation also CALLs every item's upload lists before drawing any item, the items sharing their TEX0s, so a part

@@ -133,7 +133,7 @@ namespace sc3
         }
 
         // The pack entry a texture CALL's target is: the ROOT.OLK bytes the game read where it sits, in a packed leaf.
-        // `game` gets where the game holds that leaf.
+        // `game` gets where the game holds that leaf: the reads around it that continue it in RDRAM and in ROOT.OLK.
         const TextureKeys::Entry *entryAt(uint32_t address, TextureKeys::GameData *game = nullptr)
         {
             auto read = g_reads.upper_bound(address);
@@ -152,6 +152,20 @@ namespace sc3
                 game->lo = read->first;
                 game->hi = read->second.end;
                 game->frame = g_frames;
+                for (auto before = read; before != g_reads.begin();)
+                {
+                    const auto prev = std::prev(before);
+                    if (prev->second.end != before->first || prev->second.olk + (before->first - prev->first) != before->second.olk)
+                        break;
+                    game->lo = prev->first;
+                    before = prev;
+                }
+                for (auto after = std::next(read), last = read; after != g_reads.end(); last = after++)
+                {
+                    if (last->second.end != after->first || last->second.olk + (after->first - last->first) != after->second.olk)
+                        break;
+                    game->hi = after->second.end;
+                }
             }
             return entry;
         }

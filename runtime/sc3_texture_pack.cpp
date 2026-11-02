@@ -198,14 +198,15 @@ namespace sc3
         return decoded->second.native.rgba ? &decoded->second.native : nullptr;
     }
 
-    // The game's palette words where its upload data has them, and the CRC-32 of its texels' upload data, against the
-    // disc's (palette record, key CRC). Changed palette: the pack's texels under the game's colours. Changed texels are
-    // counted and keep the pack's.
+    // The game's palette words where its upload data has them, and the CRC-32 of its texels' upload data (one frame in
+    // eight), against the disc's (palette record, key CRC). Changed palette: the pack's texels under the game's colours.
+    // Changed texels are counted and keep the pack's.
     const ps2x::native::NativeTexture *TextureKeys::live(const List &list, const Key &key, const GameData &game)
     {
         Live &live = m_live[{&key, game.leaf}];
         if (live.frame == game.frame)
             return live.texture;
+        const bool texelsDue = live.frame == ~0ull || ((game.frame + (reinterpret_cast<uintptr_t>(&key) >> 4)) & 7u) == 0u;
         live.frame = game.frame;
         ++m_liveStats.checked;
         const auto at = [&](uint32_t offset, uint32_t bytes) -> const uint8_t *
@@ -235,7 +236,7 @@ namespace sc3
             palette[i] = colour;
         }
         uint32_t crc = 0;
-        for (uint32_t r = 0; r < key.runs; ++r)
+        for (uint32_t r = 0; texelsDue && r < key.runs; ++r)
         {
             const uint32_t offset = sources[key.paletteEntries + r * 2u], bytes = sources[key.paletteEntries + r * 2u + 1u];
             const uint8_t *data = at(offset, bytes);
@@ -248,7 +249,7 @@ namespace sc3
             m_liveStats.bytes += bytes;
         }
         m_liveStats.outside += outside ? 1u : 0u;
-        if (!outside && crc != key.crc)
+        if (texelsDue && !outside && crc != key.crc)
             ++m_liveStats.texels;
         if (!paletteChanged)
             return live.texture = decoded(list, key);
