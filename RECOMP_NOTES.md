@@ -586,6 +586,24 @@ At run time (only on the native GS renderer):
   the pack, and the GS image transfers the GS front end still reads from GIF packets (`GS::imageTransfers`); direct
   draws textured from the pack or from GS memory, the most frequent misses by TBP, PSM and CBP.
 
+Upload data the game changes (2026-11-02): the pack holds the disc's textures, but the game may rewrite the upload data
+in RDRAM before it sends it. Character Creation does: the created character's leaves get their 1 KB CLUT payloads (the
+REF of a 64-qword upload unit) rewritten in place for the colour edits (REF addresses and texels unchanged; found with
+`SC3_TEXTURE_DUMP=<dir>`, which writes RDRAM, the ROOT.OLK read map and the frame's groups when `<dir>/request`
+appears), so the pack drew the character in the disc's colours (all green). The converter records, per texture, the
+leaf offset of each palette entry's upload word and the runs of its texels' upload words with their CRC-32 as on the
+disc (`SC3KEYS2`). At the per-part hook a texture is checked once a frame against the game's copy of that data, where
+the group's leaf was read or copied: a changed palette gives the pack's texels decoded under the game's colours (kept
+by content, a new native texture key per palette); changed texels are counted (none seen so far) and keep the pack's.
+`[sc3:gs]` reports the textures checked, the bytes read, palettes and texels changed, and data outside what the game
+read. Creation also CALLs every item's upload lists before drawing any item, the items sharing their TEX0s, so a part
+takes its texture from the groups of the leaf (or copy) it sits in first, then from the latest group as before.
+State: the colours match the GS path's; the GS path still draws every Creation item in the last item's texture data
+(the 33 item lists all write CLUT 0x2c40 and texels 0x2c44 with no sync point between them, and the GS front end
+plays them before the items' draws), the native path each item in its own (which of the two the hardware shows is not
+checked yet). Chronicles field map: A:0x450, A:0xf68, B:0x910, B:0x1a40 not native yet, about 70 parts a frame without
+a pack texture, and two dark ground quads drawn only by the native path. Museum Character Profiles: at the floor.
+
 `SC3_TEXTURE_PACK=<file>` names the pack (the scripts pass `build/sc3_textures.pack` when it exists);
 `SC3_TEXTURE_PACK_MODE=1` uses it (off by default: see the state below), `=keep` draws from it with the game's uploads
 still sent, `=@file` reads 0 / keep / 1 every 16 frames (`REGRESS_TEXPACK_AB`). `PS2X_NATIVE_TEXTURE_CHECK=1`, with the uploads
