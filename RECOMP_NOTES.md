@@ -632,12 +632,30 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   the call frame on the guest stack as the game's, glyph runs 0x11E160, measure 0x11E740, flushes 0x11E898 /
   0x11E9B0, placement 0x11E068, TEX2_2 / ALPHA_2 writes 0x11DF40 / 0x11DFC8 with the packet's bookkeeping kept as
   offsets so packets end where the game's do; the control codes 0x23..0x25 go to the game's formatter 0x11CBC8, game
-  logic that builds no packet), 0x123340 (untextured sprite; mode 0 stays the game's: the textured strips 0x1134A0 that
-  follow it in the GIF list draw with the ALPHA_2 its packet leaves), 0x1223D0 (antialiased line), 0x1280F8 (menu
+  logic that builds no packet), 0x123340 (untextured sprite; in the GIF list, mode 0, it stays the game's: native there it hides the pause panel and
+  its text, cause not found yet; the strips after it set their own ALPHA_2, so that is not it), 0x1223D0 (antialiased line), 0x1280F8 (menu
   icons), the screen-effect layer 0x12C690 / 0x12C7E0 (the background behind the 3D: a sky and a ground band split at
-  the projected horizon, opaque, Z written 0, context 1; a rolled camera and mode 1 stay the game's). The once-a-frame
-  uploads of the font (0x11FCF0), the labels' file (0x138860) and the icons (0x128080) are dropped while those draws are
-  native.
+  the projected horizon, opaque, Z written 0, context 1; a rolled camera and mode 1 stay the game's), 0x1134A0 and
+  0x110E50 (below). The once-a-frame uploads of the font (0x11FCF0), the labels' file (0x138860) and the icons
+  (0x128080) are dropped while those draws are native.
+- Draw items: objects carry items dispatched by type through the table at 0x4676A8 (3 0x110E50 object sprites, 9
+  0x1134A0 textured triangle strips, 13 0x115600 a texture upload for later draws). An item's head (0x113300 /
+  0x10FE50): +0x1C 0 a REF of page +0x18 of the file +0x14; 1 a REF of a register block at +0x14 (for object sprites a
+  context-1 block in a leaf: TEX0_1, ALPHA_1, TEST_1 and the page's texture, from the 2D pack); 2 a copy of a page's
+  block made earlier by 0x1191D0 / 0x119318 / 0x119248 (file, out, page, CLUT: CBP as it is, plus an offset, or set),
+  recorded by where it went so the draw finds the page and its CLUT in the pack without reading the copy. Insertion by
+  +0xA & 3 through the table at 0x467510 (0x1132A8 the GIF list, 0x10D9A0, 0x110D78, 0x113250: 0x120978's modes).
+- 0x1134A0 (VU0 macro code, in C++ on a copy of VU0 with the recompiler's float operations): packets of up to 0x9C
+  vertices (+0 ST, +0xC a restart word, +0x10 position, +0x20 colour) and the two before them, through the matrix +0x1D
+  picks (0x101058, in C++), Z from the projection when +0x1F is set, ADC on a vertex behind w 0.08 or off the GS's
+  range and on the two after it; PRIM 0x254 (0x54 in context 1) | +0xB, its own ALPHA_2; at the vertices' mean 1 / w
+  (a fixed depth when +0x28 < 0), +0x2C the mean w. Drawn as the strip's triangles (each vertex without ADC from the
+  third on).
+- 0x110E50 (VU0 macro code): per 0x50-byte entry one rotated quad (a strip of four, PRIM 0x254) with its own head,
+  TEXA / TEST_2 when the item asks, colour from bytes times the view's +0x390 halfwords or from floats; the angle's sine
+  and cosine are 0x100AC0's set-up in C++ around its VU0 microprogram 0x38, run as vcallms runs it (calling 0x100AC0 as
+  EE code from a hook can resume after its indirect jump with other registers in a0 / a1: its stores then go to the
+  item). Page sizes for the ST table 0x467580 come from the pack's page (0x118020 reads them from the block).
 - Calling game code from C++: a recompiled function returns to the dispatcher at a call when an EE checkpoint is due
   (`ctx->pc` the callee), so a call that must finish runs to its return (`runToReturn`: `lookupFunction(ctx->pc)` until
   the return address with the caller's stack pointer). SC3 keeps stacks and packets in the scratchpad: every guest
@@ -650,8 +668,7 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
   still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
   included): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on.
-- Still the game's on the pause menu: 0x1134A0 (textured triangle strips inserted through the table at 0x467510),
-  0x110E50 (object sprites, VU0), 0x115600 (an upload and TEXFLUSH), 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET.
+- Still the game's on the pause menu: 0x115600 (an upload and TEXFLUSH), 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET.
 
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
