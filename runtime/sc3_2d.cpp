@@ -165,8 +165,10 @@ namespace sc3
             // insertion function: calls and quadwords.
             std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> inserted;
             uint64_t frames = 0, bound = 0, boundBad = 0;
-            // Texture files of draw items, by the last frame an item of theirs was drawn natively / left to the GS.
-            std::map<uint32_t, uint64_t> itemFilesNative, itemFilesGs;
+            // Texture files of draw items: the last frame an item of theirs linked a game packet, the first frame their upload
+            // item (0x115600) was seen, and the file of the item type still the game's that runs now.
+            std::map<uint32_t, uint64_t> itemFilesGs, uploadFilesSeen;
+            uint32_t gsItemFile = 0;
         };
 
         State g_state;
@@ -2176,8 +2178,9 @@ namespace sc3
 
         // 0x115600 (a0 -> item, type 13 of the draw items): CALLs of the upload lists of the texture file +0x14 (0x117920 /
         // 0x118430) or of the block +0x10 (0x117B80 / 0x118700), then TEXFLUSH, for later draws. Dropped while the native 2D
-        // is on, every page of the file is in the pack with its texture, the file's items were drawn natively in the last
-        // frames and none of them went to the GS for a while (the other item types draw from these uploads on the GS).
+        // is on, every page of the file +0x14 is in the pack with its texture and no item of it linked a game packet for a
+        // while (the item types still the game's draw from these uploads on the GS); never in the first two frames the
+        // upload is seen, so such an item is found before.
 
         constexpr uint32_t kUploadItem = 0x00115600u;
         constexpr uint64_t kGsItemFrames = 120u;
@@ -2186,10 +2189,10 @@ namespace sc3
         {
             State &s = g_state;
             const uint32_t item = getRegU32(ctx, 4), file = peek32(item + 0x14u);
-            const auto native = s.itemFilesNative.find(file);
             const auto gs = s.itemFilesGs.find(file);
-            bool packed = s.mode == Mode::On && peek32(item + 0x10u) == 0u && fileAddress(file) && native != s.itemFilesNative.end() &&
-                          native->second + 2u >= s.frames && (gs == s.itemFilesGs.end() || gs->second + kGsItemFrames < s.frames);
+            const uint64_t seen = s.uploadFilesSeen.try_emplace(file, s.frames).first->second;
+            bool packed = s.mode == Mode::On && fileAddress(file) && seen + 2u <= s.frames &&
+                          (gs == s.itemFilesGs.end() || gs->second + kGsItemFrames < s.frames);
             const uint32_t pages = packed ? peek8(file + 5u) + peek8(file + 7u) * 256u : 0u;
             packed = packed && pages != 0u;
             for (uint32_t i = 0; packed && i < pages; ++i)
@@ -2674,26 +2677,35 @@ namespace sc3
         {
             State &s = g_state;
             const uint32_t file = itemTextureFile(getRegU32(ctx, 4));
-            const uint64_t toGs = stats.toGs, native = stats.native;
+            const uint64_t toGs = stats.toGs;
             draw(rdram, ctx, runtime);
             if (stats.toGs != toGs || s.mode != Mode::On)
                 s.itemFilesGs[file] = s.frames;
-            else if (stats.native != native)
-                s.itemFilesNative[file] = s.frames;
         }
 
         void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(stripsDraw, g_state.strips, rdram, ctx, runtime); }
         void objects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(objectsDraw, g_state.objects, rdram, ctx, runtime); }
 
-        // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600).
-        constexpr uint32_t kGsItems[] = {0x00110258u, 0x00112148u, 0x001107E0u, 0x001124B8u, 0x001117D8u, 0x00113AF8u,
-                                         0x00114B50u, 0x00115018u, 0x00115BE0u, 0x00115E48u, 0x00116128u};
+        // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600), each
+        // with its end: a packet linked from inside one marks the file of the item that runs.
+        constexpr std::pair<uint32_t, uint32_t> kGsItems[] = {
+            {0x00110258u, 0x001107E0u}, {0x001107E0u, 0x00110D78u}, {0x001117D8u, 0x00112148u}, {0x00112148u, 0x001124B8u},
+            {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00114B50u, 0x00115018u}, {0x00115018u, 0x00115600u},
+            {0x00115BE0u, 0x00115E48u}, {0x00115E48u, 0x00116128u}, {0x00116128u, 0x00116490u}};
+
+        bool inGsItem(uint32_t ra)
+        {
+            for (const auto &[start, end] : kGsItems)
+                if (ra >= start && ra < end)
+                    return true;
+            return false;
+        }
 
         void gsItem(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
             const uint32_t at = ctx->pc;
-            s.itemFilesGs[itemTextureFile(getRegU32(ctx, 4))] = s.frames;
+            s.gsItemFile = itemTextureFile(getRegU32(ctx, 4));
             callOriginal(at, rdram, ctx, runtime);
         }
 
@@ -3779,6 +3791,8 @@ namespace sc3
                 for (uint32_t q = base; q < end && words.size() < 0x400u; q += 16u)
                     words.push_back({peek32(q), peek32(q + 4u), peek32(q + 8u), peek32(q + 12u)});
             }
+            if (inGsItem(getRegU32(ctx, 31)))
+                s.itemFilesGs[s.gsItemFile] = s.frames;
             if (std::find(std::begin(kInserts), std::end(kInserts), at) == std::end(kInserts))
             {
                 callOriginal(at, rdram, ctx, runtime);
@@ -3979,8 +3993,8 @@ namespace sc3
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         wrap(runtime, kUploadItem, uploadItem);
-        for (const uint32_t address : kGsItems)
-            wrap(runtime, address, gsItem);
+        for (const auto &item : kGsItems)
+            wrap(runtime, item.first, gsItem);
         s.format = runtime.lookupFunction(kTextFormat);
         wrap(runtime, kFrameKick, frameKick);
         for (const uint32_t address : kInserts)
