@@ -3632,7 +3632,10 @@ namespace sc3
             return w;
         }
 
-        void compareObjects(BuilderStats &stats, const ObjectCall &call, bool refHead, const std::vector<std::vector<Qword>> &game)
+        using ObjectWords = std::vector<Qword> (*)(const ObjectCall &, const ObjectSprite &);
+
+        void compareObjects(BuilderStats &stats, const ObjectCall &call, bool refHead, const std::vector<std::vector<Qword>> &game,
+                            ObjectWords objectWords, const char *name)
         {
             size_t inserted = 0;
             for (const ObjectSprite &o : call.sprites)
@@ -3641,7 +3644,7 @@ namespace sc3
             if (inserted != game.size())
             {
                 if (++stats.checkCountDiffs <= 4u)
-                    std::fprintf(stderr, "[sc3:2d] check objects: %zu sprites native, %zu game\n", inserted, game.size());
+                    std::fprintf(stderr, "[sc3:2d] check %s: %zu sprites native, %zu game\n", name, inserted, game.size());
                 return;
             }
             size_t g = 0;
@@ -3654,12 +3657,12 @@ namespace sc3
                 if (words.size() < expected.size())
                 {
                     if (++stats.checkCountDiffs <= 4u)
-                        std::fprintf(stderr, "[sc3:2d] check objects: %zu quadwords native, %zu game\n", expected.size(), words.size());
+                        std::fprintf(stderr, "[sc3:2d] check %s: %zu quadwords native, %zu game\n", name, expected.size(), words.size());
                     continue;
                 }
                 const size_t at = words.size() - expected.size();
                 if (refHead && (at != 1u || words[0] != pageRef(call.file, call.page)) && ++stats.checkDiffs <= 8u)
-                    std::fprintf(stderr, "[sc3:2d] check objects: head of %zu quadwords, %08x %08x %08x %08x\n", at, words[0][0], words[0][1],
+                    std::fprintf(stderr, "[sc3:2d] check %s: head of %zu quadwords, %08x %08x %08x %08x\n", name, at, words[0][0], words[0][1],
                                  words[0][2], words[0][3]);
                 for (size_t i = 0; i < expected.size(); ++i)
                 {
@@ -3668,7 +3671,7 @@ namespace sc3
                     for (int k = 0; k < 4; ++k)
                         same &= expected[i][k] == kUnknownWord || expected[i][k] == words[at + i][k];
                     if (!same && ++stats.checkDiffs <= 8u)
-                        std::fprintf(stderr, "[sc3:2d] check objects qword %zu of %zu: native %08x %08x %08x %08x; game %08x %08x %08x %08x\n", i,
+                        std::fprintf(stderr, "[sc3:2d] check %s qword %zu of %zu: native %08x %08x %08x %08x; game %08x %08x %08x %08x\n", name, i,
                                      expected.size(), expected[i][0], expected[i][1], expected[i][2], expected[i][3], words[at + i][0],
                                      words[at + i][1], words[at + i][2], words[at + i][3]);
                 }
@@ -3707,7 +3710,7 @@ namespace sc3
                 s.stripCapture = false;
                 if (built && peek32(kRenderer) == 0u)
                 {
-                    compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets);
+                    compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets, objectWords, "objects");
                 }
                 return;
             }
