@@ -126,6 +126,7 @@ namespace sc3
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
+            std::map<std::string, uint64_t> refused; // "<routine> <reason>"
             std::map<uint64_t, uint64_t> textureMisses;
             std::atomic<uint64_t> marks{0}, marksUnknown{0}, marksNeverReached{0};
         };
@@ -570,6 +571,8 @@ namespace sc3
             // A:0x1AB8: three lights (vf20-22) and, instead of a fourth, a highlight from the fourth normal lane
             // (vf24-26.w) offset by vf15.zw, clamped, scaled by vf16.zw (w at most vf16.y) and added as vf23 * 128.
             bool highlight = false;
+            // A:0x450 / A:0xF68: a vertex also gets bit 15 when the triangle it ends faces away (as B:0x15E8).
+            bool cull = false;
         };
 
         bool routineShade(uint32_t routine, Shade &shade)
@@ -586,6 +589,8 @@ namespace sc3
             case 0x1AB8u: shade = {true, false, false, false, true}; return true;
             case 0x18C0u: shade = {true, true, false, false, true}; return true;
             case 0x1F00u: shade = {false, false, false, true}; return true;
+            case 0x450u: shade = {true, true, false, false, false, true}; return true;
+            case 0xF68u: shade = {false, true, false, false, false, true}; return true;
             default: return false;
             }
         }
@@ -643,7 +648,26 @@ namespace sc3
             }
         }
 
-        void shade(const Header &h, Shade mode, const std::vector<In> &in, std::vector<Out> &out)
+        // Back faces as the culling routines find them: the screen-space cross product (P1 - P0) x (P2 - P0) of the triangle
+        // vertex k ends, negative in z, the winding alternating along the strip and starting reversed when asked.
+        struct BackFaces
+        {
+            float screen[3][2] = {};
+            bool reversed = false;
+            uint32_t next(float x, float y, size_t k)
+            {
+                screen[0][0] = screen[1][0], screen[0][1] = screen[1][1];
+                screen[1][0] = screen[2][0], screen[1][1] = screen[2][1];
+                screen[2][0] = x, screen[2][1] = y;
+                const float a[2] = {screen[1][0] - screen[0][0], screen[1][1] - screen[0][1]};
+                const float b[2] = {screen[2][0] - screen[0][0], screen[2][1] - screen[0][1]};
+                const bool odd = ((k & 1u) != 0u) != reversed;
+                const float z = odd ? b[0] * a[1] - a[0] * b[1] : a[0] * b[1] - b[0] * a[1];
+                return std::signbit(z) ? 0x8000u : 0u;
+            }
+        };
+
+        void shade(const Header &h, Shade mode, const uint32_t tag[4], const std::vector<In> &in, std::vector<Out> &out)
         {
             if (mode.environment)
             {
@@ -652,6 +676,8 @@ namespace sc3
             }
             out.resize(in.size());
             bool outside[3] = {false, false, false};
+            BackFaces faces;
+            faces.reversed = (tag[3] & 1u) != 0u;
             for (size_t k = 0; k < in.size(); ++k)
             {
                 const In &v = in[k];
@@ -711,7 +737,7 @@ namespace sc3
                 o.xyz[0] = ftoi(xs, 16.0f);
                 o.xyz[1] = ftoi(ys, 16.0f);
                 o.xyz[2] = ftoi(zs, 16.0f);
-                const uint32_t clipBit = clipped ? 0x8000u : 0u;
+                const uint32_t clipBit = (clipped ? 0x8000u : 0u) | (mode.cull ? faces.next(xs, ys, k) : 0u);
                 if (mode.fog)
                 {
                     const float fog = std::max(std::min(g[3], h.f(15, 0)), h.f(15, 1));
@@ -1115,7 +1141,7 @@ namespace sc3
             const std::vector<Out> *out = shaded;
             if (!out)
             {
-                shade(s.header, mode, in, own);
+                shade(s.header, mode, tag, in, own);
                 if (s.mode == Mode::Check)
                     checkPart(s.header, routine, tag, in, own);
                 out = &own;
@@ -1190,6 +1216,9 @@ namespace sc3
         struct Skinning
         {
             bool highlight = true, cull = false, orVi3 = false, environment = false;
+            // B:0x910: the colour times h12 with no lights, the texture coordinates scrolled by h4; B:0x1A40: B:0x1CA8's
+            // environment map. Both fogged: the guard's w clamped (h16.x / h15.y, or h9.x / h9.y) in place of vi3.
+            bool fog = false, unlit = false;
         };
 
         bool skinRoutine(uint32_t routine, Skinning &k)
@@ -1202,8 +1231,15 @@ namespace sc3
             case 0x5B0u: k = {false, true, false}; return true;
             case 0x1CA8u: k = {false, false, false, true}; return true;
             case 0x1EF0u: k = {false, true, true, true}; return true;
+            case 0x910u: k = {false, false, false, false, true, true}; return true;
+            case 0x1A40u: k = {false, false, false, true, true, false}; return true;
             default: return false;
             }
+        }
+
+        uint32_t fogWord(float guard, float most, float least)
+        {
+            return static_cast<uint32_t>(ftoi(std::max(std::min(guard, most), least), 16.0f)) & 0xFFFFu;
         }
 
         bool skinBlock(const Header &h, const uint8_t *data, uint32_t qwords, uint32_t tag[4], std::vector<Out> &out, Skinning kind)
@@ -1227,7 +1263,7 @@ namespace sc3
             const uint32_t vi3 = (kind.environment ? h.q[9][3] : h.q[17][3]) & 0xFFFFu;
             const bool reversed = (tag[3] & 0xFFFFu) != 0u;
             float screen[3][2] = {};
-            const auto finish = [&](Out &o, bool clipped, uint32_t flags, const float *position, int k)
+            const auto finish = [&](Out &o, bool clipped, uint32_t flags, const float *position, int k, uint32_t vi3)
             {
                 uint32_t back = 0u;
                 if (kind.cull)
@@ -1283,9 +1319,10 @@ namespace sc3
                     for (int c = 0; c < 3; ++c)
                         r[c] = h.f(4, c) * nrm[0] + h.f(5, c) * nrm[1] + h.f(6, c) * nrm[2];
                     const float position[3] = {p[0] * qv, p[1] * qv, p[2] * qv};
-                    float g[3];
-                    for (int i = 0; i < 3; ++i)
-                        g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * h.f(8, i))));
+                    const float guarded[4] = {position[0], position[1], position[2], p[3]};
+                    float g[4];
+                    for (int i = 0; i < 4; ++i)
+                        g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) + static_cast<double>(sat(static_cast<double>(guarded[i]) * h.f(8, i))));
                     outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                     const bool clipped = outside[0] || outside[1] || outside[2];
                     for (int i = 0; i < 4; ++i)
@@ -1295,10 +1332,15 @@ namespace sc3
                     o.s = (h.f(13, 0) + r[0] * h.f(12, 0)) * qv;
                     o.t = (h.f(13, 1) + r[1] * h.f(12, 1)) * qv;
                     o.q = kind.cull ? qv : (h.f(13, 2) + r[2] * h.f(12, 2)) * qv;
-                    finish(o, clipped, flags, position, k);
+                    finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(9, 0), h.f(9, 1)) : vi3);
                     continue;
                 }
-                if (kind.highlight)
+                if (kind.unlit)
+                {
+                    for (int i = 0; i < 4; ++i)
+                        o.rgba[i] = ftoi(colour[i] * h.f(12, i), 1.0f);
+                }
+                else if (kind.highlight)
                 {
                     float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
                     e[1] = std::min(e[1], h.f(16, 1));
@@ -1321,17 +1363,17 @@ namespace sc3
                 }
                 const float qv = 1.0f / p[3];
                 const float position[4] = {p[0] * qv, p[1] * qv, p[2] * qv, p[3]};
-                float g[3];
-                for (int i = 0; i < 3; ++i)
+                float g[4];
+                for (int i = 0; i < 4; ++i)
                     g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(13, i)) * h.f(14, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * h.f(14, i))));
                 outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                 const bool clipped = outside[0] || outside[1] || outside[2];
                 for (int i = 0; i < 3; ++i)
                     o.xyz[i] = ftoi(position[i], 16.0f);
-                o.s = st[0] * h.f(18, 0) * qv;
-                o.t = st[1] * h.f(18, 1) * qv;
+                o.s = (kind.unlit ? h.f(4, 0) + st[0] * h.f(18, 0) : st[0] * h.f(18, 0)) * qv;
+                o.t = (kind.unlit ? h.f(4, 1) + st[1] * h.f(18, 1) : st[1] * h.f(18, 1)) * qv;
                 o.q = qv;
-                finish(o, clipped, flags, position, k);
+                finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(16, 0), h.f(15, 1)) : vi3);
             }
             return true;
         }
@@ -1364,6 +1406,33 @@ namespace sc3
 
         void noteBones();
 
+        const char *refusal(uint32_t flags, Shade &mode, bool header)
+        {
+            const State &s = g_state;
+            if (!(flags & kFlagProgramA))
+                return "program B";
+            if (!routineShade(flags & 0xFFFFu, mode))
+                return "routine not written";
+            if (!routineAllowed(flags & 0xFFFFu))
+                return "switched off";
+            if (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u))
+                return "setup";
+            if (sp32(0x350u) != 0u)
+                return "bones sent";
+            if (!s.header.valid)
+                return "no header";
+            if (s.header.shine != mode.environment)
+                return "header layout";
+            return nullptr;
+        }
+
+        void noteRefusal(uint32_t flags, const char *why)
+        {
+            char key[64];
+            std::snprintf(key, sizeof(key), "%c:%#x/%#x %s", (flags & kFlagProgramA) ? 'A' : 'B', flags & 0xFFFFu, setupOf(flags), why);
+            ++g_state.stats.refused[key];
+        }
+
         bool drawRawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
@@ -1377,9 +1446,9 @@ namespace sc3
             if (s.frames == g_traceFrame)
                 std::fprintf(stderr, "[sc3:mesh] trace part %#x qwc %u flags %#x ra %#x 368 %#x 36c %#x 384 %#x/%#x 350 %#x\n", address, qwc, flags,
                              getRegU32(ctx, 31), sp32(0x368u), sp32(0x36Cu), sp32(0x384u), sp32(0x388u), sp32(0x350u));
-            if (!(flags & kFlagProgramA) || !routineShade(routine, mode) || !routineAllowed(routine) || (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
-                s.header.shine != mode.environment)
+            if (const char *why = refusal(flags, mode, header))
             {
+                noteRefusal(flags, why);
                 ++s.stats.unsupported;
                 ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | routine];
                 return false;
@@ -1528,10 +1597,15 @@ namespace sc3
             const bool bonesSent = sp32(0x350u) != 0u;
             const uint32_t routine = flags & 0xFFFFu;
             Skinning kind;
-            if (!skinRoutine(routine, kind) || !routineAllowed(0x10000u | routine) || (flags & kFlagShineB) ||
-                (kind.environment != ((flags & kFlagShineA) != 0u)) || (header && setupOf(flags) != (kind.environment ? 0x1990u : 0x10u)) ||
-                !s.header.valid || s.header.shine != kind.environment)
+            const char *why = !skinRoutine(routine, kind) ? "routine not written" : !routineAllowed(0x10000u | routine) ? "switched off"
+                              : (flags & kFlagShineB) || kind.environment != ((flags & kFlagShineA) != 0u) ? "shine flags"
+                              : header && setupOf(flags) != (kind.environment ? 0x1990u : 0x10u) ? "setup"
+                              : !s.header.valid ? "no header" : s.header.shine != kind.environment ? "header layout" : nullptr;
+            if (why)
+            {
+                noteRefusal(flags, why);
                 return false;
+            }
             packs::LoadedImages::Image image;
             const packs::MeshObject *chain = nullptr;
             if (s.loaded.find(list, image) && image.file)
@@ -1580,10 +1654,11 @@ namespace sc3
             if (!(flags & kFlagProgramA))
                 return g_skinning && drawSkinnedPart(ctx, runtime, list, flags, header, materialSent);
             Shade mode;
-            if (!routineShade(routine, mode) || !routineAllowed(routine) ||
-                (header && setupOf(flags) != (mode.environment ? 0x1C80u : 0x10u)) || sp32(0x350u) != 0u || !s.header.valid ||
-                s.header.shine != mode.environment)
+            if (const char *why = refusal(flags, mode, header))
+            {
+                noteRefusal(flags, why);
                 return false;
+            }
             packs::LoadedImages::Image image;
             const packs::MeshObject *chain = nullptr;
             if (s.loaded.find(list, image) && image.file)
@@ -1853,6 +1928,14 @@ namespace sc3
             t.parts = t.native = t.triangles = t.leftToVu1 = t.unsupported = t.notInPack = t.noMaterial = t.noTexture = t.chainParts = 0;
             t.drawsSubmitted = t.kicks = t.checked = t.checkExact = t.checkVertexDiffs = t.checkCountDiffs = 0;
             t.clipped = t.clippedNative = t.clippedToVu1 = t.clippedDropped = 0;
+            if (!t.refused.empty())
+            {
+                std::string refused;
+                for (const auto &[why, n] : t.refused)
+                    refused += " " + why + " x" + std::to_string(n) + ";";
+                std::fprintf(stderr, "[sc3:mesh] parts left to the lifted programs, by routine/setup and reason:%s\n", refused.c_str());
+            }
+            t.refused.clear();
             t.routinesLeft.clear();
             t.textureMisses.clear();
         }
