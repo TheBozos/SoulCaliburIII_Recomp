@@ -27,4 +27,9 @@ namespace sc3
     // frame being built has CALLed, the latest first, or null. True from texturePackReady() on.
     const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height);
     bool texturePackReady();
+    // Game thread, a part left to VU1: the GS samples what TEX0 selects from GS memory, so the upload group the pack
+    // finds it in (as packTextureAtHook would) is still sent; with its texture unknown or in no group, every group feeding
+    // textures the pack lacks is too (with it unknown, every group).
+    void packNoteGsUse(uint64_t tex0, uint32_t width, uint32_t height);
+    void packNoteGsUseAny();
 }

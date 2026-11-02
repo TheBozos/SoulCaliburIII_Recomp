@@ -7,6 +7,7 @@
 #include "ps2_runtime_macros.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/native/native_gs_hook.h"
+#include "runtime/vif1_command_stats.h"
 
 #include <algorithm>
 #include <atomic>
@@ -43,6 +44,9 @@ namespace sc3
         constexpr uint32_t kTextureCallOt = 0x00104E94u;
         constexpr uint32_t kAnimatedTextureCallOt = 0x00104E34u;
         constexpr uint32_t kScratchpad = 0x70000000u;
+        constexpr uint32_t kPacketState = 0x005BE700u;
+        constexpr uint32_t kCallTag = 0x50000000u;
+        constexpr uint32_t kEmptyCntTag = 0x10000000u;
         constexpr uint32_t kSector = 2048u;
 
         using Function = PS2Runtime::RecompiledFunction;
@@ -51,7 +55,10 @@ namespace sc3
         struct Group
         {
             const TextureKeys::Entry *entry = nullptr;
-            uint32_t syncs = 0; // GIF sync points before its CALL: its segment of the GIF / VIF1 handshake
+            uint32_t syncs = 0;  // GIF sync points before its CALL: its segment of the GIF / VIF1 handshake
+            uint32_t target = 0; // the CALL's target
+            uint32_t tag = 0;    // where 0x10EF78 / 0x10D9A0 copy the CALL tag (the GIF list, an ordering table), 0 unknown
+            bool gsUse = false;  // a part left to VU1 may sample what it uploads
         };
 
         struct Read
@@ -62,7 +69,7 @@ namespace sc3
 
         struct Stats
         {
-            uint64_t calls = 0, packed = 0, leftOut = 0, unknown = 0;
+            uint64_t calls = 0, packed = 0, leftOut = 0, unknown = 0, gsUse = 0, misplaced = 0, incomplete = 0, untagged = 0;
             std::atomic<uint64_t> bound{0}, missed{0};
         };
 
@@ -90,6 +97,9 @@ namespace sc3
         Stats g_stats;
         uint64_t g_frames = 0;
         uint64_t g_lastTransfers = 0, g_lastBytes = 0;
+        uint64_t g_lastVif1[0x80] = {};
+        uint64_t g_lastStarts = 0;
+        bool g_gsMiss = false; // the frame being built: a part left to VU1 sampled a texture no group has in the pack
 
         // VIF1 thread.
         std::vector<Group> g_drawing;
@@ -178,14 +188,14 @@ namespace sc3
             return peek32(table + static_cast<uint32_t>(ps2FpuCvtWS(frame)) * 4u);
         }
 
-        const TextureKeys::Entry *noteCall(R5900Context *ctx, uint32_t ra)
+        const TextureKeys::Entry *noteCall(R5900Context *ctx, uint32_t ra, uint32_t tag)
         {
             const uint32_t target = callTarget(ctx, ra);
             const TextureKeys::Entry *entry = entryAt(target);
             if (censusTracingDraws())
                 std::fprintf(stderr, "[sc3:trace] pack group %zu after %u syncs: call %#x ra=%#x %s\n", g_building.size(), g_syncs, target, ra,
                              entry ? "in the pack" : "not in the pack");
-            g_building.push_back(Group{entry, g_syncs});
+            g_building.push_back(Group{entry, g_syncs, target, tag});
             ++g_stats.calls;
             if (entry)
                 ++g_stats.packed;
@@ -194,37 +204,55 @@ namespace sc3
             return entry;
         }
 
-        // 0x10F808 without its copy to the GIF list (0x10EF78): the scratchpad half flips as it would.
-        void closeWithoutUpload(R5900Context *ctx)
-        {
-            const uint32_t half = peek32(kScratchpad + 4u) ^ 1u;
-            poke32(kScratchpad + 4u, half);
-            poke32(kScratchpad, peek32(kScratchpad + 8u + half * 4u));
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
+        // The texture CALL is the packet's only qword: 0x10EF78 copies it to the GIF list's cursor.
         void gifPacketClose(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t ra = getRegU32(ctx, 31);
             if (ra == kTextureCall || ra == kAnimatedTextureCall)
             {
-                const TextureKeys::Entry *entry = noteCall(ctx, ra);
-                if (g_mode == PackMode::On && entry && entry->complete && getRegU32(ctx, 4) == peek32(kScratchpad) + 16u)
-                {
-                    ++g_stats.leftOut;
-                    closeWithoutUpload(ctx);
-                    return;
-                }
+                const bool alone = getRegU32(ctx, 4) == peek32(kScratchpad) + 16u && peek32(kPacketState) == 0u;
+                noteCall(ctx, ra, alone ? peek32(kPacketState + 8u) : 0u);
             }
             callOriginal(kGifPacketClose, rdram, ctx, runtime);
         }
 
+        // The texture CALL heads a two-qword packet at depth 0: 0x10D9A0 copies it below the ordering table's last
+        // element, 128-byte aligned.
         void otInsert(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t ra = getRegU32(ctx, 31);
             if (ra == kTextureCallOt || ra == kAnimatedTextureCallOt)
-                noteCall(ctx, ra);
+            {
+                const uint32_t cursor = peek32(kScratchpad), end = getRegU32(ctx, 4);
+                const bool placed = peek32(kPacketState) == 0u && ctx->f[12] == 0.0f && getRegU32(ctx, 5) == cursor + 16u && end > cursor;
+                noteCall(ctx, ra, placed ? (peek32(kPacketState + 0x30u) - ((end - cursor) & ~15u)) & ~0x7Fu : 0u);
+            }
             callOriginal(kOtInsertDepth, rdram, ctx, runtime);
+        }
+
+        // At the kick, before the game sends the frame: the CALL of each group no part left to VU1 may sample becomes an
+        // empty CNT, so its uploads are not sent. A group whose uploads also feed textures the pack lacks (partly written by
+        // other uploads) is still sent when a part left to VU1 sampled a texture no group of the frame has in the pack.
+        void leaveOutUploads()
+        {
+            for (const Group &g : g_building)
+            {
+                if (!g.entry || g.gsUse)
+                    continue;
+                if ((!g.entry->complete && g_gsMiss) || g.tag == 0u)
+                {
+                    ++(g.tag == 0u ? g_stats.untagged : g_stats.incomplete);
+                    continue;
+                }
+                const uint32_t word = peek32(g.tag);
+                if ((word & 0x7000FFFFu) != kCallTag || peek32(g.tag + 4u) != g.target)
+                {
+                    ++g_stats.misplaced;
+                    continue;
+                }
+                poke32(g.tag, (word & ~0x70000000u) | kEmptyCntTag);
+                ++g_stats.leftOut;
+            }
         }
 
         void report()
@@ -234,13 +262,33 @@ namespace sc3
             GS &gs = g_runtime->gs();
             const uint64_t transfers = gs.imageTransfers(), bytes = gs.imageBytes();
             std::fprintf(stderr,
-                         "[sc3:packets] %llu frames: texture uploads called %llu, from the pack %llu (left out %llu, sent %llu), not "
-                         "in the pack %llu; GS image transfers read from GIF packets %llu (%llu bytes)\n",
+                         "[sc3:packets] %llu frames: texture uploads called %llu, from the pack %llu (left out %llu, sent %llu: a part "
+                         "left to VU1 may sample them %llu, CALL tag not where expected %llu, feeding textures the pack lacks one of those may sample %llu, CALL tag "
+                         "place unknown %llu), not in the pack %llu; GS image transfers "
+                         "read from GIF packets %llu (%llu bytes)\n",
                          250ull, static_cast<unsigned long long>(g_stats.calls), static_cast<unsigned long long>(g_stats.packed),
                          static_cast<unsigned long long>(g_stats.leftOut),
-                         static_cast<unsigned long long>(g_stats.packed - g_stats.leftOut),
+                         static_cast<unsigned long long>(g_stats.packed - g_stats.leftOut), static_cast<unsigned long long>(g_stats.gsUse),
+                         static_cast<unsigned long long>(g_stats.misplaced), static_cast<unsigned long long>(g_stats.incomplete),
+                         static_cast<unsigned long long>(g_stats.untagged),
                          static_cast<unsigned long long>(g_stats.unknown), static_cast<unsigned long long>(transfers - g_lastTransfers),
                          static_cast<unsigned long long>(bytes - g_lastBytes));
+            uint64_t vif1[0x80];
+            for (uint32_t op = 0; op < 0x80u; ++op)
+                vif1[op] = ps2_vif1_command_stats::bytes(static_cast<uint8_t>(op));
+            const auto since = [&](uint32_t op) { return static_cast<unsigned long long>(vif1[op] - g_lastVif1[op]); };
+            uint64_t other = 0;
+            for (uint32_t op = 0; op < 0x80u; ++op)
+                if (op != 0x07u && op != 0x4Au && op != 0x50u && op != 0x51u && op != 0x60u)
+                    other += vif1[op] - g_lastVif1[op];
+            const uint64_t starts = ps2_vif1_command_stats::commands(0x14u) + ps2_vif1_command_stats::commands(0x15u) + ps2_vif1_command_stats::commands(0x17u);
+            std::fprintf(stderr,
+                         "[sc3:packets] %llu frames: VIF1 bytes read: UNPACK %llu, MPG %llu, DIRECT %llu, MARK %llu, other codes %llu; "
+                         "microprograms started %llu\n",
+                         250ull, since(0x60u), since(0x4Au), since(0x50u) + since(0x51u), since(0x07u), static_cast<unsigned long long>(other),
+                         static_cast<unsigned long long>(starts - g_lastStarts));
+            std::memcpy(g_lastVif1, vif1, sizeof(vif1));
+            g_lastStarts = starts;
             std::string misses;
             {
                 std::lock_guard<std::mutex> lock(g_missMutex);
@@ -262,7 +310,7 @@ namespace sc3
                          misses.empty() ? " no misses" : misses.c_str());
             g_lastTransfers = transfers;
             g_lastBytes = bytes;
-            g_stats.calls = g_stats.packed = g_stats.leftOut = g_stats.unknown = 0;
+            g_stats.calls = g_stats.packed = g_stats.leftOut = g_stats.unknown = g_stats.gsUse = g_stats.misplaced = g_stats.incomplete = g_stats.untagged = 0;
         }
 
         PackMode parseMode(const std::string &value)
@@ -289,6 +337,12 @@ namespace sc3
         {
             if (!g_switchPath.empty() && (g_frames & 15u) == 0u)
                 followSwitch();
+            if (g_mode == PackMode::On)
+                leaveOutUploads();
+            g_gsMiss = false;
+            for (const Group &g : g_building)
+                if (g.gsUse && g.entry && g.entry->complete)
+                    ++g_stats.gsUse;
             {
                 std::lock_guard<std::mutex> lock(g_framesMutex);
                 g_kicked.push_back(std::move(g_building));
@@ -361,6 +415,25 @@ namespace sc3
     }
 
     bool texturePackReady() { return texpack::g_runtime != nullptr; }
+
+    void packNoteGsUse(uint64_t tex0, uint32_t width, uint32_t height)
+    {
+        for (size_t g = texpack::g_building.size(); g-- > 0;)
+            if (const TextureKeys::Entry *entry = texpack::g_building[g].entry)
+                if (texpack::g_pack.texture(*entry, tex0, width, height))
+                {
+                    texpack::g_building[g].gsUse = true;
+                    return;
+                }
+        texpack::g_gsMiss = true;
+    }
+
+    void packNoteGsUseAny()
+    {
+        for (texpack::Group &g : texpack::g_building)
+            g.gsUse = true;
+        texpack::g_gsMiss = true;
+    }
 
     const ps2x::native::NativeTexture *packTextureAtHook(uint64_t tex0, uint32_t width, uint32_t height)
     {

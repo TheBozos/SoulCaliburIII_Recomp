@@ -834,6 +834,27 @@ namespace sc3
             return (flags & kFlagShineA) ? 0x1990u : (flags & kFlagShineB) ? 0x21E0u : 0x10u;
         }
 
+        uint32_t usedSize(uint32_t size, uint32_t log2)
+        {
+            const uint32_t whole = 1u << std::min<uint32_t>(log2, 10u);
+            return size != 0u && size < whole ? size : whole;
+        }
+
+        void noteGsUse()
+        {
+            const Material &m = g_state.material;
+            if (!m.known)
+            {
+                packNoteGsUseAny();
+                return;
+            }
+            if (m.tex0 == 0u)
+                return;
+            const auto tex0 = ps2x::gs::decodeTex0(m.tex0);
+            packNoteGsUse(m.tex0, usedSize(static_cast<uint32_t>(m.tagRegs >> 32) & 0xFFFFu, tex0.tw),
+                          usedSize(static_cast<uint32_t>(m.tagRegs >> 48) & 0xFFFFu, tex0.th));
+        }
+
         // A part left to VU1 after native ones: its header and material as the game's state has them, since the native
         // parts before it sent theirs to no one.
         void selfContained(uint32_t flags)
@@ -855,6 +876,7 @@ namespace sc3
             if (sp32(0x350u) != 0u)
                 s.bonesOnVu1 = true;
             s.headerOnVu1 = s.materialOnVu1 = true;
+            noteGsUse();
         }
 
         void noteState(uint32_t flags, uint32_t jump)
@@ -1404,6 +1426,7 @@ namespace sc3
                 return;
             }
             ++s.stats.clippedToVu1;
+            noteGsUse();
             callOriginal(kClipEmit, rdram, ctx, runtime);
         }
 
