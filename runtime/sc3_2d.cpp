@@ -1901,15 +1901,6 @@ namespace sc3
                 callOriginal(kQuad, rdram, ctx, runtime);
                 return;
             }
-            // In the GIF list (mode 0) a native quad hides the pause panel and its text (seen with the strips after it native
-            // too): the game's packet there until the cause is found.
-            if (s.mode == Mode::On && peek32(kInsertMode) == 0u)
-            {
-                ++stats.toGs;
-                stats.gifQwords += 7u;
-                callOriginal(kQuad, rdram, ctx, runtime);
-                return;
-            }
             const uint32_t p = getRegU32(ctx, 4);
             uint32_t rgba = getRegU32(ctx, 5);
             uint64_t alpha = reg64(ctx, 6);
