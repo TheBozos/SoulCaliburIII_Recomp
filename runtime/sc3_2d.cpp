@@ -147,9 +147,9 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects, screenObjects, screenSprites;
+            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects, screenObjects, screenSprites, billboards;
             std::map<uint32_t, uint64_t> objectForms; // 0x110E50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F
-            std::map<uint32_t, uint64_t> screenObjectForms, screenSpriteForms; // 0x1107E0 / 0x110258, as objectForms
+            std::map<uint32_t, uint64_t> screenObjectForms, screenSpriteForms, billboardForms; // 0x1107E0 / 0x110258 / 0x112148, as objectForms
             std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
             struct PageCopy
             {
@@ -2798,8 +2798,7 @@ namespace sc3
         // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600), each
         // with its end: a packet linked from inside one marks the file of the item that runs.
         constexpr std::pair<uint32_t, uint32_t> kGsItems[] = {
-            {0x001117D8u, 0x00112148u}, {0x00112148u, 0x001124B8u},
-            {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00114B50u, 0x00115018u}, {0x00115018u, 0x00115600u},
+            {0x001117D8u, 0x00112148u}, {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00114B50u, 0x00115018u}, {0x00115018u, 0x00115600u},
             {0x00115BE0u, 0x00115E48u}, {0x00115E48u, 0x00116128u}, {0x00116128u, 0x00116490u}};
 
         bool inGsItem(uint32_t ra)
@@ -3896,7 +3895,7 @@ namespace sc3
         // over 0.08. Depth for the insertion: +0x38 over the z, or when +0x38 is not positive -(+0x38) (x 12.5 for mode 1).
         // +0x4A & 0x40 with +0x1F & 0x80 or *(*(0x469230) +0x50) (the display's aspect) picks the width correction.
 
-        constexpr uint32_t kScreenObjects = 0x001107E0u, kScreenSprites = 0x00110258u, kGifListAppend = 0x0010F808u;
+        constexpr uint32_t kScreenObjects = 0x001107E0u, kScreenSprites = 0x00110258u, kBillboards = 0x00112148u, kGifListAppend = 0x0010F808u;
         constexpr uint32_t kScreenTex1 = 0x00467528u; // TEX1_2 by an entry's +0x4B (the item's +0x1D & 1)
         constexpr uint32_t kDisplay = 0x00469230u;    // +0x50: the screen's aspect is not the game's
         constexpr uint32_t kScreenSpriteAspect = 0x00467610u;
@@ -4231,6 +4230,91 @@ namespace sc3
             return true;
         }
 
+        // The sprites 0x112148 builds for `item` (false: none, also when the heap is near full): one GS sprite per entry at
+        // its position (+0 plus +0x10, w +0xC) through the view's 3D matrix, w out to +0x1C, drawn when w is over 0.08; its
+        // half size +0x30 / +0x34 times the view's +0x388 / +0x38C, +0x40 and Q times the view's +0x380, centred; Z times
+        // +0x38, the depth Q times +0x38. Dropped off the GS's range.
+        bool billboardsBuild(uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
+        {
+            if (static_cast<int32_t>(peek32(kRenderer + 0x2Cu) + peek32(kRenderer + 0x1Cu) + 0x64u) > 0x895C)
+                return false;
+            const uint32_t count = peek16(item + 8u);
+            uint32_t e = peek32(item + 0xCu);
+            if (count == 0u || e == 0u)
+                return false;
+            const uint32_t view = peek32(kView);
+            screenCall(item, call);
+            uint64_t prim = 0x95A0ull << 41;
+            if (peek8(item + 0x1Cu) == 1u)
+                prim ^= 1ull << 56;
+            call.tag = ((call.tex1 ? 7ull : 6ull) << 60) | prim | 0x8000u | 1u;
+            call.regs = call.tex1 ? 0x042421EEull : 0x0042421Eull;
+            Vec *vf = vu.vf;
+            screenView(vu, view, kView3dMatrix);
+            for (uint32_t n = 0; n < count; ++n, e += 0x50u)
+            {
+                if (peek8(e + 0x4Cu) == 0u)
+                    continue;
+                const uint32_t table = screenTable(item, pageRegs);
+                if (table == 0u)
+                    continue;
+                ObjectSprite sprite;
+                if (call.tex1)
+                    sprite.tex1 = peek32(kScreenTex1 + peek8(e + 0x4Bu) * 4u);
+                const Vec p = put(loadVec(e), ps2_vadd(loadVec(e), loadVec(e + 0x10u)), 7u);
+                vf[4] = p;
+                Vec acc = ps2_vmul(vf[28], lane(p, 0));
+                acc = ps2_vadd(acc, ps2_vmul(vf[29], lane(p, 1)));
+                acc = ps2_vadd(acc, ps2_vmul(vf[30], lane(p, 2)));
+                Vec v3 = ps2_vadd(acc, ps2_vmul(vf[31], lane(p, 3)));
+                const float w = vecLane(v3, 3);
+                vu.q = ps2_fdiv(1.0f, w);
+                const uint8_t flags = peek8(e + 0x4Au);
+                if ((flags & 6u) != 0u)
+                    vf[24] = ps2_vsub(vf[0], lane(vf[0], 3));
+                pokeFloat(e + 0x1Cu, w);
+                vf[3] = v3;
+                if (!FPU_C_OLT_S(0.08f, w))
+                    continue;
+                v3 = put(v3, ps2_vmul(v3, _mm_set1_ps(vu.q)), 7u);
+                vf[1] = put(vf[1], _mm_set1_ps(vu.q), 1u);
+                const float depth = FPU_MUL_S(vu.q, peekFloat(e + 0x38u));
+                Vec v6 = loadVec(e + 0x30u);
+                const Vec v7 = loadVec(e + 0x40u);
+                v6 = put(v6, ps2_vmul(v6, lane(vf[27], 2)), 1u);
+                v3 = put(v3, ps2_vsub(v3, v3), 8u);
+                sprite.colour = screenColour(vu, e, vf[24], false);
+                v6 = put(v6, ps2_vmul(v6, lane(vf[27], 3)), 2u);
+                v6 = put(v6, ps2_vmul(v6, v7), 3u);
+                v3 = put(v3, ps2_vmul(v3, lane(v6, 2)), 4u);
+                vf[2] = put(vf[2], ps2_vmul(vf[1], vf[27]), 1u);
+                const uint32_t order = peek8(e + 0x4Du);
+                const uint32_t rows = table + peek16(e + 0x48u) * 64u;
+                static constexpr uint32_t kRows[4][2] = {{0u, 3u}, {1u, 2u}, {2u, 1u}, {3u, 0u}};
+                const uint32_t *r = kRows[order < 4u ? order : 0u];
+                sprite.st[0] = stRow(rows + r[0] * 16u);
+                sprite.st[1] = stRow(rows + r[1] * 16u);
+                v6 = put(v6, ps2_vmul(v6, lane(vf[2], 0)), 3u);
+                Vec v4 = v3;
+                v3 = put(v3, ps2_vsub(v3, v6), 3u);
+                v4 = put(v4, ps2_vadd(v4, v6), 3u);
+                v3 = put(v3, ftoiVec(v3, 16.0f), 7u);
+                v4 = put(v4, ftoiVec(v4, 16.0f), 7u);
+                vf[3] = v3;
+                vf[4] = v4;
+                vf[6] = v6;
+                vf[7] = v7;
+                if (offRange(v3) || offRange(v4))
+                    continue;
+                sprite.xyz[0] = vecWords(v3);
+                sprite.xyz[1] = vecWords(v4);
+                sprite.depth = depth;
+                sprite.inserted = true;
+                call.sprites.push_back(sprite);
+            }
+            return true;
+        }
+
         // A sprite's packet from its DMA tag slot: 0x1107E0's 12 registers (NOP or TEX1_2, NOP, ALPHA_2, RGBAQ, four ST /
         // XYZF2), after 0x10FE50's TEXA / TEST_2 packets.
         std::vector<Qword> screenHead(const ObjectCall &call)
@@ -4291,6 +4375,22 @@ namespace sc3
             return w;
         }
 
+        // 0x112148's: [TEX1_2,] ALPHA_2, RGBAQ, two ST / XYZ2.
+        std::vector<Qword> billboardWords(const ObjectCall &call, const ObjectSprite &sprite)
+        {
+            std::vector<Qword> w = screenHead(call);
+            if (call.tex1)
+                w.push_back({sprite.tex1, 0u, 0x15u, 0u});
+            w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+            w.push_back(sprite.colour);
+            for (int i = 0; i < 2; ++i)
+            {
+                w.push_back(sprite.st[i]);
+                w.push_back(sprite.xyz[i]);
+            }
+            return w;
+        }
+
         // The page an object-like item draws from (false: its draws stay the game's), as objectsDraw takes it.
         bool screenPage(uint32_t item, Page &pageRegs, BuilderStats &stats)
         {
@@ -4311,6 +4411,11 @@ namespace sc3
             return screenSpritesBuild(item, vu, call, pageRegs);
         }
 
+        bool billboardsBuildHook(uint8_t *, R5900Context *, PS2Runtime *, uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
+        {
+            return billboardsBuild(item, vu, call, pageRegs);
+        }
+
         void screenItemDraw(uint32_t address, ScreenBuild build, ObjectWords words, const char *name, BuilderStats &stats,
                             std::map<uint32_t, uint64_t> &forms, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -4323,7 +4428,7 @@ namespace sc3
                 return;
             }
             const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
-            const bool sprites = address == kScreenSprites;
+            const bool sprites = address != kScreenObjects;
             ++forms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | peek8(item + 0x1Fu)];
             if (s.mode == Mode::Check)
             {
@@ -4420,6 +4525,12 @@ namespace sc3
                            g_state.screenSpriteForms, rdram, ctx, runtime);
         }
 
+        void billboardsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            screenItemDraw(kBillboards, billboardsBuildHook, billboardWords, "billboards", g_state.billboards, g_state.billboardForms, rdram,
+                           ctx, runtime);
+        }
+
         void screenObjects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             trackItem(screenObjectsDraw, g_state.screenObjects, rdram, ctx, runtime);
@@ -4429,6 +4540,8 @@ namespace sc3
         {
             trackItem(screenSpritesDraw, g_state.screenSprites, rdram, ctx, runtime);
         }
+
+        void billboards(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(billboardsDraw, g_state.billboards, rdram, ctx, runtime); }
 
         void insertion(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -4554,7 +4667,8 @@ namespace sc3
             s.objectForms.clear();
             std::fprintf(stderr, "[sc3:2d]   objects by uploads / head / flags / Z:%s\n", forms.c_str());
             for (auto [name, stats, byForm] : {std::tuple{"screen objects 0x1107E0", &s.screenObjects, &s.screenObjectForms},
-                                               std::tuple{"screen sprites 0x110258", &s.screenSprites, &s.screenSpriteForms}})
+                                               std::tuple{"screen sprites 0x110258", &s.screenSprites, &s.screenSpriteForms},
+                                               std::tuple{"billboards 0x112148", &s.billboards, &s.billboardForms}})
             {
                 reportBuilder(name, *stats);
                 forms.clear();
@@ -4704,6 +4818,7 @@ namespace sc3
         wrap(runtime, kObjects, objects);
         wrap(runtime, kScreenObjects, screenObjects);
         wrap(runtime, kScreenSprites, screenSprites);
+        wrap(runtime, kBillboards, billboards);
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         wrap(runtime, kUploadItem, uploadItem);
