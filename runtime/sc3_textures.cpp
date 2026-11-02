@@ -101,6 +101,7 @@ namespace sc3
         uint64_t g_lastTransfers = 0, g_lastBytes = 0;
         uint64_t g_lastVif1[0x80] = {};
         uint64_t g_lastStarts = 0;
+        std::map<uint32_t, uint64_t> g_unknownCalls; // texture CALL targets not in the pack, this window
         bool g_gsMiss = false; // the frame being built: a part left to VU1 sampled a texture no group has in the pack
 
         // VIF1 thread.
@@ -217,7 +218,10 @@ namespace sc3
             if (entry)
                 ++g_stats.packed;
             else
+            {
                 ++g_stats.unknown;
+                ++g_unknownCalls[target];
+            }
             return entry;
         }
 
@@ -305,6 +309,26 @@ namespace sc3
                          250ull, since(0x60u), since(0x4Au), since(0x50u) + since(0x51u), since(0x07u), static_cast<unsigned long long>(other),
                          static_cast<unsigned long long>(starts - g_lastStarts));
             std::memcpy(g_lastVif1, vif1, sizeof(vif1));
+            if (!g_unknownCalls.empty())
+            {
+                std::vector<std::pair<uint32_t, uint64_t>> sorted(g_unknownCalls.begin(), g_unknownCalls.end());
+                std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+                std::string calls;
+                char item[96];
+                for (size_t i = 0; i < sorted.size() && i < 6u; ++i)
+                {
+                    auto read = g_reads.upper_bound(sorted[i].first);
+                    const bool known = read != g_reads.begin() && sorted[i].first < std::prev(read)->second.end;
+                    if (known)
+                        --read;
+                    std::snprintf(item, sizeof(item), " %#x (ROOT.OLK %s%#llx) x%llu", sorted[i].first, known ? "+" : "unread ",
+                                  static_cast<unsigned long long>(known ? read->second.olk + (sorted[i].first - read->first) : 0u),
+                                  static_cast<unsigned long long>(sorted[i].second));
+                    calls += item;
+                }
+                std::fprintf(stderr, "[sc3:packets] texture CALLs not in the pack:%s\n", calls.c_str());
+                g_unknownCalls.clear();
+            }
             g_lastStarts = starts;
             std::string misses;
             {

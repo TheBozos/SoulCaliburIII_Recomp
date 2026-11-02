@@ -286,6 +286,9 @@ namespace sc3
                 }
                 const uint32_t base = buffer - static_cast<uint32_t>(olk - leaf->offset);
                 const uint64_t end = std::min<uint64_t>(olk + bytes, leaf->offset + leaf->size);
+                if (g_traceLists)
+                    std::fprintf(stderr, "[sc3:mesh] read %s +%#llx..+%#llx at %#x\n", leaf->name.c_str(), static_cast<unsigned long long>(at - leaf->offset),
+                                 static_cast<unsigned long long>(end - leaf->offset), buffer + static_cast<uint32_t>(at - olk));
                 if (leaf->base != base || leaf->bound)
                 {
                     leaf->base = base;
