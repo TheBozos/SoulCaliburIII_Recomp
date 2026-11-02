@@ -191,8 +191,6 @@ namespace sc3
                 ++s.stats.calls[entry];
             s.portNext = false;
             s.recordNext = false;
-            if (nativeMeshesOn()) // its groups are the native meshes' alone
-                return Vu1StreamAdapter::Choice::Vu1;
             if (!s.hidden.empty() && s.hidden.contains(s.names[program], pc))
             {
                 ++s.stats.hidden;
@@ -755,6 +753,7 @@ namespace sc3
         config.screen = screen();
         config.choose = choose;
         config.draw = drawPort;
+        config.drawMark = [](Vu1StreamAdapter &, uint16_t mark) { return drawMeshesAtMark(mark); };
         config.drawDirect = [](Vu1StreamAdapter &, const uint32_t *packet, size_t qwords)
         {
             packNoteDirect(packet, qwords);

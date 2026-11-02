@@ -127,7 +127,7 @@ namespace sc3
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
             std::map<uint64_t, uint64_t> textureMisses;
-            std::atomic<uint64_t> marks{0}, marksOutOfOrder{0}, marksUnknown{0};
+            std::atomic<uint64_t> marks{0}, marksUnknown{0}, marksNeverReached{0};
         };
 
         struct State
@@ -171,11 +171,16 @@ namespace sc3
             std::vector<size_t> unflushed; // indices into the draws since the last packet flush
             std::vector<Sc3Draw> pendingDraws;
             uint16_t nextMark = 1;
-            uint64_t nextGroup = 1;
+            // The draws the frame kick sent, by the MARK their part left in the game's VIF1 list (the GS front end's
+            // stream order; scaffolding until M7 removes the GS front end): drawn when the stream reaches it.
+            struct AtMark
+            {
+                Sc3Draw draw;
+                uint64_t frame = 0;
+            };
             std::mutex markMutex;
-            std::unordered_map<uint16_t, uint64_t> markGroups;
-            uint64_t lastGroup = 0;
-            MeshSubmitter submitter;
+            std::unordered_map<uint16_t, AtMark> atMark;
+            MeshSubmitter submitter; // on the VIF1 thread (the stream's reader)
             Stats stats;
             uint64_t frames = 0;
             VU1State checkState{};
@@ -1722,8 +1727,8 @@ namespace sc3
             otInsert(rdram, ctx, runtime, kOtInsertFixed, 0);
         }
 
-        // The game's frame kick: the views built during the frame before are what it sends now, submitted in its order,
-        // each draw a group of the GS stream its MARK places.
+        // The game's frame kick: the views built during the frame before are what it sends now, each drawn where its MARK
+        // is in the stream.
         void report();
 
         void frameKick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1733,23 +1738,23 @@ namespace sc3
                 s.building.opaque.push_back(std::move(s.pendingDraws[i]));
             s.unflushed.clear();
             s.pendingDraws.clear();
-            std::vector<std::pair<uint16_t, uint64_t>> assigned;
-            s.building.forEachInOrder([&](const Sc3Draw &d) { assigned.emplace_back(d.mark, s.nextGroup++); });
-            size_t n = 0;
-            std::vector<Sc3Draw *> order;
-            for (Sc3Draw &d : s.building.opaque)
-                order.push_back(&d);
-            for (size_t b = s.building.buckets.size(); b-- > 0;)
-                for (size_t i = s.building.buckets[b].size(); i-- > 0;)
-                    order.push_back(&s.building.buckets[b][i]);
-            for (Sc3Draw *d : order)
-                d->group = assigned[n++].second;
             {
                 std::lock_guard<std::mutex> lock(s.markMutex);
-                for (const auto &[mark, group] : assigned)
-                    s.markGroups[mark] = group;
+                for (auto it = s.atMark.begin(); it != s.atMark.end();)
+                    if (it->second.frame + 2u < s.frames)
+                    {
+                        s.stats.marksNeverReached.fetch_add(1u, std::memory_order_relaxed);
+                        it = s.atMark.erase(it);
+                    }
+                    else
+                        ++it;
+                const auto keep = [&](Sc3Draw &d) { s.atMark[d.mark] = State::AtMark{std::move(d), s.frames}; };
+                for (Sc3Draw &d : s.building.opaque)
+                    keep(d);
+                for (auto &bucket : s.building.buckets)
+                    for (Sc3Draw &d : bucket)
+                        keep(d);
             }
-            s.submitter.submitInOrder(s.building);
             s.stats.drawsSubmitted += s.building.size();
             ++s.stats.kicks;
             s.building.clear();
@@ -1757,23 +1762,25 @@ namespace sc3
             callOriginal(kFrameKick, rdram, ctx, runtime);
         }
 
-        uint64_t markGate(uint16_t mark)
+        bool drawAtMark(uint16_t mark)
         {
             State &s = g_state;
-            std::lock_guard<std::mutex> lock(s.markMutex);
-            auto it = s.markGroups.find(mark);
-            if (it == s.markGroups.end() || it->second == 0u)
+            Sc3Draw draw;
             {
-                s.stats.marksUnknown.fetch_add(1u, std::memory_order_relaxed);
-                return 0u;
+                std::lock_guard<std::mutex> lock(s.markMutex);
+                auto it = s.atMark.find(mark);
+                if (it == s.atMark.end())
+                {
+                    s.stats.marksUnknown.fetch_add(1u, std::memory_order_relaxed);
+                    return false;
+                }
+                draw = std::move(it->second.draw);
+                s.atMark.erase(it);
             }
-            const uint64_t group = it->second;
-            s.markGroups.erase(it);
-            if (group != s.lastGroup + 1u && s.lastGroup != 0u)
-                s.stats.marksOutOfOrder.fetch_add(1u, std::memory_order_relaxed);
-            s.lastGroup = group;
             s.stats.marks.fetch_add(1u, std::memory_order_relaxed);
-            return group;
+            draw.group = 0u;
+            s.submitter.submit(draw);
+            return true;
         }
 
         void report()
@@ -1813,7 +1820,7 @@ namespace sc3
             std::fprintf(stderr,
                          "[sc3:mesh] 250 frames: raw parts %llu, drawn natively %llu (%llu triangles), left to VU1 %llu (routine not native %llu, "
                          "not in the pack %llu, no material %llu, no pack texture %llu); chain parts %llu (drawn natively %llu, %llu batches); draws submitted %llu at %llu kicks; "
-                         "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu, models copied out of them %llu; clipped strips %llu (native %llu, "
+                         "MARKs reached %llu, unknown %llu, draws whose MARK never came %llu; leaves bound %llu, not matching %llu, models copied out of them %llu; clipped strips %llu (native %llu, "
                          "VU1 %llu, not drawn %llu)\n",
                          static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
                          static_cast<unsigned long long>(t.leftToVu1), static_cast<unsigned long long>(t.unsupported),
@@ -1821,8 +1828,8 @@ namespace sc3
                          static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.chainParts),
                          static_cast<unsigned long long>(t.chainNative), static_cast<unsigned long long>(t.chainBatches),
                          static_cast<unsigned long long>(t.drawsSubmitted), static_cast<unsigned long long>(t.kicks),
-                         static_cast<unsigned long long>(t.marks.exchange(0)), static_cast<unsigned long long>(t.marksOutOfOrder.exchange(0)),
-                         static_cast<unsigned long long>(t.marksUnknown.exchange(0)), static_cast<unsigned long long>(t.bound),
+                         static_cast<unsigned long long>(t.marks.exchange(0)), static_cast<unsigned long long>(t.marksUnknown.exchange(0)),
+                         static_cast<unsigned long long>(t.marksNeverReached.exchange(0)), static_cast<unsigned long long>(t.bound),
                          static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), static_cast<unsigned long long>(t.clipped),
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedToVu1),
                          static_cast<unsigned long long>(t.clippedDropped));
@@ -1884,6 +1891,8 @@ namespace sc3
     }
 
     bool nativeMeshesOn() { return meshes::g_state.mode != meshes::Mode::Off; }
+
+    bool drawMeshesAtMark(uint16_t mark) { return nativeMeshesOn() && meshes::drawAtMark(mark); }
 
     void installNativeMeshes(PS2Runtime &runtime, bool nativeGs)
     {
@@ -1953,7 +1962,6 @@ namespace sc3
         wrap(runtime, kOtInsertDepth, otInsertDepth);
         wrap(runtime, kOtInsertFixed, otInsertFixed);
         wrap(runtime, kFrameKick, frameKick);
-        ps2x::native::setVif1MarkGate(markGate);
         std::fprintf(stderr, "[sc3:mesh] native meshes%s: %s, %zu leaves, %zu objects\n", s.mode == Mode::Check ? " (checked against the lifted programs)" : "",
                      path, s.pack.files().size(), s.pack.objectCount());
     }
