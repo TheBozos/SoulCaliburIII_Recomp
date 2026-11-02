@@ -2885,28 +2885,30 @@ namespace sc3
             callOriginal(at, rdram, ctx, runtime);
         }
 
-        void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        using StripBuild = bool (*)(uint32_t, Vu0 &, StripCall &);
+
+        void stripItemDraw(uint32_t address, StripBuild build, BuilderStats &stats, std::map<uint32_t, uint64_t> &forms, uint8_t *rdram,
+                           R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
-            BuilderStats &stats = s.strips;
             ++stats.calls;
             const uint32_t item = getRegU32(ctx, 4);
             if (s.mode == Mode::Off)
             {
-                callOriginal(kStrips, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
-            ++s.stripForms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | (peek8(item + 0x1Fu) << 4) | (peek8(item + 0xAu) & 3u)];
+            ++forms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | (peek8(item + 0x1Fu) << 4) | (peek8(item + 0xAu) & 3u)];
             if (s.mode == Mode::Check)
             {
                 Vu0 vu;
                 loadVu0(vu, ctx);
                 StripCall call;
-                const bool built = stripBuild(item, vu, call);
+                const bool built = build(item, vu, call);
                 s.stripCapture = true;
                 s.stripPackets.clear();
-                runOriginal(kStrips, rdram, ctx, runtime);
+                runOriginal(address, rdram, ctx, runtime);
                 s.stripCapture = false;
                 if (head == 2u)
                 {
@@ -2944,13 +2946,13 @@ namespace sc3
             if (head == 1u || (prim & 0x100u) != 0u)
             {
                 ++stats.toGs;
-                callOriginal(kStrips, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             if (uploads != 0u && fileAddress(file) && (peek8(file) == 2u || peek8(file) == 3u))
             {
                 ++stats.toGs;
-                callOriginal(kStrips, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             Page pageRegs;
@@ -2958,13 +2960,13 @@ namespace sc3
                 !(head == 2u ? copiedPage(file, pageRegs, stats) : page(file, peek8(item + 0x18u), pageRegs, stats)))
             {
                 ++stats.toGs;
-                callOriginal(kStrips, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             Vu0 vu;
             loadVu0(vu, ctx);
             StripCall call;
-            if (!stripBuild(item, vu, call))
+            if (!build(item, vu, call))
             {
                 if (peek8(item + 0x1Eu) != 0u)
                     poke32(kStripInsertion, call.insertion);
@@ -2997,6 +2999,11 @@ namespace sc3
             storeVu0(vu, ctx);
             ++stats.native;
             ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            stripItemDraw(kStrips, stripBuild, g_state.strips, g_state.stripForms, rdram, ctx, runtime);
         }
 
         // ---- the screen-effect layer: the background behind the 3D (a sky band and a ground band split at the horizon,
