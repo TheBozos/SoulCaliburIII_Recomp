@@ -147,7 +147,7 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects, screenObjects, screenSprites, billboards;
+            BuilderStats labels, triangles, text, quads, lines, shadedLines, icons, effects, strips, objects, screenObjects, screenSprites, billboards;
             std::map<uint32_t, uint64_t> objectForms; // 0x110E50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F
             std::map<uint32_t, uint64_t> screenObjectForms, screenSpriteForms, billboardForms; // 0x1107E0 / 0x110258 / 0x112148, as objectForms
             std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
@@ -2131,6 +2131,74 @@ namespace sc3
             {
                 ++stats.toGs;
                 callOriginal(kLine, rdram, ctx, runtime);
+                return;
+            }
+            if (linked == Linked::Yes && drawn)
+            {
+                ++stats.sprites;
+                ++stats.markers;
+            }
+            ++stats.native;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // ---- 0x1220C0 (a0 / a1 -> the ends as packed XYZ2 quadwords, a2 / a3 their RGBAQ quadwords, t0 ALPHA_2, f12 the
+        // depth): one antialiased Gouraud-shaded blended line (PRIM 0x2C9), inserted through 0x120978
+
+        constexpr uint32_t kShadedLine = 0x001220C0u;
+
+        void shadedLine(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            BuilderStats &stats = s.shadedLines;
+            ++stats.calls;
+            if (s.mode == Mode::Off)
+            {
+                stats.gifQwords += 7u;
+                callOriginal(kShadedLine, rdram, ctx, runtime);
+                return;
+            }
+            uint32_t xyz[2][4], rgba[2][4];
+            for (int i = 0; i < 2; ++i)
+            {
+                for (int w = 0; w < 4; ++w)
+                    xyz[i][w] = peek32(getRegU32(ctx, 4 + i) + static_cast<uint32_t>(w) * 4u);
+                word4(ctx, 6 + i, rgba[i]);
+            }
+            const uint64_t alpha = reg64(ctx, 8);
+            if (s.mode == Mode::Check)
+            {
+                const std::vector<Qword> expected = {
+                    {0x00008001u, 0x5164C000u, 0x0004141Eu, 0u},
+                    {static_cast<uint32_t>(alpha), static_cast<uint32_t>(alpha >> 32), 0x43u, 0u},
+                    {rgba[0][0], rgba[0][1], rgba[0][2], rgba[0][3]},
+                    {xyz[0][0], xyz[0][1], xyz[0][2], xyz[0][3]},
+                    {rgba[1][0], rgba[1][1], rgba[1][2], rgba[1][3]},
+                    {xyz[1][0], xyz[1][1], xyz[1][2], xyz[1][3]},
+                };
+                const InsertWatch watch = watchInsert(ctx->f[12]);
+                stats.gifQwords += 7u;
+                runOriginal(kShadedLine, rdram, ctx, runtime);
+                if (peek32(kRenderer) == 0u)
+                    compareQwords(stats, expected, insertedQwords(watch), "shaded lines");
+                return;
+            }
+            const uint64_t key = newKey();
+            const bool drawn = (xyz[1][3] & 0x8000u) == 0u;
+            if (drawn)
+            {
+                GsVertex ends[2];
+                for (int i = 0; i < 2; ++i)
+                    ends[i] = packedVertex(rgba[i], xyz[i]);
+                ps2x::native::Renderer::instance().drawGsKeyed(key, flatMaterial(GS_PRIM_LINE, 0x2C9u, alpha), ends, 2u);
+            }
+            const Linked linked = insert2d(key, ctx->f[12]);
+            if (linked != Linked::Yes && drawn)
+                discardKeyed(key);
+            if (linked == Linked::NotHere)
+            {
+                ++stats.toGs;
+                callOriginal(kShadedLine, rdram, ctx, runtime);
                 return;
             }
             if (linked == Linked::Yes && drawn)
@@ -4644,6 +4712,7 @@ namespace sc3
             reportBuilder("text 0x11EA80", s.text);
             reportBuilder("quads 0x123340", s.quads);
             reportBuilder("lines 0x1223D0", s.lines);
+            reportBuilder("shaded lines 0x1220C0", s.shadedLines);
             reportBuilder("icons 0x1280F8", s.icons);
             reportBuilder("screen effects 0x12C690 / 0x12C7E0", s.effects);
             reportBuilder("strips 0x1134A0", s.strips);
@@ -4809,6 +4878,7 @@ namespace sc3
         wrap(runtime, kText, text);
         wrap(runtime, kQuad, quad);
         wrap(runtime, kLine, line);
+        wrap(runtime, kShadedLine, shadedLine);
         wrap(runtime, kIcon, icon);
         wrap(runtime, kEffectLayer, screenEffectLayer);
         wrap(runtime, kEffectInline, screenEffectInline);
