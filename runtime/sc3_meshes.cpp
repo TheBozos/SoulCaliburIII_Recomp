@@ -749,6 +749,7 @@ namespace sc3
         void toTriangles(uint32_t prim, const std::vector<Out> &out, std::vector<GsVertex> &tris)
         {
             tris.clear();
+            tris.reserve(out.size() * 3u);
             const uint32_t type = prim & 7u;
             GsVertex queue[3];
             uint32_t queued = 0;
@@ -1105,14 +1106,14 @@ namespace sc3
                     return false;
                 }
             }
-            std::vector<Out> out;
-            if (shaded)
-                out = *shaded;
-            else
+            std::vector<Out> own;
+            const std::vector<Out> *out = shaded;
+            if (!out)
             {
-                shade(s.header, mode, in, out);
+                shade(s.header, mode, in, own);
                 if (s.mode == Mode::Check)
-                    checkPart(s.header, routine, tag, in, out);
+                    checkPart(s.header, routine, tag, in, own);
+                out = &own;
             }
             draw.screenSpace = true;
             draw.file = source.file;
@@ -1129,7 +1130,7 @@ namespace sc3
                 ++(s.gameAlphaKnown ? s.stats.inheritedAlpha : s.stats.unknownAlpha);
             if (!s.material.setsTest)
                 ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
-            toTriangles(prim, out, batch.gsTriangles);
+            toTriangles(prim, *out, batch.gsTriangles);
             s.stats.triangles += batch.gsTriangles.size() / 3u;
             if (s.frames == g_traceFrame)
             {
@@ -1140,7 +1141,7 @@ namespace sc3
                              source.object, routine, prim, static_cast<unsigned long long>(s.material.tex0),
                              static_cast<unsigned long long>(material.texture ? material.texture->key : 0u), static_cast<unsigned long long>(s.material.alpha),
                              s.material.setsAlpha, static_cast<unsigned long long>(s.material.test), s.material.setsTest, batch.gsTriangles.size() / 3u,
-                             out.size(), z0, z1, a0, a1, s.nextMark);
+                             out->size(), z0, z1, a0, a1, s.nextMark);
                 if (a1 == 0u && !in.empty())
                 {
                     std::fprintf(stderr, "[sc3:mesh] trace   in0 st %g %g col %g %g %g %g pos %g %g %g flags %#x; q12 %g %g %g %g\n", in[0].st[0], in[0].st[1],
@@ -1215,6 +1216,7 @@ namespace sc3
             if (count <= 0)
                 return false;
             out.clear();
+            out.reserve(static_cast<size_t>(count));
             uint32_t q = 1u;
             bool outside[3] = {false, false, false};
             const uint32_t vi3 = (kind.environment ? h.q[9][3] : h.q[17][3]) & 0xFFFFu;
