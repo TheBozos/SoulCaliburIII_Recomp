@@ -140,6 +140,25 @@ class GsMemory:
                 src[a >> 2] = sources[b >> 4] + (b & 12)
                 i += 1
 
+    def write_indexed(self, psm, bp, bw, sx, sy, w, h, data, sources):
+        mem, written, src = self.mem, self.written, self.src
+        i = 0
+        for y in range(sy, sy + h):
+            for x in range(sx, sx + w):
+                if psm == PSM_T8:
+                    a = addr8(bp, bw, x, y)
+                    mem[a] = data[i]
+                    b = i
+                else:
+                    n = addr4(bp, bw, x, y)
+                    a = n >> 1
+                    v = (data[i >> 1] >> ((i & 1) * 4)) & 0xF
+                    mem[a] = (mem[a] & 0xF0) | v if not n & 1 else (mem[a] & 0x0F) | (v << 4)
+                    b = i >> 1
+                written[a] = self.entry
+                src[a >> 2] = sources[b >> 4] + (b & 12)
+                i += 1
+
     def ct32(self, bp, bw, x, y, touched, words=None):
         a = addr32(bp, bw, x, y)
         e = self.written[a]
@@ -326,14 +345,16 @@ def play_gif(gs, data, qwords):
             dbp, dbw, dpsm = (bitbltbuf >> 32) & 0x3FFF, (bitbltbuf >> 48) & 0x3F, (bitbltbuf >> 56) & 0x3F
             dsx, dsy = (trxpos >> 32) & 0x7FF, (trxpos >> 48) & 0x7FF
             w, h = trxreg & 0xFFF, (trxreg >> 32) & 0xFFF
-            if dpsm not in (PSM_CT32, PSM_T8H, PSM_T4HL, PSM_T4HH) or ((trxpos >> 59) & 3):
+            if dpsm not in (PSM_CT32, PSM_T8, PSM_T4, PSM_T8H, PSM_T4HL, PSM_T4HH) or ((trxpos >> 59) & 3):
                 raise Unsupported('upload psm %#x dir %d' % (dpsm, (trxpos >> 59) & 3))
-            bits = 32 if dpsm == PSM_CT32 else 8 if dpsm == PSM_T8H else 4
+            bits = 32 if dpsm == PSM_CT32 else 8 if dpsm in (PSM_T8, PSM_T8H) else 4
             if len(payload) * 8 < w * h * bits:
                 raise Unsupported('short IMAGE')
             sources = qwords[q // 16 - nloop:q // 16]
             if dpsm == PSM_CT32:
                 gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload, sources)
+            elif dpsm in (PSM_T8, PSM_T4):
+                gs.write_indexed(dpsm, dbp, dbw, dsx, dsy, w, h, payload, sources)
             else:
                 gs.write_high(dpsm, dbp, dbw, dsx, dsy, w, h, payload, sources)
             transfers += 1
