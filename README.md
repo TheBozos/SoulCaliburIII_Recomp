@@ -197,8 +197,9 @@ scripts/iop_recomp.sh && scripts/build_runtime.sh             # the IRX modules 
 scripts/run.sh                                                 # ps2EntryRunner game/SLUS_212.16
 ```
 
-The extracted disc folder is the game's `cdrom0:`; the memory cards (`mc0/`, `mc1/`) are created next to the ELF in
-`game/`.
+The extracted disc folder is the game's `cdrom0:`; the memory cards and settings live in a per-user folder (see
+[Saves, settings and logs](#saves-settings-and-logs)). Started with no argument, the runner boots `game/SLUS_212.16`
+next to it, then the same under the user folder.
 
 `JOBS=<n>` sets the build parallelism of every script (default: all cores). The generated code is about 12,900 C++
 files; a clean build of the tools and the game (recompile included) takes about 13 minutes with `JOBS=8` on a Ryzen 7
@@ -216,6 +217,24 @@ build takes about 4 minutes of compiling and 6 minutes overall, and a rebuild wi
 `scripts/regress.sh build/game ~/sc3-regress` checks a build for regressions: it boots with movies off, goes through the
 menus into a Free Training fight, attacks for a minute, then writes a verdict to `summary.txt` (route reached, ok,
 hang or crash, GS frame rate, SPU2 underruns) with the last frame and the log.
+
+### Saves, settings and logs
+
+| | Linux | Windows |
+|---|---|---|
+| User folder | `$XDG_DATA_HOME/soulcalibur3_recomp` (`~/.local/share/soulcalibur3_recomp`) | `%APPDATA%\SoulCaliburIII_Recomp` |
+
+It holds the memory cards (`mc0/`, `mc1/`), the controls (`input.ini`), the video settings (`video.ini`), the debugger's
+window layout (`imgui.ini`) and the log of the last three runs (`logs/SoulCaliburIII_Recomp.log`, `.1.log`,
+`.2.log`); on Windows also `crashes/crash-<time>.txt`, a report shown in a message box when the runner crashes.
+`PS2X_USER_DIR=<dir>` uses another folder, `PS2X_LOG_FILE=<file>` writes the log there (`0`: no log file), and
+`PS2X_NO_DIALOGS=1` keeps the message boxes in the log only, for unattended runs.
+
+Cards and settings kept next to the ELF by an older build (`game/mc0`, `game/mc1`, `game/input.ini`,
+`game/video.ini`) are copied into the user folder on the first launch from that game folder, which is then listed in
+`migrated.txt`; a save the user folder already has is not overwritten, and nothing next to the ELF is changed or
+deleted. `scripts/regress.sh` and `scripts/sc3run.sh` run on a user folder of their own, with blank cards, and never
+touch the player's saves.
 
 ### Windows
 

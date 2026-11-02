@@ -6,7 +6,9 @@
 # verdict is in <out-dir>/summary.txt (key=value, NA when unknown). Also writes run.log, last_frame.png
 # (last_frame.raw, 640x448 RGBA, without a PNG), pause.png (the fight frozen under the pause menu, the same scene for as
 # long as it stays paused: the still to compare renderers with, scripts/imgdiff.py), errors.txt, details.txt and
-# pad.txt (each press with its time and presented frame).
+# pad.txt (each press with its time and presented frame). The runner's user folder is <out-dir>/user (PS2X_USER_DIR),
+# emptied at each start: blank memory cards, the cards and settings next to the ELF not copied, the player's own
+# folder never touched.
 #   route_reached     1 once every press of the route and the fight's attacks were played without a hang or crash
 #   exit              ok, hang (process alive, presented frame unchanged for REGRESS_HANG_SECS), crash (process
 #                     ended early), timeout (still alive 10 s after being told to stop)
@@ -85,6 +87,7 @@ fi
 [ -n "$runner" ] || { echo "no ps2EntryRunner in $target" >&2; exit 2; }
 [ -f "$elf" ] || { echo "missing $elf" >&2; exit 2; }
 runner=$(realpath "$runner")
+elf=$(realpath -s "$elf")
 ps2recomp=$(git -C "$root/PS2Recomp" rev-parse HEAD 2>/dev/null || echo NA)
 
 mkdir -p "$out"
@@ -95,6 +98,12 @@ log=$out/run.log
 input=$out/pad_input.txt
 rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_2d*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
+user=$out/user
+rm -rf "$user"
+mkdir -p "$user"
+elf_dir=$(dirname "$elf")
+if command -v cygpath >/dev/null; then elf_dir=$(cygpath -w "$elf_dir"); fi
+echo "$elf_dir" > "$user/migrated.txt"
 : > "$input"
 native_switch=
 if [ "${REGRESS_NATIVE_VU1_AB:-0}" = 1 ]; then
@@ -164,6 +173,7 @@ start=$(date +%s)
 (
     cd "$out"
     exec env DISPLAY="${DISPLAY:-:0}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" PS2X_DEBUG_UI=0 \
+        PS2X_USER_DIR="$user" PS2X_LOG_FILE=0 PS2X_NO_DIALOGS=1 \
         PS2X_SPU2_STATS=1 PS2X_SC3_NO_MOVIES=1 PS2X_STATE_DUMP=$period \
         PS2X_FRAME_DUMP="$frames" PS2X_FRAME_DUMP_EVERY=1 \
         PS2X_CAPTURE_DIR="$shots" PS2X_CAPTURE_INTERVAL=$shot_secs PS2X_PAD_INPUT="$input" \
