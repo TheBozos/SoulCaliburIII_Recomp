@@ -142,8 +142,9 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects;
+            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects, screenObjects, screenSprites;
             std::map<uint32_t, uint64_t> objectForms; // 0x110E50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F
+            std::map<uint32_t, uint64_t> screenObjectForms, screenSpriteForms; // 0x1107E0 / 0x110258, as objectForms
             std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
             struct PageCopy
             {
@@ -2690,7 +2691,7 @@ namespace sc3
         // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600), each
         // with its end: a packet linked from inside one marks the file of the item that runs.
         constexpr std::pair<uint32_t, uint32_t> kGsItems[] = {
-            {0x00110258u, 0x001107E0u}, {0x001107E0u, 0x00110D78u}, {0x001117D8u, 0x00112148u}, {0x00112148u, 0x001124B8u},
+            {0x001117D8u, 0x00112148u}, {0x00112148u, 0x001124B8u},
             {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00114B50u, 0x00115018u}, {0x00115018u, 0x00115600u},
             {0x00115BE0u, 0x00115E48u}, {0x00115E48u, 0x00116128u}, {0x00116128u, 0x00116490u}};
 
@@ -3366,6 +3367,7 @@ namespace sc3
         {
             Qword st[4], xyz[4];
             Qword colour;
+            uint32_t tex1 = 0;
             float depth = 0;
             bool inserted = false;
         };
@@ -3374,7 +3376,7 @@ namespace sc3
         {
             uint32_t mode = 0, insertion = 0, file = 0, page = 0;
             uint64_t alpha = 0, tag = 0, regs = 0;
-            bool texa = false, test = false;
+            bool texa = false, test = false, tex1 = false, staleSt = false;
             std::vector<ObjectSprite> sprites;
         };
 
@@ -3781,7 +3783,542 @@ namespace sc3
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        constexpr uint32_t kGifListAppend = 0x0010F808u;
+        // ---- 0x1107E0 (draw item type 6) and 0x110258 (type 2): 0x110E50's siblings in the 2D view (*(view +0x460), the matrix
+        // 0x10FD78 loads with a3 = 1), the same item, entries and head (0x10FE50). The position's Z is the depth, not divided
+        // through: Z = the view's z times the depth scale (+0x38, 1 when negative) over the position's z, drawn when that z is
+        // over 0.08. Depth for the insertion: +0x38 over the z, or when +0x38 is not positive -(+0x38) (x 12.5 for mode 1).
+        // +0x4A & 0x40 with +0x1F & 0x80 or *(*(0x469230) +0x50) (the display's aspect) picks the width correction.
+
+        constexpr uint32_t kScreenObjects = 0x001107E0u, kScreenSprites = 0x00110258u, kGifListAppend = 0x0010F808u;
+        constexpr uint32_t kScreenTex1 = 0x00467528u; // TEX1_2 by an entry's +0x4B (the item's +0x1D & 1)
+        constexpr uint32_t kDisplay = 0x00469230u;    // +0x50: the screen's aspect is not the game's
+        constexpr uint32_t kScreenSpriteAspect = 0x00467610u;
+
+        // 0x10FD78 with a3 = 1: the colour cap, the view's +0x380 and the 2D matrix in vf26 .. vf31.
+        void screenView(Vu0 &vu, uint32_t view)
+        {
+            vu.vf[26] = loadVec(kStripColourMax);
+            vu.vf[27] = loadVec(view + 0x380u);
+            const uint32_t matrix = peek32(view + 0x460u);
+            for (int i = 0; i < 4; ++i)
+                vu.vf[28 + i] = loadVec(matrix + static_cast<uint32_t>(i) * 16u);
+        }
+
+        // vf3 = the matrix (vf28 .. vf31) times (p, 1), as the VU0 macro code's ACC chain.
+        Vec screenPoint(const Vu0 &vu, Vec p)
+        {
+            Vec acc = ps2_vmul(vu.vf[31], lane(vu.vf[0], 3));
+            acc = ps2_vadd(acc, ps2_vmul(vu.vf[28], lane(p, 0)));
+            acc = ps2_vadd(acc, ps2_vmul(vu.vf[29], lane(p, 1)));
+            return ps2_vadd(acc, ps2_vmul(vu.vf[30], lane(p, 2)));
+        }
+
+        // 0x10FE50's ST table: the item's +0x10, else the page's whole texture (0x467580, scaled to the page's used size).
+        uint32_t screenTable(uint32_t item, const Page &pageRegs)
+        {
+            const uint32_t table = peek32(item + 0x10u);
+            if (table != 0u || peek32(item + 0x14u) == 0u)
+                return table;
+            const float sw = FPU_DIV_S(FPU_CVT_S_W(pageRegs.width), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 26) & 0xFu)));
+            const float sh = FPU_DIV_S(FPU_CVT_S_W(pageRegs.height), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 30) & 0xFu)));
+            pokeFloat(kObjectSt + 0x10u, sw);
+            pokeFloat(kObjectSt + 0x30u, sw);
+            pokeFloat(kObjectSt + 0x24u, sh);
+            pokeFloat(kObjectSt + 0x34u, sh);
+            return kObjectSt;
+        }
+
+        // 0x10FD78 / 0x10FE50's head fields of the call: ALPHA_2, TEXA, TEST_2 and the TEX1_2 A+D first.
+        void screenCall(uint32_t item, ObjectCall &call)
+        {
+            call.alpha = peek64(item);
+            if (call.alpha == 0u)
+                call.alpha = 0x2Au;
+            call.texa = (peek8(item + 0x1Du) & 2u) != 0u;
+            call.tex1 = (peek8(item + 0x1Du) & 1u) != 0u;
+            call.test = (peek8(item + 0x1Fu) & 0x40u) != 0u;
+            call.mode = peek8(item + 0xAu);
+            call.insertion = peek32(kStripTable + (call.mode & 3u) * 4u);
+            call.file = peek32(item + 0x14u);
+            call.page = peek8(item + 0x18u);
+        }
+
+        // Colour from an entry: +0x4A & 6 nonzero floats (2: through a pointer) times the view's +0x384, capped, from `low`
+        // up; else the RGBA bytes of +0x20, each (byte + 1) times the view's +0x390 halfword, over 256 (`halve`: (byte + 1) / 2).
+        Qword screenColour(const Vu0 &vu, uint32_t e, Vec low, bool halve)
+        {
+            const uint32_t kind = peek8(e + 0x4Au) & 6u;
+            if (kind != 0u)
+            {
+                Vec c = ps2_vmul(loadVec(kind == 2u ? peek32(e + 0x20u) : e + 0x20u), lane(vu.vf[27], 1));
+                c = _mm_max_ps(_mm_min_ps(c, vu.vf[26]), low);
+                return vecWords(ftoiVec(c, 1.0f));
+            }
+            const uint32_t rgba = peek32(e + 0x20u);
+            const uint32_t view = peek32(kView);
+            Qword out;
+            for (int i = 0; i < 4; ++i)
+            {
+                const uint32_t b = ((rgba >> (i * 8)) & 0xFFu) + 1u;
+                out[i] = halve ? b >> 1 : static_cast<uint32_t>(static_cast<int32_t>(b) * static_cast<int16_t>(peek16(view + 0x390u + i * 4u))) >> 8;
+            }
+            return out;
+        }
+
+        float wordFloat(uint32_t bits)
+        {
+            float f;
+            std::memcpy(&f, &bits, 4);
+            return f;
+        }
+
+        // 0x110258's order: ACC = the rows times x, y, z, then vf3 = ACC + vf31.
+        Vec screenPointLast(const Vu0 &vu, Vec p)
+        {
+            Vec acc = ps2_vmul(vu.vf[28], lane(p, 0));
+            acc = ps2_vadd(acc, ps2_vmul(vu.vf[29], lane(p, 1)));
+            acc = ps2_vadd(acc, ps2_vmul(vu.vf[30], lane(p, 2)));
+            return ps2_vadd(acc, ps2_vmul(vu.vf[31], lane(vu.vf[0], 3)));
+        }
+
+        Qword stRow(uint32_t row) { return {peek32(row), peek32(row + 4u), peek32(row + 8u), peek32(row + 12u)}; }
+
+        // The sprites 0x1107E0 builds for `item` (false: none): one rotated quad (four vertices of a strip) per entry.
+        bool screenObjectsBuild(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t item, Vu0 &vu, ObjectCall &call,
+                                const Page &pageRegs)
+        {
+            const uint32_t count = peek16(item + 8u);
+            uint32_t e = peek32(item + 0xCu);
+            if (count == 0u || e == 0u)
+                return false;
+            const uint32_t view = peek32(kView);
+            screenCall(item, call);
+            uint32_t prim = 0x254u;
+            if (peek8(item + 0x1Cu) == 1u)
+                prim ^= 0x200u;
+            call.tag = (12ull << 60) | (static_cast<uint64_t>(prim) << 47) | (1ull << 46) | 1u;
+            call.regs = call.tex1 ? 0x424242421EFEull : 0x424242421EFFull;
+            Vec *vf = vu.vf;
+            screenView(vu, view);
+            for (int i = 10; i <= 13; ++i)
+                vf[i] = put(vf[i], ps2_vsub(vf[i], vf[i]), 8u);
+            const bool wideFlag = (peek8(item + 0x1Fu) & 0x80u) != 0u;
+            const bool aspect = peek32(peek32(kDisplay) + 0x50u) != 0u;
+            for (uint32_t n = 0; n < count; ++n, e += 0x50u)
+            {
+                if (peek8(e + 0x4Cu) == 0u)
+                    continue;
+                const Vec p = put(vf[4], ps2_vadd(loadVec(e), loadVec(e + 0x10u)), 7u);
+                vf[4] = p;
+                const float f21 = peekFloat(e + 0x38u);
+                const float depthScale = FPU_C_OLT_S(f21, 0.0f) ? 1.0f : f21;
+                vf[24] = ps2_vsub(vf[0], vf[0]);
+                Vec point = screenPoint(vu, p);
+                vu.q = ps2_fdiv(1.0f, vecLane(p, 2));
+                point = put(point, ps2_vadd(vf[24], lane(p, 2)), 8u);
+                std::memcpy(guest(kScratchpad + 0x50u, 16), &point, 16);
+                const uint32_t outW = peek32(kScratchpad + 0x5Cu);
+                Vec screen = put(point, ps2_vmul(point, _mm_set1_ps(depthScale)), 4u);
+                screen = put(screen, ps2_vsub(screen, lane(screen, 3)), 8u);
+                vf[3] = screen;
+                const float z = vecLane(p, 2);
+                if (!FPU_C_OLT_S(0.08f, z))
+                {
+                    poke32(e + 0x1Cu, outW);
+                    continue;
+                }
+                const uint32_t table = screenTable(item, pageRegs);
+                if (table == 0u)
+                {
+                    poke32(e + 0x1Cu, outW);
+                    continue;
+                }
+                screen = put(screen, ps2_vmul(screen, _mm_set1_ps(vu.q)), 4u);
+                ObjectSprite sprite;
+                if (call.tex1)
+                    sprite.tex1 = peek32(kScreenTex1 + peek8(e + 0x4Bu) * 4u);
+                sprite.colour = screenColour(vu, e, vf[24], false);
+                static constexpr int kOrder[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+                const uint32_t order = peek8(e + 0x4Du);
+                const uint32_t rows = table + peek16(e + 0x48u) * 64u;
+                for (int i = 0; i < 4; ++i)
+                    sprite.st[i] = order < 4u ? stRow(rows + static_cast<uint32_t>(kOrder[order][i]) * 16u)
+                                              : Qword{kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord};
+                call.staleSt |= order >= 4u;
+                const float depth = FPU_MUL_S(FPU_DIV_S(1.0f, z), depthScale);
+                uint32_t first, second;
+                sinCos(rdram, ctx, runtime, vu, peekFloat(e + 0x3Cu), first, second);
+                const uint8_t flags = peek8(e + 0x4Au);
+                uint32_t vec = 0x00467620u;
+                float offset = 0.0f, scale = 1.0f;
+                if ((flags & 0x40u) != 0u && (aspect || wideFlag))
+                {
+                    if (aspect && wideFlag)
+                        vec = 0x00467650u;
+                    else
+                    {
+                        vec = aspect ? 0x00467640u : 0x00467630u;
+                        if ((flags & 0x80u) != 0u)
+                        {
+                            scale = wordFloat(aspect ? 0x3F4DB9CCu : 0x3F9F47ADu);
+                            offset = 2048.0f;
+                        }
+                    }
+                }
+                const float x = FPU_ADD_S(FPU_MUL_S(FPU_SUB_S(vecLane(screen, 0), offset), scale), offset);
+                const Vec size = put(loadVec(e + 0x30u), ps2_vmul(loadVec(e + 0x30u), loadVec(e + 0x40u)), 3u);
+                Vec v19 = put(screen, ftoiVec(screen, 16.0f), 0xCu);
+                const Vec v4 = put(loadVec(vec), ps2_vmul(loadVec(vec), size), 3u);
+                const Vec v6 = _mm_castsi128_ps(_mm_setr_epi32(static_cast<int32_t>(second), static_cast<int32_t>(first), 0, 0));
+                v19 = put(v19, _mm_set1_ps(x), 1u);
+                const Vec v25 = ps2_vmul(v6, lane(v4, 1));
+                const Vec v24 = ps2_vmul(v6, lane(v4, 0));
+                Vec v20 = v19, v21 = v19, v22 = v19, v23 = v19;
+                v23 = put(v23, ps2_vadd(v24, lane(v25, 1)), 1u);
+                v20 = put(v20, ps2_vsub(v24, lane(v25, 0)), 2u);
+                v21 = put(v21, ps2_vsub(v24, lane(v25, 1)), 1u);
+                v22 = put(v22, ps2_vadd(v24, lane(v25, 0)), 2u);
+                v23 = put(v23, ps2_vmul(v23, lane(v4, 2)), 1u);
+                v20 = put(v20, ps2_vmul(v20, lane(v4, 3)), 2u);
+                v21 = put(v21, ps2_vmul(v21, lane(v4, 2)), 1u);
+                v22 = put(v22, ps2_vmul(v22, lane(v4, 3)), 2u);
+                v20 = put(v20, ps2_vsub(v19, lane(v23, 0)), 1u);
+                v23 = put(v23, ps2_vadd(v19, lane(v23, 0)), 1u);
+                v22 = put(v22, ps2_vsub(v19, lane(v21, 0)), 1u);
+                v21 = put(v21, ps2_vadd(v19, lane(v21, 0)), 1u);
+                v23 = put(v23, ps2_vsub(v19, lane(v20, 1)), 2u);
+                v20 = put(v20, ps2_vadd(v19, lane(v20, 1)), 2u);
+                v21 = put(v21, ps2_vsub(v19, lane(v22, 1)), 2u);
+                v22 = put(v22, ps2_vadd(v19, lane(v22, 1)), 2u);
+                const Vec corners[4] = {v20, v21, v22, v23};
+                for (int i = 0; i < 4; ++i)
+                {
+                    vf[20 + i] = put(corners[i], ftoiVec(corners[i], 16.0f), 3u);
+                    sprite.xyz[i] = vecWords(vf[20 + i]);
+                }
+                vf[19] = v19;
+                sprite.depth = FPU_C_OLT_S(0.0f, f21) ? depth : call.mode == 1u ? FPU_MUL_S(-f21, 12.5f) : -f21;
+                sprite.inserted = true;
+                poke32(e + 0x1Cu, outW);
+                call.sprites.push_back(sprite);
+            }
+            return true;
+        }
+
+        // The sprites 0x110258 builds for `item` (false: none, also when the heap is near full: 0x10D528): one GS sprite (two
+        // corners) per entry, its size +0x30 / +0x34 times +0x40, its anchor by +0x4A >> 4 & 3; dropped off the GS's range.
+        bool screenSpritesBuild(uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
+        {
+            if (static_cast<int32_t>(peek32(kRenderer + 0x2Cu) + peek32(kRenderer + 0x1Cu) + 0x64u) > 0x895C)
+                return false;
+            const uint32_t count = peek16(item + 8u);
+            uint32_t e = peek32(item + 0xCu);
+            if (count == 0u || e == 0u)
+                return false;
+            const uint32_t view = peek32(kView);
+            screenCall(item, call);
+            uint64_t prim = 0x95A0ull << 41;
+            if (peek8(item + 0x1Cu) == 1u)
+                prim ^= 1ull << 56;
+            call.tag = ((call.tex1 ? 7ull : 6ull) << 60) | prim | 0x8000u | 1u;
+            call.regs = call.tex1 ? 0x042421EEull : 0x0042421Eull;
+            Vec *vf = vu.vf;
+            screenView(vu, view);
+            const bool wideFlag = (peek8(item + 0x1Fu) & 0x80u) != 0u;
+            const bool aspect = peek32(peek32(kDisplay) + 0x50u) != 0u;
+            const bool corrected = wideFlag ? !aspect : aspect;
+            for (uint32_t n = 0; n < count; ++n, e += 0x50u)
+            {
+                if (peek8(e + 0x4Cu) == 0u)
+                    continue;
+                const uint32_t table = screenTable(item, pageRegs);
+                if (table == 0u)
+                    continue;
+                const float w = peekFloat(e + 0x30u), h = peekFloat(e + 0x34u);
+                if (!FPU_C_OLT_S(0.0f, w) || !FPU_C_OLT_S(0.0f, h))
+                    continue;
+                const float d = peekFloat(e + 0x38u);
+                const float depthScale = FPU_C_OLT_S(0.0f, d) ? d : 1.0f;
+                const uint8_t flags = peek8(e + 0x4Au);
+                const bool fix = corrected && (flags & 0x40u) != 0u;
+                ObjectSprite sprite;
+                if (call.tex1)
+                {
+                    uint32_t index = peek8(e + 0x4Bu);
+                    if (fix && index == 1u)
+                        index = 2u;
+                    sprite.tex1 = peek32(kScreenTex1 + index * 4u);
+                }
+                const Vec p = put(loadVec(e), ps2_vadd(loadVec(e), loadVec(e + 0x10u)), 7u);
+                vf[4] = p;
+                Vec v3 = screenPointLast(vu, p);
+                vu.q = ps2_fdiv(1.0f, vecLane(p, 2));
+                const uint32_t kind = flags & 6u;
+                if (kind != 0u)
+                    vf[24] = ps2_vsub(vf[0], lane(vf[0], 3));
+                if (!FPU_C_OLT_S(0.08f, peekFloat(e + 8u)))
+                    continue;
+                v3 = put(v3, ps2_vmul(v3, _mm_set1_ps(vu.q)), 4u);
+                const float depth = FPU_MUL_S(vu.q, depthScale);
+                pokeFloat(e + 0x1Cu, depth);
+                Vec v6 = _mm_setr_ps(w, h, depthScale, 0.0f);
+                const Vec v7 = loadVec(e + 0x40u);
+                v3 = put(v3, ps2_vsub(v3, v3), 8u);
+                sprite.colour = screenColour(vu, e, vf[24], true);
+                Vec v8 = put(v6, ps2_vadd(v6, lane(vf[0], 3)), 3u);
+                v3 = put(v3, _mm_max_ps(v3, vf[0]), 4u);
+                v6 = put(v6, ps2_vmul(v6, v7), 3u);
+                v8 = put(v8, ps2_vmul(v8, v7), 3u);
+                const uint32_t order = peek8(e + 0x4Du);
+                const uint32_t rows = table + peek16(e + 0x48u) * 64u;
+                static constexpr uint32_t kRows[4][2] = {{0u, 3u}, {1u, 2u}, {2u, 1u}, {3u, 0u}};
+                const uint32_t *r = kRows[order < 4u ? order : 0u];
+                sprite.st[0] = stRow(rows + r[0] * 16u);
+                sprite.st[1] = stRow(rows + r[1] * 16u);
+                if (fix)
+                {
+                    const Vec a = loadVec(kScreenSpriteAspect);
+                    const Vec factor = lane(a, wideFlag ? 3 : 2);
+                    if ((flags & 0x80u) != 0u)
+                        v3 = put(v3, ps2_vsub(v3, lane(a, 0)), 1u);
+                    v6 = put(v6, ps2_vmul(v6, factor), 1u);
+                    v8 = put(v8, ps2_vmul(v8, factor), 1u);
+                    if ((flags & 0x80u) != 0u)
+                    {
+                        v3 = put(v3, ps2_vmul(v3, factor), 1u);
+                        v3 = put(v3, ps2_vadd(v3, lane(a, 0)), 1u);
+                    }
+                }
+                Vec v4 = v3;
+                switch ((flags >> 4) & 3u)
+                {
+                case 1u:
+                    v4 = put(v4, ps2_vadd(v4, v6), 3u);
+                    break;
+                case 2u:
+                    v3 = put(v3, ps2_vsub(v3, v6), 1u);
+                    v4 = put(v4, ps2_vadd(v4, v6), 2u);
+                    break;
+                default:
+                    v3 = put(v3, ps2_vsub(v3, v6), 3u);
+                    v4 = put(v4, ps2_vadd(v4, v8), 3u);
+                    break;
+                }
+                v3 = put(v3, ftoiVec(v3, 16.0f), 7u);
+                v4 = put(v4, ftoiVec(v4, 16.0f), 7u);
+                vf[3] = v3;
+                vf[6] = v6;
+                vf[7] = v7;
+                vf[8] = v8;
+                if (offRange(v3) || offRange(v4))
+                    continue;
+                sprite.xyz[0] = vecWords(v3);
+                sprite.xyz[1] = vecWords(v4);
+                sprite.depth = FPU_C_OLT_S(0.0f, d) ? depth : call.mode == 1u ? FPU_MUL_S(-d, 12.5f) : -d;
+                sprite.inserted = true;
+                call.sprites.push_back(sprite);
+            }
+            return true;
+        }
+
+        // A sprite's packet from its DMA tag slot: 0x1107E0's 12 registers (NOP or TEX1_2, NOP, ALPHA_2, RGBAQ, four ST /
+        // XYZF2), after 0x10FE50's TEXA / TEST_2 packets.
+        std::vector<Qword> screenHead(const ObjectCall &call)
+        {
+            std::vector<Qword> w;
+            if (call.texa)
+            {
+                w.push_back({0x10000002u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({1u, 0x10000000u, 0xEu, 0u});
+                w.push_back({0x80u, 0x80u, 0x3Bu, 0u});
+            }
+            if (call.test)
+            {
+                w.push_back({0x10000002u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({1u, 0x10000000u, 0xEu, 0u});
+                w.push_back({0x30000u, 0u, 0x48u, 0u});
+            }
+            w.push_back({kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord});
+            w.push_back({static_cast<uint32_t>(call.tag), static_cast<uint32_t>(call.tag >> 32), static_cast<uint32_t>(call.regs),
+                         static_cast<uint32_t>(call.regs >> 32)});
+            return w;
+        }
+
+        std::vector<Qword> screenObjectWords(const ObjectCall &call, const ObjectSprite &sprite)
+        {
+            std::vector<Qword> w = screenHead(call);
+            w.push_back(call.tex1 ? Qword{sprite.tex1, 0u, 0x15u, 0u} : Qword{0u, 0u, 0u, 0u});
+            w.push_back({0u, 0u, 0u, 0u});
+            w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+            w.push_back(sprite.colour);
+            for (int i = 0; i < 4; ++i)
+            {
+                w.push_back(sprite.st[i]);
+                w.push_back(sprite.xyz[i]);
+            }
+            return w;
+        }
+
+        // 0x110258's: [TEX1_2,] ALPHA_2, RGBAQ, two ST / XYZF2; with TEST_2 a CNT of two after it puts TEST_2 back (0x5002D).
+        std::vector<Qword> screenSpriteWords(const ObjectCall &call, const ObjectSprite &sprite)
+        {
+            std::vector<Qword> w = screenHead(call);
+            if (call.tex1)
+                w.push_back({sprite.tex1, 0u, 0x15u, 0u});
+            w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+            w.push_back(sprite.colour);
+            for (int i = 0; i < 2; ++i)
+            {
+                w.push_back(sprite.st[i]);
+                w.push_back(sprite.xyz[i]);
+            }
+            if (call.test)
+            {
+                w.push_back({kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({1u, 0x10000000u, 0xEu, 0u});
+                w.push_back({0x5002Du, 0u, 0x48u, 0u});
+            }
+            return w;
+        }
+
+        // The page an object-like item draws from (false: its draws stay the game's), as objectsDraw takes it.
+        bool screenPage(uint32_t item, Page &pageRegs, BuilderStats &stats)
+        {
+            const uint32_t file = peek32(item + 0x14u);
+            const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
+            if (head > 2u || !fileAddress(file) || (head != 0u && peek32(item + 0x10u) == 0u) || peek8(item + 0xAu) > 3u ||
+                (uploads != 0u && head == 0u && (peek8(file) == 2u || peek8(file) == 3u)))
+                return false;
+            return head == 0u ? page(file, peek8(item + 0x18u), pageRegs, stats)
+                   : head == 2u ? copiedPage(file, pageRegs, stats)
+                                : blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha;
+        }
+
+        using ScreenBuild = bool (*)(uint8_t *, R5900Context *, PS2Runtime *, uint32_t, Vu0 &, ObjectCall &, const Page &);
+
+        bool screenSpritesBuildHook(uint8_t *, R5900Context *, PS2Runtime *, uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
+        {
+            return screenSpritesBuild(item, vu, call, pageRegs);
+        }
+
+        void screenItemDraw(uint32_t address, ScreenBuild build, ObjectWords words, const char *name, BuilderStats &stats,
+                            std::map<uint32_t, uint64_t> &forms, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            ++stats.calls;
+            const uint32_t item = getRegU32(ctx, 4);
+            if (s.mode == Mode::Off)
+            {
+                callOriginal(address, rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
+            const bool sprites = address == kScreenSprites;
+            ++forms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | peek8(item + 0x1Fu)];
+            if (s.mode == Mode::Check)
+            {
+                Vu0 entry, vu;
+                loadVu0(entry, ctx);
+                vu = entry;
+                ObjectCall call;
+                Page pageRegs;
+                BuilderStats unused;
+                const bool sized = peek32(item + 0x10u) != 0u || peek32(item + 0x14u) == 0u ||
+                                   (head == 0u && page(peek32(item + 0x14u), peek8(item + 0x18u), pageRegs, unused));
+                const bool built = sized && (!sprites || peek8(item + 0xBu) == 0u) && build(rdram, ctx, runtime, item, vu, call, pageRegs);
+                storeVu0(entry, ctx);
+                s.stripCapture = true;
+                s.stripPackets.clear();
+                runOriginal(address, rdram, ctx, runtime);
+                s.stripCapture = false;
+                if (built && peek32(kRenderer) == 0u)
+                    compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets, words, name);
+                return;
+            }
+            Page pageRegs;
+            if ((sprites && peek8(item + 0xBu) != 0u) || !screenPage(item, pageRegs, stats))
+            {
+                ++stats.toGs;
+                callOriginal(address, rdram, ctx, runtime);
+                return;
+            }
+            Vu0 vu;
+            loadVu0(vu, ctx);
+            ObjectCall call;
+            const bool built = build(rdram, ctx, runtime, item, vu, call, pageRegs);
+            if (call.staleSt)
+            {
+                ++stats.toGs;
+                callOriginal(address, rdram, ctx, runtime);
+                return;
+            }
+            if (!sprites && peek16(item + 8u) != 0u && peek32(item + 0xCu) != 0u)
+                poke8(item + 0xBu, 2u);
+            if (built)
+                poke32(kStripInsertion, call.insertion);
+            GsMaterial m = spriteMaterial(pageRegs, head == 1u ? pageRegs.alpha : call.alpha);
+            m.prim = ps2x::gs::decodePrim(static_cast<uint32_t>(call.tag >> 47) & 0x7FFu);
+            if (!sprites)
+                m.prim.type = GS_PRIM_TRIANGLE;
+            if (head == 1u ? pageRegs.hasTest : call.test)
+            {
+                m.test = head == 1u ? pageRegs.test : 0x30000u;
+                m.testFromTarget = false;
+            }
+            for (const ObjectSprite &o : call.sprites)
+            {
+                if (!o.inserted)
+                    continue;
+                if (call.tex1)
+                    m.tex1 = o.tex1;
+                const uint64_t key = newKey();
+                if (sprites)
+                {
+                    const GsVertex corners[2] = {stripVertex(o.st[0], o.colour, o.xyz[0]), stripVertex(o.st[1], o.colour, o.xyz[1])};
+                    ps2x::native::Renderer::instance().drawGsKeyed(key, m, corners, 2u);
+                }
+                else
+                {
+                    GsVertex v[4];
+                    for (int i = 0; i < 4; ++i)
+                        v[i] = stripVertex(o.st[i], o.colour, o.xyz[i]);
+                    const GsVertex triangles[6] = {v[0], v[1], v[2], v[1], v[2], v[3]};
+                    ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles, 6u);
+                }
+                if (insert2d(key, call.mode, o.depth) != Linked::Yes)
+                    discardKeyed(key);
+                else
+                {
+                    stats.sprites += 1u;
+                    ++stats.markers;
+                }
+            }
+            storeVu0(vu, ctx);
+            ++stats.native;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void screenObjectsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            screenItemDraw(kScreenObjects, screenObjectsBuild, screenObjectWords, "screen objects", g_state.screenObjects,
+                           g_state.screenObjectForms, rdram, ctx, runtime);
+        }
+
+        void screenSpritesDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            screenItemDraw(kScreenSprites, screenSpritesBuildHook, screenSpriteWords, "screen sprites", g_state.screenSprites,
+                           g_state.screenSpriteForms, rdram, ctx, runtime);
+        }
+
+        void screenObjects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            trackItem(screenObjectsDraw, g_state.screenObjects, rdram, ctx, runtime);
+        }
+
+        void screenSprites(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            trackItem(screenSpritesDraw, g_state.screenSprites, rdram, ctx, runtime);
+        }
 
         void insertion(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -3903,6 +4440,19 @@ namespace sc3
             }
             s.objectForms.clear();
             std::fprintf(stderr, "[sc3:2d]   objects by uploads / head / flags / Z:%s\n", forms.c_str());
+            for (auto [name, stats, byForm] : {std::tuple{"screen objects 0x1107E0", &s.screenObjects, &s.screenObjectForms},
+                                               std::tuple{"screen sprites 0x110258", &s.screenSprites, &s.screenSpriteForms}})
+            {
+                reportBuilder(name, *stats);
+                forms.clear();
+                for (const auto &[form, n] : *byForm)
+                {
+                    std::snprintf(item, sizeof(item), " %08x:%llu", form, static_cast<unsigned long long>(n));
+                    forms += item;
+                }
+                byForm->clear();
+                std::fprintf(stderr, "[sc3:2d]   %s by uploads / head / flags / Z:%s\n", name, forms.c_str());
+            }
             std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu\n", static_cast<unsigned long long>(s.uploadsDropped));
             s.uploadsDropped = 0;
             std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>>> sorted(s.inserted.begin(), s.inserted.end());
@@ -4025,6 +4575,8 @@ namespace sc3
         for (const uint32_t address : {kPageCopy, kPageCopyClut, kPageCopyCbp})
             wrap(runtime, address, pageCopy);
         wrap(runtime, kObjects, objects);
+        wrap(runtime, kScreenObjects, screenObjects);
+        wrap(runtime, kScreenSprites, screenSprites);
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         wrap(runtime, kUploadItem, uploadItem);
