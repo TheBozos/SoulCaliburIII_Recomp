@@ -33,6 +33,8 @@ namespace sc3
         constexpr uint32_t kFrameKick = 0x0010F098u;
         constexpr uint32_t kFileRequest = 0x00150418u;
         constexpr uint32_t kCdRead = 0x00424E28u;
+        constexpr uint32_t kCopy = 0x0012FE98u;
+        constexpr uint32_t kModelCopyMin = 0x1000u;
         constexpr uint32_t kGifPacketClose = 0x0010F808u;
         constexpr uint32_t kOtInsertDepth = 0x0010D9A0u;
         constexpr uint32_t kSyncPoint = 0x0010F9D0u;
@@ -144,6 +146,16 @@ namespace sc3
             g_originals.at(address)(rdram, ctx, runtime);
         }
 
+        void noteRead(uint32_t buffer, uint32_t end, uint64_t olk)
+        {
+            auto it = g_reads.lower_bound(buffer);
+            if (it != g_reads.begin() && std::prev(it)->second.end > buffer)
+                --it;
+            while (it != g_reads.end() && it->first < end)
+                it = g_reads.erase(it);
+            g_reads[buffer] = Read{end, olk};
+        }
+
         void fileRequest(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (getRegU32(ctx, 5) == 1u && g_olkLbn < 0)
@@ -161,16 +173,21 @@ namespace sc3
             if (g_olkLbn < 0 && g_requestPending && buffer == (g_requestDest & PS2_RAM_MASK) && (g_requestPos % kSector) == 0u)
                 g_olkLbn = static_cast<int64_t>(lbn) - g_requestPos / kSector;
             if (g_olkLbn >= 0 && lbn >= g_olkLbn && sectors != 0u)
-            {
-                const uint32_t end = buffer + sectors * kSector;
-                auto it = g_reads.lower_bound(buffer);
-                if (it != g_reads.begin() && std::prev(it)->second.end > buffer)
-                    --it;
-                while (it != g_reads.end() && it->first < end)
-                    it = g_reads.erase(it);
-                g_reads[buffer] = Read{end, static_cast<uint64_t>(lbn - g_olkLbn) * kSector};
-            }
+                noteRead(buffer, buffer + sectors * kSector, static_cast<uint64_t>(lbn - g_olkLbn) * kSector);
             callOriginal(kCdRead, rdram, ctx, runtime);
+        }
+
+        // memcpy: a model the game copies out of what it read (character select's) keeps its ROOT.OLK bytes.
+        void copy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t to = getRegU32(ctx, 4) & PS2_RAM_MASK, from = getRegU32(ctx, 5) & PS2_RAM_MASK, size = getRegU32(ctx, 6);
+            if (size >= kModelCopyMin && size < 0x2000000u)
+            {
+                auto read = g_reads.upper_bound(from);
+                if (read != g_reads.begin() && from + size <= (--read)->second.end)
+                    noteRead(to, to + size, read->second.olk + (from - read->first));
+            }
+            callOriginal(kCopy, rdram, ctx, runtime);
         }
 
         // The texture CALL's target, from the game's own command list (0x104AF0's commands 2, 3 and 20).
@@ -518,6 +535,7 @@ namespace sc3
         texpack::g_scratchpad = runtime.memory().getScratchpad();
         texpack::wrap(runtime, texpack::kFileRequest, texpack::fileRequest);
         texpack::wrap(runtime, texpack::kCdRead, texpack::cdRead);
+        texpack::wrap(runtime, texpack::kCopy, texpack::copy);
         texpack::wrap(runtime, texpack::kGifPacketClose, texpack::gifPacketClose);
         texpack::wrap(runtime, texpack::kOtInsertDepth, texpack::otInsert);
         texpack::wrap(runtime, texpack::kFrameKick, texpack::frameKick);

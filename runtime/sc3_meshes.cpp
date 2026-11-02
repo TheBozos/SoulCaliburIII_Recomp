@@ -44,6 +44,8 @@ namespace sc3
         constexpr uint32_t kClipEmit = 0x0010B7E0u;
         constexpr uint32_t kClipVertexStride = 0x50u;
         constexpr uint32_t kRelocate = 0x0014A7D8u;
+        constexpr uint32_t kCopy = 0x0012FE98u;
+        constexpr uint32_t kModelCopyMin = 0x1000u;
         constexpr uint32_t kScratchpad = 0x70000000u;
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kRawPartKind = 1u;
@@ -119,7 +121,7 @@ namespace sc3
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
             uint64_t chainNotInPack = 0;
-            uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, kicks = 0, drawsSubmitted = 0;
+            uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, copies = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t checked = 0, checkVertexDiffs = 0, checkCountDiffs = 0, checkExact = 0;
@@ -307,6 +309,23 @@ namespace sc3
                 }
                 at = end;
             }
+        }
+
+        // memcpy: a model the game copies out of a loaded leaf (character select's) is found at the copy.
+        void copy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t to = getRegU32(ctx, 4) & PS2_RAM_MASK, from = getRegU32(ctx, 5) & PS2_RAM_MASK, size = getRegU32(ctx, 6);
+            packs::LoadedImages::Image image;
+            if (size >= kModelCopyMin && size < 0x2000000u && s.loaded.find(from, image) && image.file && from + size <= image.base + image.size)
+            {
+                s.noFog.erase(s.noFog.lower_bound(to), s.noFog.lower_bound(to + size));
+                const packs::LoadedImages::Image bound = s.loaded.bindCopy(image, to, from, size);
+                ++s.stats.copies;
+                if (g_traceLists)
+                    std::fprintf(stderr, "[sc3:mesh] copy of %s +%#x..+%#x at %#x\n", image.file->name.c_str(), bound.first, bound.size, to);
+            }
+            callOriginal(kCopy, rdram, ctx, runtime);
         }
 
         void fileRequest(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1789,7 +1808,7 @@ namespace sc3
             std::fprintf(stderr,
                          "[sc3:mesh] 250 frames: raw parts %llu, drawn natively %llu (%llu triangles), left to VU1 %llu (routine not native %llu, "
                          "not in the pack %llu, no material %llu, no pack texture %llu); chain parts %llu (drawn natively %llu, %llu batches); draws submitted %llu at %llu kicks; "
-                         "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu; clipped strips %llu (native %llu, "
+                         "MARKs reached %llu, out of order %llu, unknown %llu; leaves bound %llu, not matching %llu, models copied out of them %llu; clipped strips %llu (native %llu, "
                          "VU1 %llu, not drawn %llu)\n",
                          static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
                          static_cast<unsigned long long>(t.leftToVu1), static_cast<unsigned long long>(t.unsupported),
@@ -1799,7 +1818,7 @@ namespace sc3
                          static_cast<unsigned long long>(t.drawsSubmitted), static_cast<unsigned long long>(t.kicks),
                          static_cast<unsigned long long>(t.marks.exchange(0)), static_cast<unsigned long long>(t.marksOutOfOrder.exchange(0)),
                          static_cast<unsigned long long>(t.marksUnknown.exchange(0)), static_cast<unsigned long long>(t.bound),
-                         static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.clipped),
+                         static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), static_cast<unsigned long long>(t.clipped),
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedToVu1),
                          static_cast<unsigned long long>(t.clippedDropped));
             if (!left.empty())
@@ -1922,6 +1941,7 @@ namespace sc3
         wrap(runtime, kRawPartTail, rawPartTail);
         wrap(runtime, kChainPart, chainPart);
         wrap(runtime, kRelocate, relocate);
+        wrap(runtime, kCopy, copy);
         wrap(runtime, kClipper, clipper);
         wrap(runtime, kClipEmit, clipEmit);
         wrap(runtime, kPacketFlush, packetFlush);
