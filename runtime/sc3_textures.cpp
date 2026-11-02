@@ -61,6 +61,7 @@ namespace sc3
             uint32_t target = 0; // the CALL's target
             uint32_t tag = 0;    // where 0x10EF78 / 0x10D9A0 copy the CALL tag (the GIF list, an ordering table), 0 unknown
             bool gsUse = false;  // a part left to VU1 may sample what it uploads
+            TextureKeys::GameData game; // where the game holds the CALL list's leaf
         };
 
         struct Read
@@ -132,7 +133,8 @@ namespace sc3
         }
 
         // The pack entry a texture CALL's target is: the ROOT.OLK bytes the game read where it sits, in a packed leaf.
-        const TextureKeys::Entry *entryAt(uint32_t address)
+        // `game` gets where the game holds that leaf.
+        const TextureKeys::Entry *entryAt(uint32_t address, TextureKeys::GameData *game = nullptr)
         {
             auto read = g_reads.upper_bound(address);
             if (read == g_reads.begin())
@@ -140,7 +142,18 @@ namespace sc3
             --read;
             if (address >= read->second.end)
                 return nullptr;
-            return g_pack.entryAt(read->second.olk + (address - read->first));
+            const uint64_t olk = read->second.olk + (address - read->first);
+            uint64_t leaf = 0;
+            const TextureKeys::Entry *entry = g_pack.entryAt(olk, &leaf);
+            if (entry && game)
+            {
+                game->rdram = g_rdram;
+                game->leaf = address - static_cast<uint32_t>(olk - leaf);
+                game->lo = read->first;
+                game->hi = read->second.end;
+                game->frame = g_frames;
+            }
+            return entry;
         }
 
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -210,11 +223,12 @@ namespace sc3
         const TextureKeys::Entry *noteCall(R5900Context *ctx, uint32_t ra, uint32_t tag)
         {
             const uint32_t target = callTarget(ctx, ra);
-            const TextureKeys::Entry *entry = entryAt(target);
+            TextureKeys::GameData game;
+            const TextureKeys::Entry *entry = entryAt(target, &game);
             if (censusTracingDraws())
                 std::fprintf(stderr, "[sc3:trace] pack group %zu after %u syncs: call %#x ra=%#x %s\n", g_building.size(), g_syncs, target, ra,
                              entry ? "in the pack" : "not in the pack");
-            g_building.push_back(Group{entry, g_syncs, target, tag});
+            g_building.push_back(Group{entry, g_syncs, target, tag, false, game});
             ++g_stats.calls;
             if (entry)
                 ++g_stats.packed;
@@ -350,6 +364,13 @@ namespace sc3
             std::fprintf(stderr, "[sc3:gs] %llu frames: direct draws textured from the pack %llu, from GS memory %llu;%s\n", 250ull,
                          static_cast<unsigned long long>(g_stats.bound.exchange(0)), static_cast<unsigned long long>(g_stats.missed.exchange(0)),
                          misses.empty() ? " no misses" : misses.c_str());
+            const TextureKeys::LiveStats live = g_pack.takeLiveStats();
+            std::fprintf(stderr,
+                         "[sc3:gs] %llu frames: pack textures checked against the game's upload data %llu (%llu bytes): palette changed "
+                         "(drawn in the game's colours) %llu, texels changed %llu, data partly outside what the game read %llu\n",
+                         250ull, static_cast<unsigned long long>(live.checked), static_cast<unsigned long long>(live.bytes),
+                         static_cast<unsigned long long>(live.palettes), static_cast<unsigned long long>(live.texels),
+                         static_cast<unsigned long long>(live.outside));
             g_lastTransfers = transfers;
             g_lastBytes = bytes;
             g_stats.calls = g_stats.packed = g_stats.leftOut = g_stats.unknown = g_stats.gsUse = g_stats.misplaced = g_stats.incomplete = g_stats.untagged = 0;
@@ -434,7 +455,7 @@ namespace sc3
             for (size_t g = g_drawing.size(); g-- > 0;)
                 if (g_drawing[g].syncs <= g_streamSyncs)
                     if (const TextureKeys::Entry *entry = g_drawing[g].entry)
-                        if (const ps2x::native::NativeTexture *texture = g_pack.texture(*entry, tex0, width, height))
+                        if (const ps2x::native::NativeTexture *texture = g_pack.texture(*entry, tex0, width, height, &g_drawing[g].game))
                             return texture;
             return nullptr;
         }
@@ -502,7 +523,7 @@ namespace sc3
     {
         for (size_t g = texpack::g_building.size(); g-- > 0;)
             if (const TextureKeys::Entry *entry = texpack::g_building[g].entry)
-                if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*entry, tex0, width, height))
+                if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*entry, tex0, width, height, &texpack::g_building[g].game))
                     return texture;
         return nullptr;
     }

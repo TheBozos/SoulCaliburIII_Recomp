@@ -1,5 +1,7 @@
 #include "sc3_texture_pack.h"
 
+#include "runtime/ps2_memory_map.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -12,10 +14,45 @@ namespace sc3
     {
     namespace
     {
-        constexpr char kMagic[8] = {'S', 'C', '3', 'K', 'E', 'Y', 'S', '1'};
+        constexpr char kMagic[8] = {'S', 'C', '3', 'K', 'E', 'Y', 'S', '2'};
         constexpr uint64_t kTex0Key = 0x3FFFull | (0x3Full << 14) | (0x3Full << 20) | (0xFull << 26) | (0xFull << 30) |
                                       (0x3FFFull << 37) | (0xFull << 51) | (1ull << 55) | (0x1Full << 56);
         constexpr uint32_t kNoPalette = 0xFFFFFFFFu;
+        constexpr uint32_t kNoSource = 0xFFFFFFFFu;
+
+        // zlib's CRC-32 (the converter's zlib.crc32), slicing by 4.
+        struct Crc32
+        {
+            uint32_t table[4][256];
+            Crc32()
+            {
+                for (uint32_t i = 0; i < 256u; ++i)
+                {
+                    uint32_t c = i;
+                    for (int k = 0; k < 8; ++k)
+                        c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+                    table[0][i] = c;
+                }
+                for (uint32_t i = 0; i < 256u; ++i)
+                    for (int t = 1; t < 4; ++t)
+                        table[t][i] = (table[t - 1][i] >> 8) ^ table[0][table[t - 1][i] & 0xFFu];
+            }
+            uint32_t operator()(uint32_t crc, const uint8_t *data, size_t size) const
+            {
+                crc = ~crc;
+                for (; size >= 4u; size -= 4u, data += 4)
+                {
+                    uint32_t word;
+                    std::memcpy(&word, data, 4);
+                    crc ^= word;
+                    crc = table[3][crc & 0xFFu] ^ table[2][(crc >> 8) & 0xFFu] ^ table[1][(crc >> 16) & 0xFFu] ^ table[0][crc >> 24];
+                }
+                for (; size; --size, ++data)
+                    crc = table[0][(crc ^ *data) & 0xFFu] ^ (crc >> 8);
+                return ~crc;
+            }
+        };
+        const Crc32 kCrc32;
 
         template <typename T>
         bool read(std::ifstream &file, T &out)
@@ -88,7 +125,14 @@ namespace sc3
             {
                 Key key;
                 if (!texture_keys::read(file, key.tex0) || !texture_keys::read(file, key.width) || !texture_keys::read(file, key.height) ||
-                    !texture_keys::read(file, key.firstEntry) || !texture_keys::read(file, key.texels) || !texture_keys::read(file, key.palette))
+                    !texture_keys::read(file, key.firstEntry) || !texture_keys::read(file, key.texels) || !texture_keys::read(file, key.palette) ||
+                    !texture_keys::read(file, key.paletteEntries) || !texture_keys::read(file, key.runs) || !texture_keys::read(file, key.crc) ||
+                    key.paletteEntries > 256u)
+                    return false;
+                key.sources = static_cast<uint32_t>(list.sources.size());
+                list.sources.resize(list.sources.size() + key.paletteEntries + size_t{key.runs} * 2u);
+                file.read(reinterpret_cast<char *>(list.sources.data() + key.sources), static_cast<std::streamsize>((list.sources.size() - key.sources) * 4u));
+                if (!file)
                     return false;
                 list.keys.push_back(key);
             }
@@ -100,7 +144,7 @@ namespace sc3
         return true;
     }
 
-    const TextureKeys::Entry *TextureKeys::entryAt(uint64_t archiveOffset) const
+    const TextureKeys::Entry *TextureKeys::entryAt(uint64_t archiveOffset, uint64_t *leafOffset) const
     {
         const auto leaf = std::upper_bound(m_leaves.begin(), m_leaves.end(), archiveOffset,
                                            [](uint64_t offset, const Leaf &l) { return offset < l.offset; });
@@ -110,10 +154,130 @@ namespace sc3
         if (archiveOffset >= found.offset + found.size)
             return nullptr;
         const auto entry = found.entries.find(static_cast<uint32_t>(archiveOffset - found.offset));
-        return entry == found.entries.end() ? nullptr : &entry->second;
+        if (entry == found.entries.end())
+            return nullptr;
+        if (leafOffset)
+            *leafOffset = found.offset;
+        return &entry->second;
     }
 
-    const ps2x::native::NativeTexture *TextureKeys::texture(const Entry &entry, uint64_t tex0, uint32_t width, uint32_t height)
+    namespace texture_keys
+    {
+    namespace
+    {
+        void packPalette(const std::vector<ps2x::native::packs::TextureRecord> &records, uint32_t record, uint32_t (&palette)[256])
+        {
+            std::memset(palette, 0, sizeof(palette));
+            if (record != kNoPalette && record < records.size())
+                std::memcpy(palette, records[record].texels.data(), std::min<size_t>(sizeof(palette), records[record].texels.size()));
+        }
+
+        void decodeInto(ps2x::native::TextureCache::Texture &image, ps2x::native::NativeTexture &native, const TextureKeys::Key &key,
+                        const ps2x::native::packs::TextureRecord &texels, const uint32_t (&palette)[256], uint64_t id)
+        {
+            ps2x::native::packs::decodeRecord(image, key.width, key.height, texels.psm, texels, palette, 0);
+            native.width = image.width;
+            native.height = image.height;
+            native.rgba = image.rgba.data();
+            native.key = id;
+        }
+    }
+    }
+
+    const ps2x::native::NativeTexture *TextureKeys::decoded(const List &list, const Key &key)
+    {
+        auto decoded = m_decoded.find(&key);
+        if (decoded == m_decoded.end())
+        {
+            uint32_t palette[256];
+            texture_keys::packPalette(*list.records, key.palette, palette);
+            Decoded &out = m_decoded[&key];
+            texture_keys::decodeInto(out.image, out.native, key, (*list.records)[key.texels], palette, reinterpret_cast<uintptr_t>(&key));
+            decoded = m_decoded.find(&key);
+        }
+        return decoded->second.native.rgba ? &decoded->second.native : nullptr;
+    }
+
+    // The game's palette words where its upload data has them, and the CRC-32 of its texels' upload data, against the
+    // disc's (palette record, key CRC). Changed palette: the pack's texels under the game's colours. Changed texels are
+    // counted and keep the pack's.
+    const ps2x::native::NativeTexture *TextureKeys::live(const List &list, const Key &key, const GameData &game)
+    {
+        Live &live = m_live[{&key, game.leaf}];
+        if (live.frame == game.frame)
+            return live.texture;
+        live.frame = game.frame;
+        ++m_liveStats.checked;
+        const auto at = [&](uint32_t offset, uint32_t bytes) -> const uint8_t *
+        {
+            const uint32_t address = game.leaf + offset;
+            if (offset == texture_keys::kNoSource || address < game.lo || address > game.hi || game.hi - address < bytes)
+                return nullptr;
+            return game.rdram + (address & PS2_RAM_MASK);
+        };
+        uint32_t palette[256];
+        texture_keys::packPalette(*list.records, key.palette, palette);
+        const uint32_t *sources = list.sources.data() + key.sources;
+        bool paletteChanged = false, outside = false;
+        for (uint32_t i = 0; i < key.paletteEntries; ++i)
+        {
+            if (sources[i] == texture_keys::kNoSource)
+                continue;
+            const uint8_t *word = at(sources[i], 4u);
+            if (!word)
+            {
+                outside = true;
+                continue;
+            }
+            uint32_t colour;
+            std::memcpy(&colour, word, 4);
+            paletteChanged |= colour != palette[i];
+            palette[i] = colour;
+        }
+        uint32_t crc = 0;
+        for (uint32_t r = 0; r < key.runs; ++r)
+        {
+            const uint32_t offset = sources[key.paletteEntries + r * 2u], bytes = sources[key.paletteEntries + r * 2u + 1u];
+            const uint8_t *data = at(offset, bytes);
+            if (!data)
+            {
+                outside = true;
+                break;
+            }
+            crc = texture_keys::kCrc32(crc, data, bytes);
+            m_liveStats.bytes += bytes;
+        }
+        m_liveStats.outside += outside ? 1u : 0u;
+        if (!outside && crc != key.crc)
+            ++m_liveStats.texels;
+        if (!paletteChanged)
+            return live.texture = decoded(list, key);
+        ++m_liveStats.palettes;
+        uint64_t id = (static_cast<uint64_t>(texture_keys::kCrc32(0u, reinterpret_cast<const uint8_t *>(palette), sizeof(palette))) << 32) ^
+                      reinterpret_cast<uintptr_t>(&key);
+        id = (id ^ (id >> 30)) * 0xBF58476D1CE4E5B9ull;
+        id = (id ^ (id >> 27)) * 0x94D049BB133111EBull;
+        id = (id ^ (id >> 31)) | (1ull << 63);
+        auto changed = m_changed.find(id);
+        if (changed == m_changed.end())
+        {
+            Decoded &out = m_changed[id];
+            texture_keys::decodeInto(out.image, out.native, key, (*list.records)[key.texels], palette, id);
+            changed = m_changed.find(id);
+        }
+        return live.texture = changed->second.native.rgba ? &changed->second.native : nullptr;
+    }
+
+    TextureKeys::LiveStats TextureKeys::takeLiveStats()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const LiveStats stats = m_liveStats;
+        m_liveStats = LiveStats{};
+        return stats;
+    }
+
+    const ps2x::native::NativeTexture *TextureKeys::texture(const Entry &entry, uint64_t tex0, uint32_t width, uint32_t height,
+                                                            const GameData *game)
     {
         const List &list = *entry.list;
         if (!list.records)
@@ -125,25 +289,7 @@ namespace sc3
             if (key.firstEntry < entry.index || key.texels >= list.records->size())
                 continue;
             std::lock_guard<std::mutex> lock(m_mutex);
-            auto decoded = m_decoded.find(&key);
-            if (decoded == m_decoded.end())
-            {
-                const ps2x::native::packs::TextureRecord &texels = (*list.records)[key.texels];
-                uint32_t palette[256] = {};
-                if (key.palette != texture_keys::kNoPalette && key.palette < list.records->size())
-                {
-                    const ps2x::native::packs::TextureRecord &colours = (*list.records)[key.palette];
-                    std::memcpy(palette, colours.texels.data(), std::min<size_t>(sizeof(palette), colours.texels.size()));
-                }
-                Decoded &out = m_decoded[&key];
-                ps2x::native::packs::decodeRecord(out.image, key.width, key.height, texels.psm, texels, palette, 0);
-                out.native.width = out.image.width;
-                out.native.height = out.image.height;
-                out.native.rgba = out.image.rgba.data();
-                out.native.key = reinterpret_cast<uintptr_t>(&key);
-                decoded = m_decoded.find(&key);
-            }
-            return decoded->second.native.rgba ? &decoded->second.native : nullptr;
+            return game ? live(list, key, *game) : decoded(list, key);
         }
         return nullptr;
     }
