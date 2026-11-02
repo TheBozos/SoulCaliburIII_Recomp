@@ -164,6 +164,7 @@ namespace sc3
             // Packets the game still builds for 2D, by the return address of their insertion (ra: the builder) and the
             // insertion function: calls and quadwords.
             std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> inserted;
+            uint32_t insertDepth = 0; // inside a counted insertion: 0x10F808 from there is part of it
             uint64_t frames = 0, bound = 0, boundBad = 0;
             // Texture files of draw items: the last frame an item of theirs linked a game packet, the first frame their upload
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
@@ -3780,6 +3781,8 @@ namespace sc3
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        constexpr uint32_t kGifListAppend = 0x0010F808u;
+
         void insertion(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
@@ -3798,14 +3801,43 @@ namespace sc3
                 s.itemFilesGs[s.gsItemFile] = s.frames;
             if (std::find(std::begin(kInserts), std::end(kInserts), at) == std::end(kInserts))
             {
+                ++s.insertDepth;
                 callOriginal(at, rdram, ctx, runtime);
+                --s.insertDepth;
                 return;
             }
             auto &counted = s.inserted[{getRegU32(ctx, 31), at}];
             ++counted.first;
             if (end > base && end - base < 0x4000u)
                 counted.second += (end - base) / 16u + 1u;
+            ++s.insertDepth;
             callOriginal(at, rdram, ctx, runtime);
+            --s.insertDepth;
+        }
+
+        // 0x10F808 (end): the scratch packet from its base to `end` appended to the in-order GIF list (0x10EF78) by its
+        // builder itself, not through an insertion: counted as one when no insertion called it.
+        void gifListAppend(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t base = peek32(kScratchpad);
+            const uint32_t end = getRegU32(ctx, 4);
+            if (s.insertDepth == 0u)
+            {
+                if (s.stripCapture)
+                {
+                    std::vector<Qword> &words = s.stripPackets.emplace_back();
+                    for (uint32_t q = base; q < end && words.size() < 0x400u; q += 16u)
+                        words.push_back({peek32(q), peek32(q + 4u), peek32(q + 8u), peek32(q + 12u)});
+                }
+                if (inGsItem(getRegU32(ctx, 31)))
+                    s.itemFilesGs[s.gsItemFile] = s.frames;
+                auto &counted = s.inserted[{getRegU32(ctx, 31), kGifListAppend}];
+                ++counted.first;
+                if (end > base && end - base < 0x4000u)
+                    counted.second += (end - base) / 16u;
+            }
+            callOriginal(kGifListAppend, rdram, ctx, runtime);
         }
 
         // ---- frame
@@ -4005,6 +4037,7 @@ namespace sc3
         for (const uint32_t address : kStripInserts)
             if (!g_state.originals.count(address))
                 wrap(runtime, address, insertion);
+        wrap(runtime, kGifListAppend, gifListAppend);
         ps2x::native::setGifChainMarkGate(markerGate);
         s.installed = true;
         std::fprintf(stderr, "[sc3:2d] native 2D%s: %s, %zu leaves with texture pages\n", s.switchPath.empty() ? "" : " (as its switch file says)",
