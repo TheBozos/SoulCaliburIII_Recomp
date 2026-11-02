@@ -149,6 +149,8 @@ namespace sc3
             {
                 uint32_t file = 0, page = 0, clut = 0;
                 bool absolute = false; // clut is the CBP itself
+                bool resolved = false; // resolvedPage is the copied page, found while its file was there
+                Page resolvedPage;
             };
             std::map<uint32_t, PageCopy> pageCopies; // 0x119318's copies of page blocks, by where they went
             uint64_t pageCopyChecks = 0, pageCopyMisses = 0; // check mode: head-2 strips whose copy is the recorded page's / not
@@ -2562,6 +2564,8 @@ namespace sc3
 
         constexpr uint32_t kPageCopy = 0x001191D0u, kPageCopyClut = 0x00119318u, kPageCopyCbp = 0x00119248u;
 
+        bool resolveCopy(const State::PageCopy &copy, Page &out, BuilderStats &stats);
+
         void pageCopy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t at = ctx->pc, file = getRegU32(ctx, 4);
@@ -2575,10 +2579,32 @@ namespace sc3
                 copy.clut = (getRegU32(ctx, 7) + base) & 0x3FFFu;
                 copy.absolute = true;
             }
+            BuilderStats unused;
+            copy.resolved = resolveCopy(copy, copy.resolvedPage, unused);
             callOriginal(at, rdram, ctx, runtime);
         }
 
-        // The page a head-2 item's copy came from, with its CLUT (false: not copied by 0x119318, or no pack texture).
+        // The page a head-2 item's copy came from, with its CLUT (false: not copied by 0x119318, or no pack texture). Resolved
+        // when the copy is made: the file it came from can be gone by the time the copy is drawn.
+        bool resolveCopy(const State::PageCopy &copy, Page &out, BuilderStats &stats)
+        {
+            Page base;
+            if (!page(copy.file, copy.page, base, stats))
+                return false;
+            if (copy.clut == 0u && !copy.absolute)
+            {
+                out = base;
+                return true;
+            }
+            const uint32_t psm = static_cast<uint32_t>((base.tex0 >> 20) & 0x3Fu);
+            const uint32_t cbp = copy.absolute ? copy.clut
+                                               : (static_cast<uint32_t>((base.tex0 >> 37) & 0x3FFFu) + ((psm & 1u) == 0u ? copy.clut : copy.clut * 4u)) & 0x3FFFu;
+            if (!page(copy.file, copy.page, out, stats, cbp))
+                return false;
+            out.tex0 = (out.tex0 & ~(0x3FFFull << 37)) | (static_cast<uint64_t>(cbp) << 37);
+            return true;
+        }
+
         bool copiedPage(uint32_t block, Page &out, BuilderStats &stats)
         {
             State &s = g_state;
@@ -2588,22 +2614,12 @@ namespace sc3
                 ++stats.noBlock;
                 return false;
             }
-            Page base;
-            if (!page(copy->second.file, copy->second.page, base, stats))
-                return false;
-            if (copy->second.clut == 0u && !copy->second.absolute)
+            if (copy->second.resolved)
             {
-                out = base;
+                out = copy->second.resolvedPage;
                 return true;
             }
-            const uint32_t psm = static_cast<uint32_t>((base.tex0 >> 20) & 0x3Fu);
-            const uint32_t cbp = copy->second.absolute ? copy->second.clut
-                                                       : (static_cast<uint32_t>((base.tex0 >> 37) & 0x3FFFu) +
-                                                          ((psm & 1u) == 0u ? copy->second.clut : copy->second.clut * 4u)) & 0x3FFFu;
-            if (!page(copy->second.file, copy->second.page, out, stats, cbp))
-                return false;
-            out.tex0 = (out.tex0 & ~(0x3FFFull << 37)) | (static_cast<uint64_t>(cbp) << 37);
-            return true;
+            return resolveCopy(copy->second, out, stats);
         }
 
         void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
