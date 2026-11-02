@@ -23,6 +23,7 @@
 #   REGRESS_FIGHT_FRAME_CAP=<fps>
 #                     the frame cap from the fight's start on (SC3_FRAME_CAP_FILE; 0 = uncapped), the menus before it
 #                     at the default cap: uncapped menus run ahead of the route's presses
+#   REGRESS_STAGE=<n>   Right presses at the stage select before its Cross: 0 (default) keeps Random, n > 0 a fixed stage
 #   REGRESS_KEEP_SHOTS=1
 #                     keeps shots/ (frame_<tenths of a second>.png), to compare effects between two runs
 #   REGRESS_NATIVE_VU1_AB=1
@@ -227,7 +228,9 @@ route()
     for i in 1 2 3 4; do press CROSS; await 4 || return 1; done
     await 4 || return 1
     press RIGHT; await 2 || return 1
-    for i in 1 2 3 4 5; do press CROSS; await 4 || return 1; done
+    for i in 1 2 3 4; do press CROSS; await 4 || return 1; done
+    for i in $(seq "${REGRESS_STAGE:-0}"); do press RIGHT; await 1 || return 1; done
+    press CROSS; await 4 || return 1
     await 20 || return 1
     [ -z "$cap_file" ] || echo "$REGRESS_FIGHT_FRAME_CAP" > "$cap_file"
     fight_mark=$(grep -a -c '^\[state\] gs frames=' "$log" || true)
