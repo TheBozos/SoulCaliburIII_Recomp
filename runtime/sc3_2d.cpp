@@ -158,6 +158,7 @@ namespace sc3
             bool stripCapture = false;                // check mode: the packets the strips' insertions get, from the scratch base
             std::vector<std::vector<std::array<uint32_t, 4>>> stripPackets;
             uint64_t uploadsDropped = 0;
+            std::map<std::pair<uint32_t, bool>, uint64_t> uploadsKept; // native on: (file, an item of it went to the GS) -> uploads sent
             Function format = nullptr; // 0x11CBC8, the text renderer's formatter
             bool capture = false;      // check mode: the game's text packets kept as its insertions get them
             std::vector<TextPacket> captured;
@@ -166,6 +167,7 @@ namespace sc3
             // insertion function: calls and quadwords.
             std::map<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>> inserted;
             uint32_t insertDepth = 0; // inside a counted insertion: 0x10F808 from there is part of it
+            uint32_t outerInsertRa = 0; // inside a draw item's insertion (0x110D78 ...): its caller, who the packet is counted for
             uint64_t frames = 0, bound = 0, boundBad = 0;
             // Texture files of draw items: the last frame an item of theirs linked a game packet, the first frame their upload
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
@@ -2205,6 +2207,8 @@ namespace sc3
             }
             if (!packed)
             {
+                if (s.mode == Mode::On)
+                    ++s.uploadsKept[{file, gs != s.itemFilesGs.end() && gs->second + kGsItemFrames >= s.frames}];
                 callOriginal(kUploadItem, rdram, ctx, runtime);
                 return;
             }
@@ -4338,12 +4342,15 @@ namespace sc3
                 s.itemFilesGs[s.gsItemFile] = s.frames;
             if (std::find(std::begin(kInserts), std::end(kInserts), at) == std::end(kInserts))
             {
+                const uint32_t outer = s.outerInsertRa;
+                s.outerInsertRa = getRegU32(ctx, 31);
                 ++s.insertDepth;
                 callOriginal(at, rdram, ctx, runtime);
                 --s.insertDepth;
+                s.outerInsertRa = outer;
                 return;
             }
-            auto &counted = s.inserted[{getRegU32(ctx, 31), at}];
+            auto &counted = s.inserted[{s.outerInsertRa ? s.outerInsertRa : getRegU32(ctx, 31), at}];
             ++counted.first;
             if (end > base && end - base < 0x4000u)
                 counted.second += (end - base) / 16u + 1u;
@@ -4453,8 +4460,18 @@ namespace sc3
                 byForm->clear();
                 std::fprintf(stderr, "[sc3:2d]   %s by uploads / head / flags / Z:%s\n", name, forms.c_str());
             }
-            std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu\n", static_cast<unsigned long long>(s.uploadsDropped));
+            std::string kept;
+            for (const auto &[key, n] : s.uploadsKept)
+            {
+                packs::LoadedImages::Image image;
+                const bool known = s.loaded.find(key.first, image) && image.file;
+                std::snprintf(item, sizeof(item), " %#x(%s%s):%llu", key.first, known ? image.file->name.c_str() : "?", key.second ? ", GS item" : "",
+                              static_cast<unsigned long long>(n));
+                kept += item;
+            }
+            std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu, sent:%s\n", static_cast<unsigned long long>(s.uploadsDropped), kept.c_str());
             s.uploadsDropped = 0;
+            s.uploadsKept.clear();
             std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>>> sorted(s.inserted.begin(), s.inserted.end());
             std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second.second > b.second.second; });
             uint64_t qwords = 0;
