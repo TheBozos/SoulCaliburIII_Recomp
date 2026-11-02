@@ -33,6 +33,11 @@ namespace sc3
         constexpr uint32_t kFrameKick = 0x0010F098u;
         constexpr uint32_t kFileRequest = 0x00150418u;
         constexpr uint32_t kCdRead = 0x00424E28u;
+        // The movie task's copy of a picture into a texture file's pixels (handle, frame, pixels, flags) and the pointer
+        // of a file's upload to those pixels (pixels, file, call, page).
+        constexpr uint32_t kMovieCopy = 0x00217E28u, kFilePixels = 0x00118B68u;
+        constexpr uint64_t kMovieKey = 1ull << 63;
+        constexpr uint32_t kMovieSlots = 3u; // pictures a draw may still be waiting to use from the GS thread
         constexpr uint32_t kLabels = 0x001388E8u;
         constexpr uint32_t kTriangle = 0x00124C80u;
         constexpr uint32_t kInsertMode = 0x00468CB0u; // 0x120978's mode
@@ -173,6 +178,19 @@ namespace sc3
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
             std::map<uint32_t, uint64_t> itemFilesGs, uploadFilesSeen;
             uint32_t gsItemFile = 0;
+            // Small movies the native 2D draws from the host decoder's pictures: by player handle, the pixels the movie task
+            // copies them to (0x217E28's destination), and the page blocks of the texture files pointing there.
+            struct Movie
+            {
+                uint32_t number = ~0u, slot = 0;
+                uint64_t copied = 0; // the frame of the movie task's last copy
+                std::array<std::vector<uint32_t>, kMovieSlots> rgba;
+                std::array<ps2x::native::NativeTexture, kMovieSlots> native;
+            };
+            sc3::MoviePicture moviePictures = nullptr;
+            std::map<uint32_t, Movie> movies;
+            std::map<uint32_t, uint32_t> movieDests, moviePages;
+            uint64_t movieCopiesSkipped = 0, movieTextures = 0, movieChecks = 0, movieTexelsDiffering = 0;
         };
 
         State g_state;
@@ -327,6 +345,7 @@ namespace sc3
         // The page `index` of a texture file (0x1177E0's choice: the last one past its count) from the 2D pack, its texture
         // the one the file's own uploads write (decoded on first use, kept for the program's life).
         bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp);
+        bool moviePage(uint32_t block, Page &out);
 
         bool page(uint32_t file, uint32_t index, Page &out, BuilderStats &stats, uint32_t cbp = ~0u)
         {
@@ -442,9 +461,93 @@ namespace sc3
                     return true;
                 }
             }
+            if (moviePage(block, out))
+                return true;
             ++stats.noTexture;
             ++s.textureMisses[out.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
             return false;
+        }
+
+        // ---- small movies: the host decoder's picture as the texture of the pages the movie task copies it into
+
+        ps2x::native::NativeTexture *moviePicture(uint32_t handle)
+        {
+            State &s = g_state;
+            if (!s.moviePictures)
+                return nullptr;
+            State::Movie &m = s.movies[handle];
+            const uint32_t next = (m.slot + 1u) % kMovieSlots;
+            uint32_t width = 0, height = 0, number = 0;
+            if (!s.moviePictures(handle, m.number, m.rgba[next], width, height, number) || width == 0u || height == 0u)
+                return nullptr;
+            if (number != m.number)
+            {
+                m.slot = next;
+                m.number = number;
+                ps2x::native::NativeTexture &t = m.native[next];
+                t.width = width;
+                t.height = height;
+                t.rgba = m.rgba[next].data();
+                t.key = kMovieKey | (static_cast<uint64_t>(handle) << 2) | next;
+                t.version = number;
+            }
+            return &m.native[m.slot];
+        }
+
+        bool moviePage(uint32_t block, Page &out)
+        {
+            State &s = g_state;
+            const auto it = s.moviePages.find(block);
+            if (it == s.moviePages.end())
+                return false;
+            const ps2x::native::NativeTexture *picture = moviePicture(it->second);
+            if (!picture)
+                return false;
+            out.texture = picture;
+            ++s.movieTextures;
+            return true;
+        }
+
+        void movieCopy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t handle = getRegU32(ctx, 4), frame = getRegU32(ctx, 5), dest = getRegU32(ctx, 6) & PS2_RAM_MASK;
+            if (s.mode == Mode::Off || !s.moviePictures)
+            {
+                callOriginal(kMovieCopy, rdram, ctx, runtime);
+                return;
+            }
+            s.movieDests[dest] = handle;
+            s.movies[handle].copied = s.frames;
+            if (s.mode == Mode::On)
+            {
+                ++s.movieCopiesSkipped;
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            const uint32_t width = peek32(frame + 0xCu), height = peek32(frame + 0x10u);
+            const uint32_t rows = (getRegU32(ctx, 7) & 8u) != 0u ? height / 32u * 16u : height;
+            runOriginal(kMovieCopy, rdram, ctx, runtime);
+            const ps2x::native::NativeTexture *picture = moviePicture(handle);
+            if (!picture || picture->width != width || picture->height != height)
+                return;
+            ++s.movieChecks;
+            for (uint32_t i = 0; i < width * rows; ++i)
+                if (peek32(dest + i * 4u) != picture->rgba[i])
+                    ++s.movieTexelsDiffering;
+        }
+
+        void filePixels(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            const uint32_t pixels = getRegU32(ctx, 4) & PS2_RAM_MASK, file = getRegU32(ctx, 5);
+            callOriginal(kFilePixels, rdram, ctx, runtime);
+            const auto it = s.movieDests.find(pixels);
+            if (it == s.movieDests.end() || !fileAddress(file))
+                return;
+            const uint32_t pages = peek8(file + 5u) + peek8(file + 7u) * 256u;
+            for (uint32_t i = 0; i < pages; ++i)
+                s.moviePages[peek32(peek32(file + 0xCu) + i * 4u) & ~0xFu] = it->second;
         }
 
         // ---- the OT: 0x10DDF8's link of a packet into a fixed bucket, for the two quadwords a marker takes
@@ -4472,6 +4575,10 @@ namespace sc3
             std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu, sent:%s\n", static_cast<unsigned long long>(s.uploadsDropped), kept.c_str());
             s.uploadsDropped = 0;
             s.uploadsKept.clear();
+            std::fprintf(stderr, "[sc3:2d]   movies: %zu pages, picture copies skipped %llu, page textures given %llu; checked %llu (%llu texels differing)\n",
+                         s.moviePages.size(), static_cast<unsigned long long>(s.movieCopiesSkipped), static_cast<unsigned long long>(s.movieTextures),
+                         static_cast<unsigned long long>(s.movieChecks), static_cast<unsigned long long>(s.movieTexelsDiffering));
+            s.movieCopiesSkipped = s.movieTextures = s.movieChecks = s.movieTexelsDiffering = 0;
             std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>>> sorted(s.inserted.begin(), s.inserted.end());
             std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.second.second > b.second.second; });
             uint64_t qwords = 0;
@@ -4597,6 +4704,8 @@ namespace sc3
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         wrap(runtime, kUploadItem, uploadItem);
+        wrap(runtime, kMovieCopy, movieCopy);
+        wrap(runtime, kFilePixels, filePixels);
         for (const auto &item : kGsItems)
             wrap(runtime, item.first, gsItem);
         s.format = runtime.lookupFunction(kTextFormat);
@@ -4611,5 +4720,16 @@ namespace sc3
         s.installed = true;
         std::fprintf(stderr, "[sc3:2d] native 2D%s: %s, %zu leaves with texture pages\n", s.switchPath.empty() ? "" : " (as its switch file says)",
                      path, s.pack.files().size());
+    }
+
+    void setMoviePictures(MoviePicture pictures) { native2d::g_state.moviePictures = pictures; }
+
+    bool native2dMovie(uint32_t handle)
+    {
+        const native2d::State &s = native2d::g_state;
+        if (!s.installed || s.mode != native2d::Mode::On || !s.moviePictures)
+            return false;
+        const auto it = s.movies.find(handle);
+        return it != s.movies.end() && it->second.copied != 0u && s.frames - it->second.copied <= 60u;
     }
 }
