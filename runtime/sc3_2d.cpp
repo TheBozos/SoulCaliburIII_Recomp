@@ -3901,12 +3901,15 @@ namespace sc3
         constexpr uint32_t kDisplay = 0x00469230u;    // +0x50: the screen's aspect is not the game's
         constexpr uint32_t kScreenSpriteAspect = 0x00467610u;
 
-        // 0x10FD78 with a3 = 1: the colour cap, the view's +0x380 and the 2D matrix in vf26 .. vf31.
-        void screenView(Vu0 &vu, uint32_t view)
+        // 0x10FD78: the colour cap, the view's +0x380 and a matrix in vf26 .. vf31, the 2D one (a3 = 1: the view's +0x460) or
+        // the 3D one (a3 = 0: +0x448).
+        constexpr uint32_t kView2dMatrix = 0x460u, kView3dMatrix = 0x448u;
+
+        void screenView(Vu0 &vu, uint32_t view, uint32_t slot)
         {
             vu.vf[26] = loadVec(kStripColourMax);
             vu.vf[27] = loadVec(view + 0x380u);
-            const uint32_t matrix = peek32(view + 0x460u);
+            const uint32_t matrix = peek32(view + slot);
             for (int i = 0; i < 4; ++i)
                 vu.vf[28 + i] = loadVec(matrix + static_cast<uint32_t>(i) * 16u);
         }
@@ -4006,7 +4009,7 @@ namespace sc3
             call.tag = (12ull << 60) | (static_cast<uint64_t>(prim) << 47) | (1ull << 46) | 1u;
             call.regs = call.tex1 ? 0x424242421EFEull : 0x424242421EFFull;
             Vec *vf = vu.vf;
-            screenView(vu, view);
+            screenView(vu, view, kView2dMatrix);
             for (int i = 10; i <= 13; ++i)
                 vf[i] = put(vf[i], ps2_vsub(vf[i], vf[i]), 8u);
             const bool wideFlag = (peek8(item + 0x1Fu) & 0x80u) != 0u;
@@ -4130,7 +4133,7 @@ namespace sc3
             call.tag = ((call.tex1 ? 7ull : 6ull) << 60) | prim | 0x8000u | 1u;
             call.regs = call.tex1 ? 0x042421EEull : 0x0042421Eull;
             Vec *vf = vu.vf;
-            screenView(vu, view);
+            screenView(vu, view, kView2dMatrix);
             const bool wideFlag = (peek8(item + 0x1Fu) & 0x80u) != 0u;
             const bool aspect = peek32(peek32(kDisplay) + 0x50u) != 0u;
             const bool corrected = wideFlag ? !aspect : aspect;
