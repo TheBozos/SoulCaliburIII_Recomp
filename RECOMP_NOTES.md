@@ -659,6 +659,15 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   and cosine are 0x100AC0's set-up in C++ around its VU0 microprogram 0x38, run as vcallms runs it (calling 0x100AC0 as
   EE code from a hook can resume after its indirect jump with other registers in a0 / a1: its stores then go to the
   item). Page sizes for the ST table 0x467580 come from the pack's page (0x118020 reads them from the block).
+- 0x1107E0 (type 6) and 0x110258 (type 2), 0x110E50's siblings in the 2D view: 0x10FD78 with a3 = 1 loads the matrix
+  *(view +0x460), the position's z is the depth (Z = the view's z times the depth scale +0x38 over z, drawn when z is
+  over 0.08), depth for the insertion +0x38 over z, or -(+0x38) (x 12.5 for mode 1) when +0x38 is not positive. Type 6:
+  a rotated quad per entry, its half sizes from one of the vectors 0x467620..0x467650 picked by +0x4A & 0x40 / 0x80,
+  the item's +0x1F & 0x80 and *(*(0x469230) +0x50) (the screen's aspect), X moved around 2048 by 1.2443 or 0.8036;
+  no range test. Type 2: a GS sprite per entry (+0xB 0: PRIM 0x256, NREG 6 or 7), size +0x30 / +0x34 times +0x40,
+  anchor +0x4A >> 4 & 3, colour bytes (b + 1) / 2, dropped off the GS's range; nothing while the heap is nearly full
+  (0x10D528); TEST_2 put back to 0x5002D after it; mode 0 appends through 0x10F808. +0x1D & 1 writes TEX1_2 from the
+  table 0x467528 by +0x4B (the native material's TEX1). Regress route in check mode: 0 differing.
 - Calling game code from C++: a recompiled function returns to the dispatcher at a call when an EE checkpoint is due
   (`ctx->pc` the callee), so a call that must finish runs to its return (`runToReturn`: `lookupFunction(ctx->pc)` until
   the return address with the caller's stack pointer). SC3 keeps stacks and packets in the scratchpad: every guest
@@ -670,7 +679,13 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
 - `[sc3:2d]` every 250 frames: GIF chain markers read, leaves bound, pages without a texture, per builder calls /
   native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
   still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
-  included): calls / quadwords. `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on.
+  included, and 0x10F808 when a builder appends to the in-order GIF list itself): calls / quadwords.
+  `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on; `REGRESS_MENU_SERIES=<n>`
+  alternates pairs of stills off / on in Mode Select and Single Player Modes, whose backdrops never stand still.
+- Census with 0x10F808 counted (native 2D on): 0x1410E8 / 0x1415E8 (~870 quadwords a frame, 64-pixel sprite columns
+  sampling the frame buffer, context 2: the off-screen pass of the menus and the fight, M5) were invisible before, as
+  were SCISSOR 0x1214D8 / XYOFFSET 0x12CB40's direct appends (frame context, M7), 0x12DB20 (from 0x18E240, ~27
+  quadwords a frame) and 0x127620 (one A+D write, from 0x12A400 / 0x12A8A0).
 - 0x115600 (draw item 13: CALLs of a texture file's upload lists, or of a block +0x10, then TEXFLUSH) is dropped
   while every page of its file +0x14 is in the pack and no item of that file linked a game packet for 120 frames (an
   item type still the game's, 0x110258, 0x1107E0 and the rest of the table, marks the file of the item that runs when
