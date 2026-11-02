@@ -55,6 +55,11 @@
 #                     stills a presented frame apart, two with the native 2D off and two on (menu_<screen>_<i>_<off|on>.png);
 #                     menu_<screen>_floor_psnr is the mean psnr of neighbours drawn the same way, menu_<screen>_psnr of
 #                     neighbours drawn one each way (animated backdrops: no two stills are the same scene)
+#   REGRESS_VERSUS=1  World Competition instead of Practice: a tournament match against the CPU with the fight HUD
+#                     (health gauges, timer, round marks, names, BATTLE / K.O. / RING OUT / YOU LOSE), the attacks
+#                     from its BATTLE 1 on for REGRESS_FIGHT_SECS (default 120: three battles and the results), no
+#                     pause menu; with REGRESS_NATIVE_2D_AB=1 four stills after every round of attacks, as the menu
+#                     series (versus_fight_<i><a-d>_<off|on>.png, versus_fight_floor_psnr / versus_fight_psnr)
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -78,6 +83,8 @@ fight_secs=${REGRESS_FIGHT_SECS:-60}
 pause_secs=${REGRESS_PAUSE_SECS:-3}
 shot_secs=${REGRESS_SHOT_SECS:-5}
 keep_shots=${REGRESS_KEEP_SHOTS:-0}
+versus=${REGRESS_VERSUS:-0}
+[ "$versus" != 1 ] || fight_secs=${REGRESS_FIGHT_SECS:-120}
 period=5
 
 runner=
@@ -101,7 +108,7 @@ frames=$out/frames
 shots=$out/shots
 log=$out/run.log
 input=$out/pad_input.txt
-rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
+rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_*.png "$out"/versus_*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
 user=$out/user
 rm -rf "$user"
@@ -231,18 +238,43 @@ await()
     done
 }
 
+still_round()
+{
+    echo 0 > "$native2d_switch"; await 1 || return 1; pause_still "$1_$2a_off.png"
+    await 1 || return 1; pause_still "$1_$2b_off.png"
+    echo 1 > "$native2d_switch"; await 1 || return 1; pause_still "$1_$2c_on.png"
+    await 1 || return 1; pause_still "$1_$2d_on.png"
+}
+
 menu_series()
 {
     local i
     [ -n "$native2d_switch" ] && [ "${REGRESS_MENU_SERIES:-0}" -gt 0 ] || return 0
     for i in $(seq "$REGRESS_MENU_SERIES"); do
-        echo 0 > "$native2d_switch"; await 1 || return 1; pause_still "menu_$1_${i}a_off.png"
-        await 1 || return 1; pause_still "menu_$1_${i}b_off.png"
-        echo 1 > "$native2d_switch"; await 1 || return 1; pause_still "menu_$1_${i}c_on.png"
-        await 1 || return 1; pause_still "menu_$1_${i}d_on.png"
+        still_round "menu_$1" "$i" || return 1
     done
     echo 0 > "$native2d_switch"
     await 1
+}
+
+fight()
+{
+    [ -z "$cap_file" ] || echo "$REGRESS_FIGHT_FRAME_CAP" > "$cap_file"
+    fight_mark=$(grep -a -c '^\[state\] gs frames=' "$log" || true)
+    fight_at_s=$(( $(date +%s) - start ))
+    local t=0 n=0
+    while [ "$t" -lt "$fight_secs" ]; do
+        press SQUARE; await 1 || return 1
+        press TRIANGLE; await 1 || return 1
+        if [ "$versus" = 1 ]; then press CROSS; else press RIGHT; fi
+        await 1 || return 1
+        t=$((t + 3))
+        if [ "$versus" = 1 ] && [ -n "$native2d_switch" ]; then
+            n=$((n + 1))
+            still_round versus_fight "$n" || return 1
+            t=$((t + 4))
+        fi
+    done
 }
 
 route()
@@ -252,6 +284,17 @@ route()
     for i in 1 2 3 4; do press START; await 3 || return 1; done
     await 6 || return 1
     menu_series main || return 1
+    if [ "$versus" = 1 ]; then
+        press CROSS; await 4 || return 1
+        press DOWN; await 1 || return 1
+        press DOWN; await 1 || return 1
+        press CROSS; await 4 || return 1
+        for i in $(seq 16); do press CROSS; await 3 || return 1; done
+        fight || return 1
+        echo 0 > "${native2d_switch:-/dev/null}"
+        route_reached=1
+        return 0
+    fi
     press CROSS; await 4 || return 1
     menu_series single || return 1
     if [ -n "$native2d_switch" ]; then
@@ -275,16 +318,7 @@ route()
     press RIGHT; await 2 || return 1
     for i in 1 2 3 4 5; do press CROSS; await 4 || return 1; done
     await 20 || return 1
-    [ -z "$cap_file" ] || echo "$REGRESS_FIGHT_FRAME_CAP" > "$cap_file"
-    fight_mark=$(grep -a -c '^\[state\] gs frames=' "$log" || true)
-    fight_at_s=$(( $(date +%s) - start ))
-    local t=0
-    while [ "$t" -lt "$fight_secs" ]; do
-        press SQUARE; await 1 || return 1
-        press TRIANGLE; await 1 || return 1
-        press RIGHT; await 1 || return 1
-        t=$((t + 3))
-    done
+    fight || return 1
     press START; await "$pause_secs" || return 1
     pause_still pause.png
     if [ -n "$native_switch" ]; then
@@ -431,7 +465,7 @@ menu_2d_psnr=$(menu_psnr menu_2d.png)
 series_psnr()
 {
     local prev= kind= still now p
-    for still in $(ls "$out" | grep -E "^menu_$1_[0-9]+[a-d]_(off|on)\.png$" | sort -V); do
+    for still in $(ls "$out" | grep -E "^$1_[0-9]+[a-d]_(off|on)\.png$" | sort -V); do
         now=${still##*_}
         if [ -n "$prev" ]; then
             p=$(python3 -I "$root/scripts/imgdiff.py" "$out/$prev" "$out/$still" | sed -n 's/^psnr=\([^ ]*\).*/\1/p')
@@ -442,8 +476,9 @@ series_psnr()
         END { if (n["same"] && n["mixed"]) printf "%.2f %.2f %d %d\n", s["same"] / n["same"], s["mixed"] / n["mixed"], n["same"], n["mixed"];
               else print "NA NA 0 0" }'
 }
-read -r menu_main_floor_psnr menu_main_psnr menu_main_same_pairs menu_main_mixed_pairs < <(series_psnr main)
-read -r menu_single_floor_psnr menu_single_psnr menu_single_same_pairs menu_single_mixed_pairs < <(series_psnr single)
+read -r menu_main_floor_psnr menu_main_psnr menu_main_same_pairs menu_main_mixed_pairs < <(series_psnr menu_main)
+read -r menu_single_floor_psnr menu_single_psnr menu_single_same_pairs menu_single_mixed_pairs < <(series_psnr menu_single)
+read -r versus_fight_floor_psnr versus_fight_psnr versus_fight_same_pairs versus_fight_mixed_pairs < <(series_psnr versus_fight)
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -495,6 +530,9 @@ menu_main_pairs=$menu_main_same_pairs/$menu_main_mixed_pairs
 menu_single_floor_psnr=$menu_single_floor_psnr
 menu_single_psnr=$menu_single_psnr
 menu_single_pairs=$menu_single_same_pairs/$menu_single_mixed_pairs
+versus_fight_floor_psnr=$versus_fight_floor_psnr
+versus_fight_psnr=$versus_fight_psnr
+versus_fight_pairs=$versus_fight_same_pairs/$versus_fight_mixed_pairs
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s
