@@ -52,6 +52,7 @@ namespace sc3
         constexpr uint32_t k2d = 0x005BEDD0u;          // +0x4c the 2D texture file, +0x68 the 2D depth
         constexpr uint32_t kAlphaTable = 0x0046EFD8u;
         constexpr uint32_t kView = 0x0046DA88u;        // +0x460 the 2D view matrix
+        constexpr uint32_t kView2dMatrix = 0x460u, kView3dMatrix = 0x448u; // the view's matrix slots
         constexpr uint32_t kScratchpad = 0x70000000u;
         constexpr uint32_t kSector = 2048u;
         constexpr uint32_t kTagRegs = 0x100u;
@@ -147,10 +148,10 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, shadedLines, icons, effects, strips, objects, screenObjects, screenSprites, billboards;
+            BuilderStats labels, triangles, text, quads, lines, shadedLines, icons, effects, strips, objects, screenObjects, screenSprites, billboards, screenStrips;
             std::map<uint32_t, uint64_t> objectForms; // 0x110E50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F
             std::map<uint32_t, uint64_t> screenObjectForms, screenSpriteForms, billboardForms; // 0x1107E0 / 0x110258 / 0x112148, as objectForms
-            std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
+            std::map<uint32_t, uint64_t> stripForms, screenStripForms; // 0x1134A0 / 0x114B50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
             struct PageCopy
             {
                 uint32_t file = 0, page = 0, clut = 0;
@@ -2671,6 +2672,154 @@ namespace sc3
             return true;
         }
 
+        // ---- 0x114B50 (a0 -> item): 0x1134A0's item and packets in screen space (the fight's health gauges): the view's 2D
+        // matrix (+0x460, times +0x10 when +0x1D is 1 or 2), X / Y as it gives them, Z times the Z scale (+0x28, 1 when
+        // negative) over the position's z, ST with Q 1; a vertex whose position z is under 0.08 or off the GS's range and
+        // the two after it carry ADC. Depth: the drawn vertices over the sum of their z / the Z scale (-(+0x28) when
+        // negative), +0x2C their mean.
+
+        constexpr uint32_t kScreenStrips = 0x00114B50u;
+
+        bool screenStripBuild(uint32_t item, Vu0 &vu, StripCall &call)
+        {
+            if (peek8(item + 0x1Eu) == 0u)
+                return false;
+            const uint32_t count = peek16(item + 8u);
+            call.mode = peek8(item + 0xAu) & 3u;
+            call.insertion = peek32(kStripTable + call.mode * 4u);
+            uint32_t p = peek32(item + 0xCu);
+            call.file = peek32(item + 0x14u);
+            if (p == 0u || (p & 0xFu) != 0u || call.file == 0u || (call.file & 0xFu) != 0u)
+                return false;
+            call.page = peek8(item + 0x18u);
+            call.prim = (peek8(item + 0x1Cu) == 1u ? 0x54u : 0x254u) | peek8(item + 0xBu);
+            const uint64_t tag = (static_cast<uint64_t>(call.prim) << 47) | (0x30004000ull << 32) | 0x8000u;
+            call.alpha = peek64(item);
+            if (call.alpha == 0u)
+                call.alpha = 0x2Au;
+            const uint32_t view = peek32(kView);
+            Vec matrix[4];
+            const uint32_t kind = peek8(item + 0x1Du);
+            if (kind == 1u || kind == 2u)
+                matrixMultiply(vu, peek32(view + kView2dMatrix), peek32(item + 0x10u), matrix);
+            else
+                for (int i = 0; i < 4; ++i)
+                    matrix[i] = loadVec(peek32(view + kView2dMatrix) + static_cast<uint32_t>(i) * 16u);
+            const float fixed = peekFloat(item + 0x28u);
+            const bool fixedDepth = FPU_C_OLT_S(fixed, 0.0f);
+            Vec *vf = vu.vf;
+            const Vec one = lane(vf[0], 3);
+            vf[23] = loadVec(kStripClip);
+            vf[24] = loadVec(item + 0x20u);
+            if (fixedDepth)
+                vf[24] = put(vf[24], _mm_set1_ps(1.0f), 4u);
+            vf[25] = ps2_vsub(vf[0], one);
+            vu.q = ps2_fdiv(1.0f, vecLane(vf[24], 2));
+            vf[24] = put(vf[24], ps2_vadd(vf[0], lane(vf[23], 2)), 8u);
+            vf[26] = loadVec(kStripColourMax);
+            vf[27] = loadVec(view + 0x380u);
+            for (int i = 0; i < 4; ++i)
+                vf[28 + i] = matrix[i];
+            vf[24] = put(vf[24], ftoiVec(vf[24], 1.0f), 8u);
+            vf[7] = ps2_vadd(vf[0], _mm_set1_ps(vu.q));
+            const float nearZ = 0.08f;
+            int32_t restart = 0;
+            int32_t left = static_cast<int32_t>(count);
+            const std::vector<Qword> *previous = nullptr;
+            while (left > 0)
+            {
+                const int32_t total = left;
+                left -= static_cast<int32_t>(kStripPacketVertices);
+                const uint32_t n = left < 0 ? static_cast<uint32_t>(total) : kStripPacketVertices;
+                StripPacket &packet = call.packets.emplace_back();
+                if (call.packets.size() > 1u)
+                    previous = &call.packets[call.packets.size() - 2u].words;
+                std::vector<Qword> &w = packet.words;
+                w.push_back({0x10000003u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({2u, 0x10000000u, 0xEu, 0u});
+                w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+                w.push_back({kUnknownWord, kUnknownWord, 3u, 0u});
+                w.push_back({kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord});
+                uint32_t vertices = n;
+                const size_t tagAt = w.size();
+                w.push_back({});
+                if (previous)
+                {
+                    w.insert(w.end(), previous->end() - 6, previous->end());
+                    vertices += 2u;
+                }
+                const uint64_t gifTag = vertices | tag;
+                w[tagAt] = {static_cast<uint32_t>(gifTag), static_cast<uint32_t>(gifTag >> 32), 0x412u, 0u};
+                vf[20] = ps2_vsub(vf[0], vf[0]);
+                for (uint32_t i = 0; i < n; ++i, p += 0x40u)
+                {
+                    vf[6] = loadVec(p + 0x10u);
+                    vu.acc = ps2_vmul(vf[31], one);
+                    vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[28], lane(vf[6], 0)));
+                    vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[29], lane(vf[6], 1)));
+                    vf[3] = ps2_vadd(vu.acc, ps2_vmul(vf[30], lane(vf[6], 2)));
+                    vu.q = ps2_fdiv(1.0f, vecLane(vf[6], 2));
+                    vf[2] = loadVec(p);
+                    const uint32_t restartWord = peek32(p + 0xCu);
+                    vf[4] = loadVec(p + 0x20u);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[24], 2)), 4u);
+                    vf[4] = ps2_vmul(vf[4], lane(vf[27], 1));
+                    vf[2] = put(vf[2], ps2_vadd(vf[2], vf[24]), 3u);
+                    vf[2] = put(vf[2], ps2_vadd(vf[0], one), 4u);
+                    vf[6] = put(vf[6], ps2_vmul(vf[6], lane(vf[7], 2)), 4u);
+                    const float z = peekFloat(p + 0x18u);
+                    if (restart <= 0 && restartWord != 0u)
+                        restart = 1;
+                    vf[4] = _mm_max_ps(vf[4], vf[25]);
+                    const bool behind = FPU_C_OLT_S(z, nearZ);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], _mm_set1_ps(vu.q)), 4u);
+                    bool clipped = behind;
+                    if (!behind)
+                    {
+                        vf[2] = put(vf[2], ps2_vsub(vf[2], lane(vf[2], 3)), 8u);
+                        vf[4] = _mm_min_ps(vf[4], vf[26]);
+                        vf[5] = put(vf[5], ftoiVec(vf[3], 16.0f), 7u);
+                        vf[4] = ftoiVec(vf[4], 1.0f);
+                        clipped = offRange(vf[5]);
+                        vf[5] = put(vf[5], ps2_vsub(vf[0], one), 8u);
+                        if (!clipped)
+                        {
+                            vf[20] = put(vf[20], ps2_vadd(vf[20], one), 2u);
+                            if (restart > 0)
+                            {
+                                vf[5] = put(vf[5], vf[24], 8u);
+                                --restart;
+                            }
+                            vf[20] = put(vf[20], ps2_vadd(vf[20], lane(vf[6], 2)), 1u);
+                        }
+                    }
+                    if (clipped)
+                    {
+                        vf[5] = put(vf[5], vf[24], 8u);
+                        restart = 2;
+                    }
+                    w.push_back(vecWords(vf[2]));
+                    w.push_back(vecWords(vf[4]));
+                    w.push_back(vecWords(vf[5]));
+                }
+                packet.qwc = vertices * 3u + 1u;
+                const float x = vecLane(vf[20], 0), y = vecLane(vf[20], 1);
+                float depth = ps2_fdiv(y, x);
+                vu.q = ps2_fdiv(x, y);
+                if (FPU_C_OLT_S(0.0f, x))
+                {
+                    if (fixedDepth)
+                        depth = -fixed;
+                    packet.inserted = true;
+                    packet.depth = depth;
+                    call.meanW.push_back(vu.q);
+                }
+                else
+                    call.meanW.push_back(-1.0f);
+            }
+            return true;
+        }
+
         GsVertex stripVertex(const Qword &st, const Qword &rgba, const Qword &xyz)
         {
             GsVertex v;
@@ -2866,7 +3015,7 @@ namespace sc3
         // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600), each
         // with its end: a packet linked from inside one marks the file of the item that runs.
         constexpr std::pair<uint32_t, uint32_t> kGsItems[] = {
-            {0x001117D8u, 0x00112148u}, {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00114B50u, 0x00115018u}, {0x00115018u, 0x00115600u},
+            {0x001117D8u, 0x00112148u}, {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00115018u, 0x00115600u},
             {0x00115BE0u, 0x00115E48u}, {0x00115E48u, 0x00116128u}, {0x00116128u, 0x00116490u}};
 
         bool inGsItem(uint32_t ra)
@@ -3004,6 +3153,16 @@ namespace sc3
         void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             stripItemDraw(kStrips, stripBuild, g_state.strips, g_state.stripForms, rdram, ctx, runtime);
+        }
+
+        void screenStripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            stripItemDraw(kScreenStrips, screenStripBuild, g_state.screenStrips, g_state.screenStripForms, rdram, ctx, runtime);
+        }
+
+        void screenStrips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            trackItem(screenStripsDraw, g_state.screenStrips, rdram, ctx, runtime);
         }
 
         // ---- the screen-effect layer: the background behind the 3D (a sky band and a ground band split at the horizon,
@@ -3975,10 +4134,7 @@ namespace sc3
         constexpr uint32_t kDisplay = 0x00469230u;    // +0x50: the screen's aspect is not the game's
         constexpr uint32_t kScreenSpriteAspect = 0x00467610u;
 
-        // 0x10FD78: the colour cap, the view's +0x380 and a matrix in vf26 .. vf31, the 2D one (a3 = 1: the view's +0x460) or
-        // the 3D one (a3 = 0: +0x448).
-        constexpr uint32_t kView2dMatrix = 0x460u, kView3dMatrix = 0x448u;
-
+        // 0x10FD78: the colour cap, the view's +0x380 and a matrix in vf26 .. vf31, the 2D one (a3 = 1) or the 3D one (a3 = 0).
         void screenView(Vu0 &vu, uint32_t view, uint32_t slot)
         {
             vu.vf[26] = loadVec(kStripColourMax);
@@ -4733,6 +4889,15 @@ namespace sc3
             }
             s.stripForms.clear();
             std::fprintf(stderr, "[sc3:2d]   strips by uploads / head / matrix / Z / insertion:%s\n", forms.c_str());
+            reportBuilder("screen strips 0x114B50", s.screenStrips);
+            forms.clear();
+            for (const auto &[form, n] : s.screenStripForms)
+            {
+                std::snprintf(item, sizeof(item), " %08x:%llu", form, static_cast<unsigned long long>(n));
+                forms += item;
+            }
+            s.screenStripForms.clear();
+            std::fprintf(stderr, "[sc3:2d]   screen strips by uploads / head / matrix / Z / insertion:%s\n", forms.c_str());
             reportBuilder("objects 0x110E50", s.objects);
             forms.clear();
             for (const auto &[form, n] : s.objectForms)
@@ -4890,6 +5055,7 @@ namespace sc3
         wrap(runtime, kEffectLayer, screenEffectLayer);
         wrap(runtime, kEffectInline, screenEffectInline);
         wrap(runtime, kStrips, strips);
+        wrap(runtime, kScreenStrips, screenStrips);
         for (const uint32_t address : {kPageCopy, kPageCopyClut, kPageCopyCbp})
             wrap(runtime, address, pageCopy);
         wrap(runtime, kObjects, objects);
