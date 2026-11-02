@@ -142,7 +142,8 @@ namespace sc3
             std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Decoded> decoded; // (pack file, page block offset, CBP)
             uint32_t nextKey = 1;
             std::atomic<uint64_t> markersRead{0};
-            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips;
+            BuilderStats labels, triangles, text, quads, lines, icons, effects, strips, objects;
+            std::map<uint32_t, uint64_t> objectForms; // 0x110E50 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F
             std::map<uint32_t, uint64_t> stripForms; // 0x1134A0 by +0x1A << 24 | +0x1C << 16 | +0x1D << 8 | +0x1F << 4 | insertion
             struct PageCopy
             {
@@ -3209,6 +3210,470 @@ namespace sc3
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        // ---- 0x110E50 (a0 -> item): object sprites, VU0 macro code. The item as 0x1134A0's (+0 ALPHA_2, +8 the count, +0xA
+        // the insertion, +0xC the entries, +0x14 / +0x18 / +0x1A / +0x1C the texture head) and +0x10 an ST table (0: the
+        // page's), +0x1D & 2 TEXA 0x80 / 0x80, & 1 an A+D first, +0x1F & 0x40 TEST_2 0x30000, & 0xF Z from the projection;
+        // +0xB set to 2. An entry (0x50 bytes): +0 / +0x10 position and offset, +0x1C out w, +0x20 colour (+0x4A & 6: 0
+        // RGBA bytes times the view's +0x390 halfwords, 2 a pointer to floats, else floats), +0x30 size (z the depth scale, w
+        // the angle), +0x40 more size, +0x48 the ST rows, +0x4C drawn, +0x4D the corners' order. One rotated quad each (a
+        // strip of four vertices, PRIM 0x254) with its own head and packet (0x10FE50), at depth +0x38 / w (Z: 1 / the
+        // clamped w - size z).
+
+        constexpr uint32_t kObjects = 0x00110E50u;
+        constexpr uint32_t kObjectSt = 0x00467580u; // the ST rows of a page's whole texture (0x10FE50 scales them)
+        constexpr uint32_t kObjectDepthClamp = 0x0058A530u;
+
+        // 0x100AC0 (f12 -> *a0, *a1): its set-up in C++ and its VU0 microprogram (0x38) run as the game's vcallms runs it;
+        // the quadrant picks the two lanes of vf2 it stores.
+        void sinCos(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Vu0 &vu, float angle, uint32_t &first, uint32_t &second)
+        {
+            storeVu0(vu, ctx);
+            Vec *vf = ctx->vu0_vf;
+            vf[2] = _mm_setr_ps(0.25f, 0.5f, 0.25f, 0.5f);
+            vf[1] = _mm_set1_ps(angle);
+            Vec r = ps2_vadd(vf[1], vf[2]);
+            vf[1] = r;
+            ps2Vu0FmacFlags(ctx->vu0_mac_flags, ctx->vu0_status, r, 15u);
+            vf[3] = _mm_cvtepi32_ps(_mm_castps_si128(ftoiVec(vf[1], 1.0f)));
+            r = ps2_vsub(vf[1], vf[3]);
+            vf[4] = r;
+            ps2Vu0FmacFlags(ctx->vu0_mac_flags, ctx->vu0_status, r, 15u);
+            vf[3] = _mm_castsi128_ps(_mm_setr_epi32(0x3F400000, 0x3F400000, 0, 0));
+            const __m128i bits = _mm_castps_si128(vf[4]);
+            const __m128i denormal = _mm_cmpeq_epi32(_mm_and_si128(bits, _mm_set1_epi32(0x7F800000)), _mm_setzero_si128());
+            vf[4] = _mm_castsi128_ps(_mm_andnot_si128(denormal, _mm_and_si128(bits, _mm_set1_epi32(0x7FFFFFFF))));
+            r = ps2_vsub(vf[3], vf[4]);
+            vf[1] = put(vf[1], r, 3u);
+            ps2Vu0FmacFlags(ctx->vu0_mac_flags, ctx->vu0_status, r, 12u);
+            r = ps2_vsub(vf[4], lane(vf[2], 0));
+            vf[1] = put(vf[1], r, 0xCu);
+            ps2Vu0FmacFlags(ctx->vu0_mac_flags, ctx->vu0_status, r, 3u);
+            const Qword fraction = vecWords(vf[4]);
+            ctx->vu0_tpc = 0x38;
+            ps2rExecuteVU0Microprogram(runtime, rdram, ctx, 0x38);
+            const uint32_t quadrant = (static_cast<int32_t>(fraction[1]) > 0x3F000000 ? 2u : 0u) | (static_cast<int32_t>(fraction[0]) > 0x3F000000 ? 1u : 0u);
+            const Qword v = vecWords(ctx->vu0_vf[2]);
+            first = (quadrant & 1u) ? v[0] : v[2];
+            second = (quadrant & 2u) ? v[1] : v[3];
+            loadVu0(vu, ctx);
+        }
+
+        struct ObjectSprite
+        {
+            Qword st[4], xyz[4];
+            Qword colour;
+            float depth = 0;
+            bool inserted = false;
+        };
+
+        struct ObjectCall
+        {
+            uint32_t mode = 0, insertion = 0, file = 0, page = 0;
+            uint64_t alpha = 0, tag = 0, regs = 0;
+            bool texa = false, test = false;
+            std::vector<ObjectSprite> sprites;
+        };
+
+        // The sprites 0x110E50 builds for `item` (false: none), VU0 on a copy that ends as the game's; 0x118020's page sizes
+        // (the page's used size over its TEX0 size) from the pack's page.
+        bool objectBuild(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
+        {
+            const uint32_t count = peek16(item + 8u);
+            uint32_t e = peek32(item + 0xCu);
+            if (count == 0u || e == 0u)
+                return false;
+            const uint32_t view = peek32(kView);
+            call.alpha = peek64(item);
+            if (call.alpha == 0u)
+                call.alpha = 0x2Au;
+            call.texa = (peek8(item + 0x1Du) & 2u) != 0u;
+            const bool adFirst = (peek8(item + 0x1Du) & 1u) != 0u;
+            call.test = (peek8(item + 0x1Fu) & 0x40u) != 0u;
+            call.mode = peek8(item + 0xAu) & 3u;
+            call.insertion = peek32(kStripTable + call.mode * 4u);
+            call.file = peek32(item + 0x14u);
+            call.page = peek8(item + 0x18u);
+            uint32_t prim = 0x254u;
+            if (peek8(item + 0x1Cu) == 1u)
+                prim ^= 0x200u;
+            call.tag = (12ull << 60) | (static_cast<uint64_t>(prim) << 47) | (1ull << 46) | 1u;
+            call.regs = adFirst ? 0x424242421EFEull : 0x424242421EFFull;
+            Vec *vf = vu.vf;
+            const Vec one = lane(vf[0], 3);
+            vf[26] = loadVec(kStripColourMax);
+            vf[27] = loadVec(view + 0x380u);
+            const uint32_t matrix = peek32(view + 0x448u);
+            for (int i = 0; i < 4; ++i)
+                vf[28 + i] = loadVec(matrix + static_cast<uint32_t>(i) * 16u);
+            uint16_t scale[8];
+            std::memcpy(scale, guest(view + 0x390u, 16), 16);
+            const float width = peekFloat(view + 0x380u);
+            for (int i = 10; i <= 13; ++i)
+                vf[i] = put(vf[i], ps2_vsub(vf[i], vf[i]), 8u);
+            const bool projected = (peek8(item + 0x1Fu) & 0xFu) != 0u;
+            uint32_t table = peek32(item + 0x10u);
+            if (table == 0u && call.file != 0u)
+                table = kObjectSt;
+            for (uint32_t n = 0; n < count; ++n, e += 0x50u)
+            {
+                vf[1] = loadVec(e);
+                vf[2] = loadVec(e + 0x10u);
+                vf[4] = put(vf[4], ps2_vadd(vf[1], vf[2]), 7u);
+                if (peek8(e + 0x4Cu) == 0u)
+                    continue;
+                if (!projected)
+                    vf[5] = put(vf[5], _mm_set1_ps(peekFloat(e + 0x38u)), 1u);
+                vu.acc = ps2_vmul(vf[31], one);
+                vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[28], lane(vf[4], 0)));
+                vu.acc = ps2_vadd(vu.acc, ps2_vmul(vf[29], lane(vf[4], 1)));
+                vf[3] = ps2_vadd(vu.acc, ps2_vmul(vf[30], lane(vf[4], 2)));
+                vf[24] = ps2_vsub(vf[0], vf[0]);
+                vu.q = ps2_fdiv(1.0f, vecLane(vf[3], 3));
+                const Vec point = vf[3];
+                const float w = vecLane(point, 3);
+                ObjectSprite sprite;
+                if (!projected)
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[5], 0)), 4u);
+                vf[3] = put(vf[3], ps2_vsub(vf[3], lane(vf[3], 3)), 8u);
+                std::memcpy(guest(kScratchpad + 0x50u, 16), &point, 16);
+                if (!FPU_C_OLT_S(0.08f, w))
+                {
+                    pokeFloat(e + 0x1Cu, w);
+                    continue;
+                }
+                vf[3] = put(vf[3], ps2_vmul(vf[3], _mm_set1_ps(vu.q)), 7u);
+                const Vec screen = vf[3];
+                if (table == 0u)
+                {
+                    if (!projected)
+                        pokeFloat(e + 0x1Cu, w);
+                    continue;
+                }
+                if (peek32(item + 0x10u) == 0u)
+                {
+                    const float sw = FPU_DIV_S(FPU_CVT_S_W(pageRegs.width), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 26) & 0xFu)));
+                    const float sh = FPU_DIV_S(FPU_CVT_S_W(pageRegs.height), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 30) & 0xFu)));
+                    pokeFloat(kObjectSt + 0x10u, sw);
+                    pokeFloat(kObjectSt + 0x30u, sw);
+                    pokeFloat(kObjectSt + 0x24u, sh);
+                    pokeFloat(kObjectSt + 0x34u, sh);
+                }
+                if (projected)
+                    pokeFloat(e + 0x1Cu, w);
+                const float inverse = FPU_DIV_S(1.0f, w);
+                const uint32_t colourKind = peek8(e + 0x4Au) & 6u;
+                if (colourKind != 0u)
+                {
+                    vf[1] = loadVec(colourKind == 2u ? peek32(e + 0x20u) : e + 0x20u);
+                    vf[1] = ps2_vmul(vf[1], lane(vf[27], 1));
+                    vf[1] = _mm_min_ps(vf[1], vf[26]);
+                    if (!projected)
+                        vf[2] = _mm_set1_ps(w);
+                    vf[1] = _mm_max_ps(vf[1], vf[24]);
+                    if (!projected && FPU_C_OLT_S(w, 1.0f))
+                        vf[1] = put(vf[1], ps2_vmul(vf[1], lane(vf[2], 0)), 8u);
+                    vf[1] = ftoiVec(vf[1], 1.0f);
+                    sprite.colour = vecWords(vf[1]);
+                }
+                else
+                {
+                    const uint32_t rgba = peek32(e + 0x20u);
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const int32_t product = static_cast<int32_t>(static_cast<int16_t>(((rgba >> (i * 8)) & 0xFFu) + 1u)) *
+                                                static_cast<int32_t>(static_cast<int16_t>(scale[i * 2]));
+                        sprite.colour[i] = static_cast<uint32_t>(product) >> 8;
+                    }
+                }
+                static constexpr int kOrder[4][4] = {{0, 1, 2, 3}, {1, 0, 3, 2}, {2, 3, 0, 1}, {3, 2, 1, 0}};
+                const uint32_t order = peek8(e + 0x4Du);
+                const uint32_t rows = table + peek16(e + 0x48u) * 64u;
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (order < 4u)
+                    {
+                        const uint32_t row = rows + static_cast<uint32_t>(kOrder[order][i]) * 16u;
+                        sprite.st[i] = {peek32(row), peek32(row + 4u), peek32(row + 8u), peek32(row + 12u)};
+                    }
+                    else
+                        sprite.st[i] = {kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord};
+                }
+                const float f20 = FPU_MUL_S(width, inverse);
+                uint32_t first, second;
+                sinCos(rdram, ctx, runtime, vu, peekFloat(e + 0x3Cu), first, second);
+                vf[5] = _mm_castsi128_ps(_mm_setr_epi32(static_cast<int32_t>(second), static_cast<int32_t>(first), 0, 0));
+                vf[5] = put(vf[5], _mm_set1_ps(f20), 0xCu);
+                vf[3] = loadVec(e + 0x30u);
+                vf[24] = put(vf[24], ps2_vsub(vf[24], vf[24]), 0xAu);
+                vf[4] = loadVec(e + 0x40u);
+                vf[5] = put(vf[5], ps2_vmul(vf[5], lane(vf[3], 0)), 4u);
+                if (!projected)
+                {
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[4], 1)), 2u);
+                    vf[25] = screen;
+                    for (int i = 20; i <= 23; ++i)
+                        vf[i] = put(vf[i], ps2_vsub(vf[i], lane(vf[i], 3)), 8u);
+                    vf[5] = put(vf[5], ps2_vmul(vf[5], lane(vf[4], 0)), 4u);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[5], 3)), 2u);
+                    for (int i = 20; i <= 23; ++i)
+                        vf[i] = put(vf[i], vf[25], 4u);
+                    vf[24] = put(vf[24], ps2_vadd(vf[0], lane(vf[5], 0)), 5u);
+                    vf[24] = put(vf[24], ps2_vadd(vf[24], lane(vf[5], 1)), 0xAu);
+                    vf[24] = put(vf[24], ps2_vmul(vf[24], lane(vf[5], 2)), 3u);
+                    vf[24] = put(vf[24], ps2_vmul(vf[24], lane(vf[3], 1)), 0xCu);
+                    vf[24] = put(vf[24], ps2_vmul(vf[24], lane(vf[27], 2)), 9u);
+                    vf[19] = put(vf[19], ps2_vmul(vf[24], lane(vf[27], 3)), 6u);
+                    vf[3] = put(vf[3], ps2_vadd(vf[24], lane(vf[24], 3)), 1u);
+                    vf[5] = put(vf[5], ps2_vsub(vf[19], lane(vf[19], 2)), 2u);
+                    vf[4] = put(vf[4], ps2_vsub(vf[24], lane(vf[24], 3)), 1u);
+                    vf[6] = put(vf[6], ps2_vadd(vf[19], lane(vf[19], 2)), 2u);
+                    vf[20] = put(vf[20], ps2_vsub(vf[25], lane(vf[3], 0)), 1u);
+                    vf[23] = put(vf[23], ps2_vadd(vf[25], lane(vf[3], 0)), 1u);
+                    vf[21] = put(vf[21], ps2_vadd(vf[25], lane(vf[4], 0)), 1u);
+                    vf[22] = put(vf[22], ps2_vsub(vf[25], lane(vf[4], 0)), 1u);
+                    vf[20] = put(vf[20], ps2_vadd(vf[25], lane(vf[5], 1)), 2u);
+                    vf[23] = put(vf[23], ps2_vsub(vf[25], lane(vf[5], 1)), 2u);
+                    vf[21] = put(vf[21], ps2_vsub(vf[25], lane(vf[6], 1)), 2u);
+                    vf[22] = put(vf[22], ps2_vadd(vf[25], lane(vf[6], 1)), 2u);
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        vf[20 + i] = ftoiVec(vf[20 + i], 16.0f);
+                        sprite.xyz[i] = vecWords(vf[20 + i]);
+                    }
+                    sprite.depth = FPU_MUL_S(peekFloat(e + 0x38u), inverse);
+                }
+                else
+                {
+                    const uint32_t projection = peek32(view + 0x454u);
+                    const Qword p = vecWords(point);
+                    vf[18] = _mm_castsi128_ps(_mm_setr_epi32(static_cast<int32_t>(p[2]), 0, static_cast<int32_t>(p[3]), 0));
+                    vf[19] = loadVec(kObjectDepthClamp);
+                    vf[18] = put(vf[18], ps2_vsub(vf[18], lane(vf[3], 2)), 4u);
+                    vf[21] = put(vf[21], ps2_vadd(vf[0], lane(vf[19], 3)), 4u);
+                    vf[22] = loadVec(projection + 0x20u);
+                    vf[23] = loadVec(projection + 0x30u);
+                    vf[18] = put(vf[18], _mm_max_ps(vf[18], vf[19]), 4u);
+                    vf[24] = put(vf[24], ps2_vsub(vf[24], vf[24]), 0xAu);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[4], 1)), 2u);
+                    vf[18] = put(vf[18], _mm_min_ps(vf[18], vf[21]), 4u);
+                    vf[24] = put(vf[24], ps2_vadd(vf[0], lane(vf[5], 0)), 5u);
+                    vf[5] = put(vf[5], ps2_vmul(vf[5], lane(vf[4], 0)), 4u);
+                    vf[24] = put(vf[24], ps2_vadd(vf[24], lane(vf[5], 1)), 0xAu);
+                    vf[3] = put(vf[3], ps2_vmul(vf[3], lane(vf[5], 3)), 2u);
+                    vu.q = ps2_fdiv(1.0f, vecLane(vf[18], 2));
+                    vf[18] = put(vf[18], ps2_vmul(vf[18], lane(vf[22], 2)), 4u);
+                    vf[24] = put(vf[24], ps2_vmul(vf[24], lane(vf[5], 2)), 3u);
+                    vf[25] = screen;
+                    vf[24] = put(vf[24], ps2_vmul(vf[24], lane(vf[3], 1)), 0xCu);
+                    vf[18] = put(vf[18], ps2_vadd(vf[18], lane(vf[23], 2)), 4u);
+                    vf[25] = put(vf[25], ps2_vsub(vf[25], lane(vf[25], 3)), 8u);
+                    vf[20] = ps2_vadd(vf[0], _mm_set1_ps(vu.q));
+                    vf[18] = put(vf[18], ps2_vmul(vf[18], _mm_set1_ps(vu.q)), 4u);
+                    vf[25] = put(vf[25], ps2_vsub(vf[25], one), 8u);
+                    sprite.depth = vecLane(vf[20], 0);
+                    vf[25] = put(vf[25], vf[18], 4u);
+                    vf[1] = put(vf[1], ps2_vsub(vf[25], lane(vf[24], 0)), 1u);
+                    vf[1] = put(vf[1], ps2_vadd(vf[25], lane(vf[24], 1)), 2u);
+                    vf[2] = put(vf[2], ps2_vadd(vf[25], lane(vf[24], 0)), 1u);
+                    vf[2] = put(vf[2], ps2_vsub(vf[25], lane(vf[24], 1)), 2u);
+                    const Vec zw = ps2_vadd(vf[0], vf[25]);
+                    vf[20] = put(put(put(vf[20], ps2_vsub(vf[1], lane(vf[24], 3)), 1u), ps2_vsub(vf[1], lane(vf[24], 2)), 2u), zw, 0xCu);
+                    vf[21] = put(put(put(vf[21], ps2_vsub(vf[2], lane(vf[24], 3)), 1u), ps2_vsub(vf[2], lane(vf[24], 2)), 2u), zw, 0xCu);
+                    vf[22] = put(put(put(vf[22], ps2_vadd(vf[1], lane(vf[24], 3)), 1u), ps2_vadd(vf[1], lane(vf[24], 2)), 2u), zw, 0xCu);
+                    vf[23] = put(put(put(vf[23], ps2_vadd(vf[2], lane(vf[24], 3)), 1u), ps2_vadd(vf[2], lane(vf[24], 2)), 2u), zw, 0xCu);
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        vf[10 + i] = put(vf[10 + i], ftoiVec(vf[20 + i], 16.0f), 7u);
+                        sprite.xyz[i] = vecWords(vf[10 + i]);
+                    }
+                }
+                bool off = false;
+                for (const Qword &xyz : sprite.xyz)
+                    off |= ((xyz[0] >> 16) | (xyz[1] >> 16)) != 0u;
+                if (!projected)
+                    pokeFloat(e + 0x1Cu, w);
+                sprite.inserted = !off;
+                call.sprites.push_back(sprite);
+            }
+            return true;
+        }
+
+        // The quadwords of a sprite's packet from its DMA tag slot (TEXA and TEST_2 A+D packets before it when the item asks).
+        std::vector<Qword> objectWords(const ObjectCall &call, const ObjectSprite &sprite)
+        {
+            std::vector<Qword> w;
+            if (call.texa)
+            {
+                w.push_back({0x10000002u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({1u, 0x10000000u, 0xEu, 0u});
+                w.push_back({0x80u, 0x80u, 0x3Bu, 0u});
+            }
+            if (call.test)
+            {
+                w.push_back({0x10000002u, kUnknownWord, kUnknownWord, kUnknownWord});
+                w.push_back({1u, 0x10000000u, 0xEu, 0u});
+                w.push_back({0x30000u, 0u, 0x48u, 0u});
+            }
+            w.push_back({kUnknownWord, kUnknownWord, kUnknownWord, kUnknownWord});
+            w.push_back({static_cast<uint32_t>(call.tag), static_cast<uint32_t>(call.tag >> 32), static_cast<uint32_t>(call.regs),
+                         static_cast<uint32_t>(call.regs >> 32)});
+            w.push_back({0u, 0u, 0u, 0u});
+            w.push_back({0u, 0u, 0u, 0u});
+            w.push_back({static_cast<uint32_t>(call.alpha), static_cast<uint32_t>(call.alpha >> 32), 0x43u, 0u});
+            w.push_back(sprite.colour);
+            for (int i = 0; i < 4; ++i)
+            {
+                w.push_back(sprite.st[i]);
+                w.push_back(sprite.xyz[i]);
+            }
+            return w;
+        }
+
+        void compareObjects(BuilderStats &stats, const ObjectCall &call, bool refHead, const std::vector<std::vector<Qword>> &game)
+        {
+            size_t inserted = 0;
+            for (const ObjectSprite &o : call.sprites)
+                inserted += o.inserted ? 1u : 0u;
+            ++stats.checked;
+            if (inserted != game.size())
+            {
+                if (++stats.checkCountDiffs <= 4u)
+                    std::fprintf(stderr, "[sc3:2d] check objects: %zu sprites native, %zu game\n", inserted, game.size());
+                return;
+            }
+            size_t g = 0;
+            for (const ObjectSprite &o : call.sprites)
+            {
+                if (!o.inserted)
+                    continue;
+                const std::vector<Qword> &words = game[g++];
+                const std::vector<Qword> expected = objectWords(call, o);
+                if (words.size() < expected.size())
+                {
+                    if (++stats.checkCountDiffs <= 4u)
+                        std::fprintf(stderr, "[sc3:2d] check objects: %zu quadwords native, %zu game\n", expected.size(), words.size());
+                    continue;
+                }
+                const size_t at = words.size() - expected.size();
+                if (refHead && (at != 1u || words[0] != pageRef(call.file, call.page)) && ++stats.checkDiffs <= 8u)
+                    std::fprintf(stderr, "[sc3:2d] check objects: head of %zu quadwords, %08x %08x %08x %08x\n", at, words[0][0], words[0][1],
+                                 words[0][2], words[0][3]);
+                for (size_t i = 0; i < expected.size(); ++i)
+                {
+                    ++stats.checkSprites;
+                    bool same = true;
+                    for (int k = 0; k < 4; ++k)
+                        same &= expected[i][k] == kUnknownWord || expected[i][k] == words[at + i][k];
+                    if (!same && ++stats.checkDiffs <= 8u)
+                        std::fprintf(stderr, "[sc3:2d] check objects qword %zu of %zu: native %08x %08x %08x %08x; game %08x %08x %08x %08x\n", i,
+                                     expected.size(), expected[i][0], expected[i][1], expected[i][2], expected[i][3], words[at + i][0],
+                                     words[at + i][1], words[at + i][2], words[at + i][3]);
+                }
+            }
+        }
+
+        void objects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            BuilderStats &stats = s.objects;
+            ++stats.calls;
+            const uint32_t item = getRegU32(ctx, 4);
+            if (s.mode == Mode::Off)
+            {
+                callOriginal(kObjects, rdram, ctx, runtime);
+                return;
+            }
+            const uint32_t uploads = peek8(item + 0x1Au), head = peek8(item + 0x1Cu);
+            ++s.objectForms[(uploads << 24) | (head << 16) | (peek8(item + 0x1Du) << 8) | peek8(item + 0x1Fu)];
+            if (s.mode == Mode::Check)
+            {
+                Vu0 entry, vu;
+                loadVu0(entry, ctx);
+                vu = entry;
+                ObjectCall call;
+                Page pageRegs;
+                BuilderStats unused;
+                const uint32_t file = peek32(item + 0x14u);
+                if (peek32(item + 0x10u) == 0u && (head != 0u || !page(file, peek8(item + 0x18u), pageRegs, unused)))
+                    pageRegs.width = pageRegs.height = 0u;
+                const bool built = objectBuild(rdram, ctx, runtime, item, vu, call, pageRegs);
+                storeVu0(entry, ctx);
+                s.stripCapture = true;
+                s.stripPackets.clear();
+                runOriginal(kObjects, rdram, ctx, runtime);
+                s.stripCapture = false;
+                if (built && peek32(kRenderer) == 0u)
+                {
+                    compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets);
+                }
+                return;
+            }
+            const uint32_t file = peek32(item + 0x14u);
+            Page pageRegs;
+            if (head > 2u || (peek8(item + 0x1Du) & 1u) != 0u || !fileAddress(file) || (head != 0u && peek32(item + 0x10u) == 0u) ||
+                (uploads != 0u && head == 0u && (peek8(file) == 2u || peek8(file) == 3u)))
+            {
+                ++stats.toGs;
+                callOriginal(kObjects, rdram, ctx, runtime);
+                return;
+            }
+            const bool found = head == 0u   ? page(file, peek8(item + 0x18u), pageRegs, stats)
+                               : head == 2u ? copiedPage(file, pageRegs, stats)
+                                            : blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha;
+            if (!found)
+            {
+                ++stats.toGs;
+                callOriginal(kObjects, rdram, ctx, runtime);
+                return;
+            }
+            if (peek16(item + 8u) == 0u || peek32(item + 0xCu) == 0u)
+            {
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            Vu0 vu;
+            loadVu0(vu, ctx);
+            poke8(item + 0xBu, 2u);
+            poke32(kStripInsertion, peek32(kStripTable + (peek8(item + 0xAu) & 3u) * 4u));
+            ObjectCall call;
+            if (!objectBuild(rdram, ctx, runtime, item, vu, call, pageRegs))
+            {
+                storeVu0(vu, ctx);
+                ++stats.native;
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
+            GsMaterial m = spriteMaterial(pageRegs, head == 1u ? pageRegs.alpha : call.alpha);
+            m.prim = ps2x::gs::decodePrim(static_cast<uint32_t>(call.tag >> 47) & 0x7FFu);
+            m.prim.type = GS_PRIM_TRIANGLE;
+            if (head == 1u ? pageRegs.hasTest : call.test)
+            {
+                m.test = head == 1u ? pageRegs.test : 0x30000u;
+                m.testFromTarget = false;
+            }
+            for (const ObjectSprite &o : call.sprites)
+            {
+                if (!o.inserted)
+                    continue;
+                GsVertex v[4];
+                for (int i = 0; i < 4; ++i)
+                    v[i] = stripVertex(o.st[i], o.colour, o.xyz[i]);
+                const GsVertex triangles[6] = {v[0], v[1], v[2], v[1], v[2], v[3]};
+                const uint64_t key = newKey();
+                ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles, 6u);
+                if (insert2d(key, call.mode, o.depth) != Linked::Yes)
+                    discardKeyed(key);
+                else
+                {
+                    stats.sprites += 1u;
+                    ++stats.markers;
+                }
+            }
+            storeVu0(vu, ctx);
+            ++stats.native;
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
         void insertion(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
@@ -3289,6 +3754,15 @@ namespace sc3
             }
             s.stripForms.clear();
             std::fprintf(stderr, "[sc3:2d]   strips by uploads / head / matrix / Z / insertion:%s\n", forms.c_str());
+            reportBuilder("objects 0x110E50", s.objects);
+            forms.clear();
+            for (const auto &[form, n] : s.objectForms)
+            {
+                std::snprintf(item, sizeof(item), " %08x:%llu", form, static_cast<unsigned long long>(n));
+                forms += item;
+            }
+            s.objectForms.clear();
+            std::fprintf(stderr, "[sc3:2d]   objects by uploads / head / flags / Z:%s\n", forms.c_str());
             std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu\n", static_cast<unsigned long long>(s.uploadsDropped));
             s.uploadsDropped = 0;
             std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::pair<uint64_t, uint64_t>>> sorted(s.inserted.begin(), s.inserted.end());
@@ -3410,6 +3884,7 @@ namespace sc3
         wrap(runtime, kStrips, strips);
         for (const uint32_t address : {kPageCopy, kPageCopyClut, kPageCopyCbp})
             wrap(runtime, address, pageCopy);
+        wrap(runtime, kObjects, objects);
         for (const uint32_t address : {kFontUpload, kLabelsUpload, kIconsUpload})
             wrap(runtime, address, upload);
         s.format = runtime.lookupFunction(kTextFormat);
