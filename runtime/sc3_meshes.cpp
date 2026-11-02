@@ -188,6 +188,9 @@ namespace sc3
         uint64_t g_traceFrame = ~0ull;
         bool g_skinning = false; // SC3_NATIVE_SKINNING=1: B:0x1388 chain parts too (unfinished: the run stops at character select)
         std::string g_traceRequest; // SC3_MESH_TRACE=@file: the frame after the file appears (it is removed)
+        bool g_traceLists = false;
+        std::set<uint32_t> g_tracedLists;
+        std::map<uint32_t, uint32_t> g_listBases;
 
         void parseRoutines(const std::string &spec)
         {
@@ -331,9 +334,39 @@ namespace sc3
 
         // 0x14A7D8 relocates a model's command list in place; with a5 bit 0 set (and a3 bit 1 clear) it also clears PRIM.FGE
         // in the GIF tag of every raw part (command 2) and of every block a chain list (command 5) REFs.
+        // SC3_MESH_TRACE_LISTS=1: each chain list (command 5) the relocator gets that the pack has no chain part at, with the
+        // model base it relocates the list's REFs by (a2), both as offsets in the loaded leaf.
+        void traceLists(uint32_t commands, uint32_t base)
+        {
+            State &s = g_state;
+            for (uint32_t at = commands, n = 0; n < 65536u; ++n)
+            {
+                const uint32_t word = peek32(at);
+                const uint32_t command = word & 0xFFu, size = (word >> 8) & 0xFFu;
+                if (command == 0u || size == 0u)
+                    break;
+                if (command == 5u)
+                {
+                    const uint32_t list = (peek32(at + 4u) + base) & PS2_RAM_MASK;
+                    g_listBases[list] = base;
+                    packs::LoadedImages::Image image;
+                    if (s.loaded.find(list, image) && image.file)
+                    {
+                        const packs::MeshObject *chain = image.file->object(list - image.base);
+                        if ((!chain || chain->kind != kChainPartKind) && g_tracedLists.insert(list).second)
+                            std::fprintf(stderr, "[sc3:mesh] chain list not in the pack: %s list +%#x model base +%#x commands +%#x\n",
+                                         image.file->name.c_str(), list - image.base, base - image.base, commands - image.base);
+                    }
+                }
+                at += size;
+            }
+        }
+
         void relocate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
+            if (g_traceLists)
+                traceLists(getRegU32(ctx, 4) & PS2_RAM_MASK, getRegU32(ctx, 6) & PS2_RAM_MASK);
             if ((getRegU32(ctx, 7) & 2u) == 0u && (getRegU32(ctx, 9) & 1u) != 0u)
             {
                 const uint32_t offset = getRegU32(ctx, 6);
@@ -1529,6 +1562,13 @@ namespace sc3
             const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
             if (!batches || batches->size < 8u)
             {
+                if (g_traceLists && g_tracedLists.insert(list).second)
+                {
+                    const auto base = g_listBases.find(list);
+                    std::fprintf(stderr, "[sc3:mesh] chain list the pack has no chain part at: %s list +%#x model base %s%#x\n",
+                                 image.file ? image.file->name.c_str() : "(leaf not in the pack)", list - image.base,
+                                 base == g_listBases.end() ? "unknown " : "+", base == g_listBases.end() ? 0u : base->second - image.base);
+                }
                 ++s.stats.chainNotInPack;
                 return false;
             }
@@ -1547,6 +1587,15 @@ namespace sc3
                 if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != entry[1] * 16u ||
                     !readVertices(*object, parts[i].in, parts[i].tag))
                 {
+                    if (g_traceLists && g_tracedLists.insert(list).second)
+                    {
+                        const auto base = g_listBases.find(list);
+                        std::fprintf(stderr, "[sc3:mesh] chain list with a block the pack has no raw part at: %s list +%#x model base %s%#x batch %zu/%zu "
+                                     "at +%#x qwc %u: %s kind %u size %u\n",
+                                     image.file->name.c_str(), list - image.base, base == g_listBases.end() ? "unknown " : "+",
+                                     base == g_listBases.end() ? 0u : base->second - image.base, i, parts.size(), entry[0], entry[1],
+                                     object ? "object" : "no object", object ? object->kind : 0u, object ? object->attribute<uint32_t>(0) : 0u);
+                    }
                     ++s.stats.chainNotInPack;
                     return false;
                 }
@@ -1853,6 +1902,8 @@ namespace sc3
         }
         if (const char *skinning = std::getenv("SC3_NATIVE_SKINNING"); skinning && *skinning == '1')
             g_skinning = true;
+        if (const char *lists = std::getenv("SC3_MESH_TRACE_LISTS"); lists && *lists == '1')
+            g_traceLists = true;
         if (const char *trace = std::getenv("SC3_MESH_TRACE"); trace && *trace)
         {
             if (*trace == '@')
