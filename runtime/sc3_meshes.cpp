@@ -153,6 +153,7 @@ namespace sc3
             uint64_t gameAlpha = 0, gameTest = 0;
             bool gameAlphaKnown = false, gameTestKnown = false;
             bool headerOnVu1 = true, materialOnVu1 = true; // VU1 holds the header / material the game sent last
+            uint32_t owedProgram = 0, owedProgramQwc = 0;   // the microprogram upload the game asked a native part for
             struct Clip
             {
                 uint32_t flags = 0, address = 0, qwc = 0;
@@ -855,8 +856,8 @@ namespace sc3
                           usedSize(static_cast<uint32_t>(m.tagRegs >> 48) & 0xFFFFu, tex0.th));
         }
 
-        // A part left to VU1 after native ones: its header and material as the game's state has them, since the native
-        // parts before it sent theirs to no one.
+        // A part left to VU1 after native ones: its header, material and microprogram as the game's state has them, since
+        // the native parts before it sent theirs to no one.
         void selfContained(uint32_t flags)
         {
             State &s = g_state;
@@ -875,6 +876,12 @@ namespace sc3
             }
             if (sp32(0x350u) != 0u)
                 s.bonesOnVu1 = true;
+            if (s.owedProgram != 0u && sp32(0x384u) == 0u)
+            {
+                spSet(0x384u, s.owedProgram);
+                spSet(0x388u, s.owedProgramQwc);
+            }
+            s.owedProgram = 0u;
             s.headerOnVu1 = s.materialOnVu1 = true;
             noteGsUse();
         }
@@ -958,6 +965,12 @@ namespace sc3
             State::Placement &p = s.placement;
             p.program = part ? sp32(0x384u) : 0u;
             p.programQwc = sp32(0x388u);
+            if (p.program != 0u && s.mode == Mode::On)
+            {
+                s.owedProgram = p.program;
+                s.owedProgramQwc = p.programQwc;
+                p.program = 0u;
+            }
             if (part)
             {
                 spSet(0x384u, 0u);
@@ -1419,7 +1432,7 @@ namespace sc3
                 ++s.stats.clippedNative;
                 return;
             }
-            if (!s.headerOnVu1 || !s.materialOnVu1) // VU1 would run it with registers no part sent it
+            if (!s.headerOnVu1 || !s.materialOnVu1 || s.owedProgram != 0u) // VU1 would run it with registers or code no part sent it
             {
                 ++s.stats.clippedDropped;
                 ctx->pc = ra;
