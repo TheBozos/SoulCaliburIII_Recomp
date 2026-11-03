@@ -343,6 +343,12 @@ namespace sc3
 
         bool fileAddress(uint32_t address) { return address > 0x000FFFFFu && address <= 0x07FFFFFFu; }
 
+        uint32_t loadedImageBase(uint32_t address)
+        {
+            packs::LoadedImages::Image image;
+            return g_state.loaded.find(address, image) && image.file ? image.base : address;
+        }
+
         // The page `index` of a texture file (0x1177E0's choice: the last one past its count) from the 2D pack, its texture
         // the one the file's own uploads write (decoded on first use, kept for the program's life).
         bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp);
@@ -2384,7 +2390,9 @@ namespace sc3
         {
             State &s = g_state;
             const uint32_t item = getRegU32(ctx, 4), file = peek32(item + 0x14u);
-            const auto gs = s.itemFilesGs.find(file);
+            auto gs = s.itemFilesGs.find(file);
+            if (gs == s.itemFilesGs.end())
+                gs = s.itemFilesGs.find(loadedImageBase(file));
             const uint64_t seen = s.uploadFilesSeen.try_emplace(file, s.frames).first->second;
             bool packed = s.mode == Mode::On && fileAddress(file) && seen + 2u <= s.frames &&
                           (gs == s.itemFilesGs.end() || gs->second + kGsItemFrames < s.frames);
@@ -3009,6 +3017,8 @@ namespace sc3
         uint32_t itemTextureFile(uint32_t item)
         {
             const uint32_t file = peek32(item + 0x14u);
+            if (peek8(item + 0x1Cu) == 1u)
+                return loadedImageBase(file);
             if (peek8(item + 0x1Cu) != 2u)
                 return file;
             const auto copy = g_state.pageCopies.find(file);
