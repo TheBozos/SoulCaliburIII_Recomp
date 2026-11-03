@@ -5075,11 +5075,11 @@ namespace sc3
         using namespace native2d;
         const char *mode = std::getenv("SC3_NATIVE_2D");
         const char *path = std::getenv("SC3_2D_PACK");
-        if (!mode || !*mode || *mode == '0')
+        if (mode && *mode == '0')
             return;
         if (!nativeGs || !path || !*path)
         {
-            std::fprintf(stderr, "[sc3:2d] SC3_NATIVE_2D needs the native GS renderer and SC3_2D_PACK, not used\n");
+            std::fprintf(stderr, "[sc3:2d] the native 2D needs the native GS renderer and SC3_2D_PACK (build/sc3_2d.pack): the game's own packets\n");
             return;
         }
         State &s = g_state;
@@ -5102,10 +5102,10 @@ namespace sc3
             std::fprintf(stderr, "[sc3:2d] %s: no leaves\n", leaves.c_str());
             return;
         }
-        if (*mode == '@')
+        if (mode && *mode == '@')
             s.switchPath = mode + 1;
         else
-            s.mode = std::strcmp(mode, "check") == 0 ? Mode::Check : Mode::On;
+            s.mode = mode && std::strcmp(mode, "check") == 0 ? Mode::Check : Mode::On;
         s.runtime = &runtime;
         s.rdram = runtime.memory().getRDRAM();
         s.scratchpad = runtime.memory().getScratchpad();
