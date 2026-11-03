@@ -692,7 +692,9 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   a packet is linked from inside it: they draw from those uploads; a 0x1134A0 / 0x110E50 item left to the GS marks its
   file too, a head-2 one the file its copy came from), never in the first two frames the upload is seen.
 - The offline GS memory model (`scripts/sc3_texture_pack.py`) takes PSMT8H / PSMT4HL / PSMT4HH uploads: the pause
-  menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack.
+  menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack. It takes PSMT8 /
+  PSMT4 uploads too: stage leaves such as /4/258 (sky, clouds, mountains) upload their pages that way, and their 2D
+  items (head-1 strips, object sprites and screen sprites of the stage) went to the GS for want of a texture.
 - Still the game's on the pause menu: 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET (frame context, M7).
 - Menu preview movies (Single Player Modes: a 256x192 and a 128x96 alpha movie, both drawn through pages at TBP
   0x3D00 of the 0x130-byte leaves /2/33 and /2/34, whose upload list has no texels on disc): the movie task 0x217F78
@@ -705,7 +707,9 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   copied in the last 60 frames, and the items' uploads go with their packets. Check mode compares the game's copy
   with the host picture over the rows it writes (regress route: 1,680 pictures, 0 texels differing). The GS path shows the top half of these previews only (flag 8
   halves the height `mwPlyGetCurFrm` reports, already without the mask half): the native one shows the whole
-  picture, so off / on stills differ over the preview and the dim copy. The flag 0x20 path (0x2174C0 -> 0x216E60,
+  picture, so off / on stills differ over the preview and the dim copy. The game on PCSX2 (USA BIOS, Single Player
+  Modes, Tales of Souls) shows the whole picture, as the native path does: the half picture is the GS path's fault
+  (the alpha movie's reported height), not the game's. The flag 0x20 path (0x2174C0 -> 0x216E60,
   16x16 GIF image transfers to TBP 0x2C40 and a sprite) was not seen on the route.
 - 0x21A8A8 and 0x2286B8 are not the fight's HUD: hidden in a fight (`SC3_HIDE_EE`) the attack data panel, the
   HIGH / MID labels and the combo count stay; they run about once every two frames during hits, build vertices into a
@@ -716,10 +720,18 @@ TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view mat
   M7.
 - Census with the native 2D on (regress route, nested item insertions counted for the item's caller): menus and
   pause: only frame context (0x1214D8, 0x12CB40, 0x12DB20, 0x12A400 / 0x127620: M7) and the frame-buffer-sampling
-  pass 0x1410E8 / 0x1415E8 (also from 0x141B24 / 0x141C48 during loads, M5). Still the game's: 0x1220C0 (one
-  untextured ALPHA_1 quad through 0x120978, ~150 a frame in one window after the menus) and, in the fight, the draw
-  item type at 0x112148 (~0.6 a frame through 0x110D78, page file /2/165, whose upload items stay for it). Type-2
-  sprites of a CT24 page at TBP 0x2C40 or 0 (a render target of the M5 pass) go to the GS after the menus.
+  pass 0x1410E8 / 0x1415E8 (also from 0x141B24 / 0x141C48 during loads, M5). Type-2 sprites of a CT24 page at TBP
+  0x2C40 or 0 (a render target of the M5 pass) go to the GS after the menus.
+- Versus fight (`REGRESS_VERSUS=1`): the HUD is native (gauge frames and round marks type 2, timer and names text
+  0x11EA80, gauge fill type 0x114B50, BATTLE n / FIGHT / K.O. drawn the same both ways). Census with the native 2D on:
+  no game-built 2D packet in the fight windows bar two M5 reads of the frame: strips of form 00000102 (head 0, through
+  0x10DDF8) on a CT16 page at TBP 0x1180 (the display copy, FBP 0x8C) or a CT24 page at TBP 0 (the frame), ~160 calls
+  in a round-transition window, and the CT24 type-2 sprites at TBP 0x2C40 (glow ring). Head-1 strips (a REF of a
+  context-1 register block) draw natively with ALPHA_1 / TEST_1 from the block, as object sprites do; a head-1 item
+  left to the GS keeps the uploads of the loaded leaf its block is in. An empty billboard (no entries) returns as
+  0x112148 does. Character select and load windows: only the CT24 type-2 sprites (M5) and, in a load, /2/0 items
+  of a kind 2 / 3 file with uploads. `REGRESS_VERSUS_PAUSE=1` takes the still rounds paused: off / on equal bar the pause menu's own
+  animations (the 1P PAUSE blink, the CLOSE colour).
 
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
