@@ -178,6 +178,7 @@ namespace sc3
             // Texture files of draw items: the last frame an item of theirs linked a game packet, the first frame their upload
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
             std::map<uint32_t, uint64_t> itemFilesGs, uploadFilesSeen;
+            uint32_t screenItemsGsLogged = 0;
             uint32_t gsItemFile = 0;
             // Small movies the native 2D draws from the host decoder's pictures: by player handle, the pixels the movie task
             // copies them to (0x217E28's destination), and the page blocks of the texture files pointing there.
@@ -4718,9 +4719,14 @@ namespace sc3
                 return;
             }
             Page pageRegs;
+            const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture;
             if ((sprites && peek8(item + 0xBu) != 0u) || !screenPage(item, pageRegs, stats))
             {
                 ++stats.toGs;
+                if (stats.noFile + stats.noBlock + stats.noTexture == reasons && ++s.screenItemsGsLogged <= 8u)
+                    std::fprintf(stderr, "[sc3:2d] %s to the GS: item %#x count %u insertion %u prim %#x file %#x page %u head %u uploads %u, block %#x\n", name, item,
+                                 peek16(item + 8u), peek8(item + 0xAu), peek8(item + 0xBu), peek32(item + 0x14u), peek8(item + 0x18u), peek8(item + 0x1Cu),
+                                 peek8(item + 0x1Au), peek32(item + 0x10u));
                 callOriginal(address, rdram, ctx, runtime);
                 return;
             }
