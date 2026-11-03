@@ -10,6 +10,7 @@ name=$1; secs=$2; shift 2
 runs=${SC3_RUNS:-$root/build/runs}
 runner=${SC3_RUNNER:-$root/build/game/PS2Recomp/ps2xRuntime/ps2EntryRunner}
 [ -n "${SC3_TEXTURE_PACK+x}" ] || [ ! -f "$root/build/sc3_textures.pack" ] || export SC3_TEXTURE_PACK="$root/build/sc3_textures.pack"
+[ -n "${SC3_2D_PACK+x}" ] || [ ! -f "$root/build/sc3_2d.pack" ] || export SC3_2D_PACK="$root/build/sc3_2d.pack"
 elf=$(realpath -s "${SC3_ELF:-$root/game/SLUS_212.16}")
 mkdir -p "$runs/user"; cd "$runs"; runs=$PWD
 elf_dir=$(dirname "$elf")
