@@ -4718,6 +4718,12 @@ namespace sc3
                     compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets, words, name);
                 return;
             }
+            if (address == kBillboards && (peek16(item + 8u) == 0u || peek32(item + 0xCu) == 0u))
+            {
+                ++stats.native;
+                ctx->pc = getRegU32(ctx, 31);
+                return;
+            }
             Page pageRegs;
             const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture;
             if ((sprites && peek8(item + 0xBu) != 0u) || !screenPage(item, pageRegs, stats))
