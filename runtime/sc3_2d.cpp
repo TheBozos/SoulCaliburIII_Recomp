@@ -1952,7 +1952,7 @@ namespace sc3
             State &s = g_state;
             BuilderStats &stats = s.triangles;
             ++stats.calls;
-            if (s.mode != Mode::On)
+            if (s.mode == Mode::Off)
             {
                 stats.gifQwords += 9u;
                 callOriginal(kTriangle, rdram, ctx, runtime);
@@ -1965,6 +1965,25 @@ namespace sc3
                 for (int w = 0; w < 4; ++w)
                     xyz[i][w] = peek32(at + static_cast<uint32_t>(w) * 4u);
                 word4(ctx, 7 + i, rgba[i]);
+            }
+            if (s.mode == Mode::Check)
+            {
+                const uint64_t alpha = reg64(ctx, 10);
+                std::vector<Qword> expected = {
+                    {0x00008001u, 0x71264000u, 0x0414141Eu, 0u},
+                    {static_cast<uint32_t>(alpha), static_cast<uint32_t>(alpha >> 32), 0x43u, 0u},
+                };
+                for (int i = 0; i < 3; ++i)
+                {
+                    expected.push_back({rgba[i][0], rgba[i][1], rgba[i][2], rgba[i][3]});
+                    expected.push_back({xyz[i][0], xyz[i][1], xyz[i][2], xyz[i][3]});
+                }
+                const InsertWatch watch = watchInsert(ctx->f[12]);
+                stats.gifQwords += 9u;
+                runOriginal(kTriangle, rdram, ctx, runtime);
+                if (peek32(kRenderer) == 0u)
+                    compareQwords(stats, expected, insertedQwords(watch), "triangles");
+                return;
             }
             const uint64_t key = newKey();
             const bool drawn = (xyz[2][3] & 0x8000u) == 0u;
