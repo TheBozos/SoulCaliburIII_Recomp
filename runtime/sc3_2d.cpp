@@ -179,6 +179,7 @@ namespace sc3
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
             std::map<uint32_t, uint64_t> itemFilesGs, uploadFilesSeen;
             uint32_t screenItemsGsLogged = 0;
+            uint64_t filesRelocated = 0;
             uint32_t gsItemFile = 0;
             // Small movies the native 2D draws from the host decoder's pictures: by player handle, the pixels the movie task
             // copies them to (0x217E28's destination), and the page blocks of the texture files pointing there.
@@ -343,6 +344,24 @@ namespace sc3
         // ---- the game's texture files: 0x117760 (an address the file layer accepts), 0x117A38 (its upload CALLs)
 
         bool fileAddress(uint32_t address) { return address > 0x000FFFFFu && address <= 0x07FFFFFFu; }
+
+        // 0x118E18 (a0 -> texture file): byte 0 2 or 3 marks a file not relocated yet (its tables are offsets); it relocates
+        // the tables, then byte 0 = 0 and byte 3 the old kind. The upload of an item (0x117A38) runs it first.
+        constexpr uint32_t kFileRelocate = 0x00118E18u, kFileRelocateReturn = 0x00117A80u;
+
+        void relocateItemFile(uint32_t item, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t file = peek32(item + 0x14u);
+            if (peek8(item + 0x1Au) == 0u || peek8(item + 0x1Cu) != 0u || !fileAddress(file) || (peek8(file) != 2u && peek8(file) != 3u))
+                return;
+            const R5900Context saved = *ctx;
+            SET_GPR_U32(ctx, 4, file);
+            SET_GPR_U32(ctx, 31, kFileRelocateReturn);
+            ctx->pc = kFileRelocate;
+            runToReturn(runtime->lookupFunction(kFileRelocate), rdram, ctx, runtime);
+            *ctx = saved;
+            ++g_state.filesRelocated;
+        }
 
         uint32_t loadedImageBase(uint32_t address)
         {
@@ -3120,6 +3139,7 @@ namespace sc3
                 }
                 return;
             }
+            relocateItemFile(item, rdram, ctx, runtime);
             const uint32_t file = peek32(item + 0x14u);
             const uint32_t prim = (head == 1u ? 0x54u : 0x254u) | peek8(item + 0xBu);
             if (head > 2u || (prim & 0x100u) != 0u)
@@ -4094,6 +4114,7 @@ namespace sc3
                 }
                 return;
             }
+            relocateItemFile(item, rdram, ctx, runtime);
             const uint32_t file = peek32(item + 0x14u);
             Page pageRegs;
             if (head > 2u || (peek8(item + 0x1Du) & 1u) != 0u || !fileAddress(file) || (head != 0u && peek32(item + 0x10u) == 0u) ||
@@ -4718,6 +4739,7 @@ namespace sc3
                     compareObjects(stats, call, head == 0u && uploads == 0u, s.stripPackets, words, name);
                 return;
             }
+            relocateItemFile(item, rdram, ctx, runtime);
             if (address == kBillboards && (peek16(item + 8u) == 0u || peek32(item + 0xCu) == 0u))
             {
                 ++stats.native;
@@ -4978,8 +5000,10 @@ namespace sc3
                               static_cast<unsigned long long>(n));
                 kept += item;
             }
-            std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu, sent:%s\n", static_cast<unsigned long long>(s.uploadsDropped), kept.c_str());
+            std::fprintf(stderr, "[sc3:2d]   2D file uploads dropped: %llu (files relocated for a native item %llu), sent:%s\n",
+                         static_cast<unsigned long long>(s.uploadsDropped), static_cast<unsigned long long>(s.filesRelocated), kept.c_str());
             s.uploadsDropped = 0;
+            s.filesRelocated = 0;
             s.uploadsKept.clear();
             std::fprintf(stderr, "[sc3:2d]   movies: %zu pages, picture copies skipped %llu, page textures given %llu; checked %llu (%llu texels differing)\n",
                          s.moviePages.size(), static_cast<unsigned long long>(s.movieCopiesSkipped), static_cast<unsigned long long>(s.movieTextures),
