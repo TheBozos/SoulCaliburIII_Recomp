@@ -51,6 +51,26 @@
 #   REGRESS_MESH_AB_EACH="0x1558 0x1730 ..."
 #                     with REGRESS_MESH_AB, before that: one still per routine left to VU1 alone
 #                     (pause_mesh_vu1_<routine>.png), and pause_mesh_each.txt: each one's imgdiff against pause.png
+#   REGRESS_NATIVE_2D_AB=1
+#                     the run with the native 2D off (SC3_NATIVE_2D=@file, SC3_2D_PACK); in Mode Select menu_2d_off.png
+#                     and menu_2d_off2.png a little later (menu_2d_floor_psnr), then the native 2D switched on for
+#                     menu_2d.png (menu_2d_psnr, against menu_2d_off.png) and off again; in the pause menu
+#                     pause_2d_off.png a little after pause.png (pause_2d_floor_psnr), then on for pause_2d.png
+#                     (pause_2d_psnr, against pause.png)
+#   REGRESS_MENU_SERIES=<n>
+#                     with REGRESS_NATIVE_2D_AB=1: in the main menu and in Single Player Modes, n rounds of four
+#                     stills a presented frame apart, two with the native 2D off and two on (menu_<screen>_<i>_<off|on>.png);
+#                     menu_<screen>_floor_psnr is the mean psnr of neighbours drawn the same way, menu_<screen>_psnr of
+#                     neighbours drawn one each way (animated backdrops: no two stills are the same scene)
+#   REGRESS_VERSUS=1  World Competition instead of Practice: a tournament match against the CPU with the fight HUD
+#                     (health gauges, timer, round marks, names, BATTLE / K.O. / RING OUT / YOU LOSE), the attacks
+#                     from its BATTLE 1 on for REGRESS_FIGHT_SECS (default 120: three battles and the results), no
+#                     pause menu; with REGRESS_NATIVE_2D_AB=1 four stills after every round of attacks, as the menu
+#                     series (versus_fight_<i><a-d>_<off|on>.png, versus_fight_floor_psnr / versus_fight_psnr)
+#   REGRESS_VERSUS_PAUSE=1
+#                     with REGRESS_VERSUS=1 and REGRESS_NATIVE_2D_AB=1: each round's four stills taken with the fight
+#                     paused (START before, START after), the same frame under both ways of drawing
+#                     (versus_pause_<i><a-d>_<off|on>.png, versus_pause_floor_psnr / versus_pause_psnr)
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -60,6 +80,7 @@
 #   SC3_ELF             game ELF (default: game/SLUS_212.16 of this repo)
 #   SC3_TEXTURE_PACK    the texture pack (default: build/sc3_textures.pack of this repo, when there is one)
 #   SC3_MESH_PACK       the mesh pack (default: build/sc3_meshes.pack of this repo, when there is one)
+#   SC3_2D_PACK         the 2D material pack (default: build/sc3_2d.pack of this repo, when there is one)
 #   PS2X_SPU2_WALLCLOCK default 1, as scripts/run.sh
 set -euo pipefail
 export PS2X_SPU2_WALLCLOCK="${PS2X_SPU2_WALLCLOCK:-1}"
@@ -73,6 +94,8 @@ fight_secs=${REGRESS_FIGHT_SECS:-60}
 pause_secs=${REGRESS_PAUSE_SECS:-3}
 shot_secs=${REGRESS_SHOT_SECS:-5}
 keep_shots=${REGRESS_KEEP_SHOTS:-0}
+versus=${REGRESS_VERSUS:-0}
+[ "$versus" != 1 ] || fight_secs=${REGRESS_FIGHT_SECS:-120}
 period=5
 
 runner=
@@ -96,7 +119,7 @@ frames=$out/frames
 shots=$out/shots
 log=$out/run.log
 input=$out/pad_input.txt
-rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
+rm -rf "$frames" "$shots" "$out"/last_frame.* "$out"/pause*.png "$out"/menu_*.png "$out"/versus_*.png "$out"/pause_hide.txt "$out"/pause_hide_ee.txt "$out/summary.txt" "$out/details.txt" "$out/errors.txt" "$out/pad.txt"
 mkdir -p "$frames" "$shots"
 user=$out/user
 rm -rf "$user"
@@ -134,6 +157,15 @@ if [ -z "${SC3_TEXTURE_PACK+x}" ] && [ -f "$root/build/sc3_textures.pack" ]; the
 fi
 if [ -z "${SC3_MESH_PACK+x}" ] && [ -f "$root/build/sc3_meshes.pack" ]; then
     export SC3_MESH_PACK="$root/build/sc3_meshes.pack"
+fi
+if [ -z "${SC3_2D_PACK+x}" ] && [ -f "$root/build/sc3_2d.pack" ]; then
+    export SC3_2D_PACK="$root/build/sc3_2d.pack"
+fi
+native2d_switch=
+if [ "${REGRESS_NATIVE_2D_AB:-0}" = 1 ]; then
+    native2d_switch=$out/native_2d.switch
+    echo 0 > "$native2d_switch"
+    export SC3_NATIVE_2D="@$native2d_switch"
 fi
 texpack_switch=
 if [ -n "${REGRESS_TEXPACK_AB:-}" ] && [ "${REGRESS_TEXPACK_AB}" != 0 ]; then
@@ -223,13 +255,83 @@ await()
     done
 }
 
+still_round()
+{
+    echo 0 > "$native2d_switch"; await 1 || return 1; pause_still "$1_$2a_off.png"
+    await 1 || return 1; pause_still "$1_$2b_off.png"
+    echo 1 > "$native2d_switch"; await 1 || return 1; pause_still "$1_$2c_on.png"
+    await 1 || return 1; pause_still "$1_$2d_on.png"
+}
+
+menu_series()
+{
+    local i
+    [ -n "$native2d_switch" ] && [ "${REGRESS_MENU_SERIES:-0}" -gt 0 ] || return 0
+    for i in $(seq "$REGRESS_MENU_SERIES"); do
+        still_round "menu_$1" "$i" || return 1
+    done
+    echo 0 > "$native2d_switch"
+    await 1
+}
+
+fight()
+{
+    [ -z "$cap_file" ] || echo "$REGRESS_FIGHT_FRAME_CAP" > "$cap_file"
+    fight_mark=$(grep -a -c '^\[state\] gs frames=' "$log" || true)
+    fight_at_s=$(( $(date +%s) - start ))
+    local t=0 n=0
+    while [ "$t" -lt "$fight_secs" ]; do
+        press SQUARE; await 1 || return 1
+        press TRIANGLE; await 1 || return 1
+        if [ "$versus" = 1 ]; then press CROSS; else press RIGHT; fi
+        await 1 || return 1
+        t=$((t + 3))
+        if [ "$versus" = 1 ] && [ -n "$native2d_switch" ]; then
+            n=$((n + 1))
+            if [ "${REGRESS_VERSUS_PAUSE:-0}" = 1 ]; then
+                press START; await 2 || return 1
+                still_round versus_pause "$n" || return 1
+                press START; await 1 || return 1
+                t=$((t + 7))
+            else
+                still_round versus_fight "$n" || return 1
+                t=$((t + 4))
+            fi
+        fi
+    done
+}
+
 route()
 {
     local i
     await 26 || return 1
     for i in 1 2 3 4; do press START; await 3 || return 1; done
     await 6 || return 1
+    menu_series main || return 1
+    if [ "$versus" = 1 ]; then
+        press CROSS; await 4 || return 1
+        press DOWN; await 1 || return 1
+        press DOWN; await 1 || return 1
+        press CROSS; await 4 || return 1
+        for i in $(seq 16); do press CROSS; await 3 || return 1; done
+        fight || return 1
+        echo 0 > "${native2d_switch:-/dev/null}"
+        route_reached=1
+        return 0
+    fi
     press CROSS; await 4 || return 1
+    menu_series single || return 1
+    if [ -n "$native2d_switch" ]; then
+        await 2 || return 1
+        pause_still menu_2d_off.png
+        await 1 || return 1
+        pause_still menu_2d_off2.png
+        echo 1 > "$native2d_switch"
+        await 1 || return 1
+        pause_still menu_2d.png
+        echo 0 > "$native2d_switch"
+        await 1 || return 1
+    fi
     for i in 1 2 3 4; do press DOWN; await 1 || return 1; done
     await 1 || return 1
     press CROSS; await 4 || return 1
@@ -242,16 +344,7 @@ route()
     for i in $(seq "${REGRESS_STAGE:-0}"); do press RIGHT; await 1 || return 1; done
     press CROSS; await 4 || return 1
     await 20 || return 1
-    [ -z "$cap_file" ] || echo "$REGRESS_FIGHT_FRAME_CAP" > "$cap_file"
-    fight_mark=$(grep -a -c '^\[state\] gs frames=' "$log" || true)
-    fight_at_s=$(( $(date +%s) - start ))
-    local t=0
-    while [ "$t" -lt "$fight_secs" ]; do
-        press SQUARE; await 1 || return 1
-        press TRIANGLE; await 1 || return 1
-        press RIGHT; await 1 || return 1
-        t=$((t + 3))
-    done
+    fight || return 1
     press START; await "$pause_secs" || return 1
     pause_still pause.png
     if [ -n "$native_switch" ]; then
@@ -295,6 +388,13 @@ route()
         echo > "$mesh_switch"
         await "$pause_secs" || return 1
         pause_still pause_mesh_vu1.png
+    fi
+    if [ -n "$native2d_switch" ]; then
+        await "$pause_secs" || return 1
+        pause_still pause_2d_off.png
+        echo 1 > "$native2d_switch"
+        await "$pause_secs" || return 1
+        pause_still pause_2d.png
     fi
     if [ -n "$hide_ee_file" ]; then
         local address
@@ -395,6 +495,37 @@ for routine in ${REGRESS_MESH_AB_EACH:-}; do
     [ -f "$out/pause_mesh_vu1_$routine.png" ] || continue
     echo "$routine $(pause_psnr "pause_mesh_vu1_$routine.png")" >> "$out/pause_mesh_each.txt"
 done
+pause_2d_floor_psnr=$(pause_psnr pause_2d_off.png)
+pause_2d_psnr=$(pause_psnr pause_2d.png)
+menu_psnr()
+{
+    if [ -f "$out/menu_2d_off.png" ] && [ -f "$out/$1" ]; then
+        python3 -I "$root/scripts/imgdiff.py" "$out/menu_2d_off.png" "$out/$1" --diff "$out/${1%.png}_diff.png" \
+            | sed -n 's/^psnr=\([^ ]*\).*/\1/p'
+    else
+        echo NA
+    fi
+}
+menu_2d_floor_psnr=$(menu_psnr menu_2d_off2.png)
+menu_2d_psnr=$(menu_psnr menu_2d.png)
+series_psnr()
+{
+    local prev= kind= still now p
+    for still in $(ls "$out" | grep -E "^$1_[0-9]+[a-d]_(off|on)\.png$" | sort -V); do
+        now=${still##*_}
+        if [ -n "$prev" ]; then
+            p=$(python3 -I "$root/scripts/imgdiff.py" "$out/$prev" "$out/$still" | sed -n 's/^psnr=\([^ ]*\).*/\1/p')
+            [ -z "$p" ] || echo "$([ "$now" = "$kind" ] && echo same || echo mixed) $p"
+        fi
+        prev=$still; kind=$now
+    done | awk '$2 ~ /^[0-9.]+$/ { s[$1] += $2; n[$1]++ }
+        END { if (n["same"] && n["mixed"]) printf "%.2f %.2f %d %d\n", s["same"] / n["same"], s["mixed"] / n["mixed"], n["same"], n["mixed"];
+              else print "NA NA 0 0" }'
+}
+read -r menu_main_floor_psnr menu_main_psnr menu_main_same_pairs menu_main_mixed_pairs < <(series_psnr menu_main)
+read -r menu_single_floor_psnr menu_single_psnr menu_single_same_pairs menu_single_mixed_pairs < <(series_psnr menu_single)
+read -r versus_fight_floor_psnr versus_fight_psnr versus_fight_same_pairs versus_fight_mixed_pairs < <(series_psnr versus_fight)
+read -r versus_pause_floor_psnr versus_pause_psnr versus_pause_same_pairs versus_pause_mixed_pairs < <(series_psnr versus_pause)
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -438,6 +569,22 @@ pause_texpack_floor_psnr=$pause_texpack_floor_psnr
 pause_texpack_psnr=$pause_texpack_psnr
 pause_mesh_floor_psnr=$pause_mesh_floor_psnr
 pause_mesh_psnr=$pause_mesh_psnr
+pause_2d_floor_psnr=$pause_2d_floor_psnr
+pause_2d_psnr=$pause_2d_psnr
+menu_2d_floor_psnr=$menu_2d_floor_psnr
+menu_2d_psnr=$menu_2d_psnr
+menu_main_floor_psnr=$menu_main_floor_psnr
+menu_main_psnr=$menu_main_psnr
+menu_main_pairs=$menu_main_same_pairs/$menu_main_mixed_pairs
+menu_single_floor_psnr=$menu_single_floor_psnr
+menu_single_psnr=$menu_single_psnr
+menu_single_pairs=$menu_single_same_pairs/$menu_single_mixed_pairs
+versus_fight_floor_psnr=$versus_fight_floor_psnr
+versus_fight_psnr=$versus_fight_psnr
+versus_fight_pairs=$versus_fight_same_pairs/$versus_fight_mixed_pairs
+versus_pause_floor_psnr=$versus_pause_floor_psnr
+versus_pause_psnr=$versus_pause_psnr
+versus_pause_pairs=$versus_pause_same_pairs/$versus_pause_mixed_pairs
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s

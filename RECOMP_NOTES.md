@@ -621,6 +621,147 @@ only as this diagnostic) does not match the groups' segments in the pause. With 
 per-object hooks (M3: 0x104af0's commands run in order, a batch's texture CALL right before its draws) the group is
 known at the hook and none of this is needed.
 
+#### Native 2D (`scripts/sc3_2d_pack.py`, `runtime/sc3_2d.cpp`, on by default)
+
+The 2D is GIF data on PATH3: the ordering table (8192 buckets of 16 bytes at *(0x5BE754), one table cut into layers,
+0x10D718 setting the layer base *(0x5BE750)) is part of the GIF channel's chain, a bucket a list of packets newest
+first, buckets drawn in index order. 2D builders write a packet in the scratchpad and link it with 0x10DDF8 (a fixed
+bucket), 0x10DF30 / 0x10E068 (the text layers, 0x1FF3 + 0..3), 0x10D9A0 (by depth, in the layer) or 0x10E1C8 (the
+in-order GIF list); 0x120978 picks one of them by the mode word 0x468CB0 and is reached by tail jumps. A 2D texture
+is a page of a texture file, a ROOT.OLK leaf with a 03 04 04 00 header: byte 4 its upload CALL lists, bytes 5 and 7 its
+pages, word 8 the CALL table (20 bytes an entry when byte 0 or 3 is 3, else 12), word 0xC the page table (a GIF A+D
+block: TEX1_2, TEX0_2, CLAMP_2, the used size in the tag's REGS word). 0x117A38 CALLs a file's upload lists (once a frame
+into the OT), 0x1177E0 REFs a page's block before the draws. A page's texels and its CLUT come from different lists.
+ALPHA_2 comes from the table of four at 0x46EFD8; TEST_2 is whatever the packets before left (0x10FE50 sets TEXA and
+TEST_2 from an object's flags). 2D vertices go through 0x120DE8: the 2D view matrix *(*(0x46DA88) + 0x460) times
+(x, y, z, 1), z times 1 / z, clamped at 0, ftoi4.
+
+- `scripts/sc3_2d_pack.py` (stdlib, `python3 -I`, all cores, about 40 s): every leaf's register blocks into a
+  PS2Recomp mesh pack (`build/sc3_2d.pack`, `.leaves`), and for each page the texture the leaf's own uploads write,
+  played into the offline GS memory model of `scripts/sc3_texture_pack.py` and decoded at its used size into
+  `build/sc3_2d_textures.pack` (PS2XTEX1, one file per leaf, the records' numbers as registers 0x101 / 0x102 of the
+  block; each other CLUT block the file uploads as register 0x103 = CBP << 32 | record, for draws that pick another
+  CLUT with TEX2). The 11 texture files inside the ELF (the font at 0x4763B0, the menu icons at 0x4AF170, nine more
+  from 0x473E60) are converted from the user's SLUS_212.16 as `elf/<address>`, as the game has them before 0x118E18
+  relocates their pointers; the runtime binds them at install at their fixed address.
+- At run time (`SC3_NATIVE_2D=1`, `=check`, or `=@<file>` following the file's first line; `SC3_2D_PACK`): leaves
+  are bound at sceCdRead as for the meshes. A rewritten builder draws its primitives from the game's variables as
+  `Renderer::drawGsKeyed` batches (sprites and lines by their two vertices, drawn by the GS renderer as the GS draws
+  them) with the page's TEX0 / TEX1 / CLAMP from the pack and its texture from the 2D texture pack, ALPHA_2 from the
+  game's values, TEST_2 from the context where it lands (`GsMaterial::testFromTarget`), registers the batches, then
+  links in C++ a marker where the game would have linked its packet: into an OT bucket (a CNT with QWC 0 whose upper
+  64 bits carry the key, then the NEXT to the bucket's old head, at the frame heap's next place) or appended to the
+  in-order GIF list (the CNT alone at *(0x5BE708), the list's count *(*(0x5BE710)) one more), and switches the
+  scratchpad's packet half as the game's insertions do: no scratchpad packet, SPR DMA or GIF packet. The GIF channel
+  finds the marker (PS2Recomp `setGifChainMarkGate`) and the GS front end draws the key's batches between the packets
+  around it. Batches go in before the marker: the GIF list can be read while the frame is still being built. A call
+  whose file, page or texture is missing goes to the game's packet, counted. A vertex written as PACKED XYZF2 (the
+  quads, lines, icons, labels, triangles, strips and object sprites) takes Z from bits 4..27 of its third word, as the
+  GS does (XYZ2 the whole word): drawn with the word itself, Z was 16 times the game's and wrapped in the 24-bit Z
+  buffer, so later draws testing GEQUAL failed (the pause panel's fill and text vanished with the mode-0 quad native).
+- Rewritten: 0x1388E8 (labels: 0x28-byte items, two passes by page, sprites into bucket 0x1FF2), 0x124C80 (a
+  Gouraud-shaded blended triangle through 0x120978, every mode), 0x11EA80 (the text renderer: the state at 0x468540,
+  the call frame on the guest stack as the game's, glyph runs 0x11E160, measure 0x11E740, flushes 0x11E898 /
+  0x11E9B0, placement 0x11E068, TEX2_2 / ALPHA_2 writes 0x11DF40 / 0x11DFC8 with the packet's bookkeeping kept as
+  offsets so packets end where the game's do; the control codes 0x23..0x25 go to the game's formatter 0x11CBC8, game
+  logic that builds no packet), 0x123340 (untextured sprite, every mode), 0x1223D0 (antialiased line), 0x1280F8 (menu
+  icons), the screen-effect layer 0x12C690 / 0x12C7E0 (the background behind the 3D: a sky and a ground band split at
+  the projected horizon, opaque, Z written 0, context 1; a rolled camera and mode 1 stay the game's), 0x1134A0 and
+  0x110E50 (below). The once-a-frame uploads of the font (0x11FCF0), the labels' file (0x138860) and the icons
+  (0x128080) are dropped while those draws are native.
+- Draw items: objects carry items dispatched by type through the table at 0x4676A8 (3 0x110E50 object sprites, 9
+  0x1134A0 textured triangle strips, 13 0x115600 a texture upload for later draws). An item's head (0x113300 /
+  0x10FE50): +0x1C 0 a REF of page +0x18 of the file +0x14; 1 a REF of a register block at +0x14 (for object sprites a
+  context-1 block in a leaf: TEX0_1, ALPHA_1, TEST_1 and the page's texture, from the 2D pack); 2 a copy of a page's
+  block made earlier by 0x1191D0 / 0x119318 / 0x119248 (file, out, page, CLUT: CBP as it is, plus an offset, or set),
+  recorded by where it went and resolved there (the page and its CLUT in the pack, found while the file is loaded: it
+  can be gone by the draw) so the draw needs neither the copy nor the file. Insertion by
+  +0xA & 3 through the table at 0x467510 (0x1132A8 the GIF list, 0x10D9A0, 0x110D78, 0x113250: 0x120978's modes).
+- 0x1134A0 (VU0 macro code, in C++ on a copy of VU0 with the recompiler's float operations): packets of up to 0x9C
+  vertices (+0 ST, +0xC a restart word, +0x10 position, +0x20 colour) and the two before them, through the matrix +0x1D
+  picks (0x101058, in C++), Z from the projection when +0x1F is set, ADC on a vertex behind w 0.08 or off the GS's
+  range and on the two after it; PRIM 0x254 (0x54 in context 1) | +0xB, its own ALPHA_2; at the vertices' mean 1 / w
+  (a fixed depth when +0x28 < 0), +0x2C the mean w. Drawn as the strip's triangles (each vertex without ADC from the
+  third on).
+- 0x110E50 (VU0 macro code): per 0x50-byte entry one rotated quad (a strip of four, PRIM 0x254) with its own head,
+  TEXA / TEST_2 when the item asks, colour from bytes times the view's +0x390 halfwords or from floats; the angle's sine
+  and cosine are 0x100AC0's set-up in C++ around its VU0 microprogram 0x38, run as vcallms runs it (calling 0x100AC0 as
+  EE code from a hook can resume after its indirect jump with other registers in a0 / a1: its stores then go to the
+  item). Page sizes for the ST table 0x467580 come from the pack's page (0x118020 reads them from the block).
+- 0x1107E0 (type 6) and 0x110258 (type 2), 0x110E50's siblings in the 2D view: 0x10FD78 with a3 = 1 loads the matrix
+  *(view +0x460), the position's z is the depth (Z = the view's z times the depth scale +0x38 over z, drawn when z is
+  over 0.08), depth for the insertion +0x38 over z, or -(+0x38) (x 12.5 for mode 1) when +0x38 is not positive. Type 6:
+  a rotated quad per entry, its half sizes from one of the vectors 0x467620..0x467650 picked by +0x4A & 0x40 / 0x80,
+  the item's +0x1F & 0x80 and *(*(0x469230) +0x50) (the screen's aspect), X moved around 2048 by 1.2443 or 0.8036;
+  no range test. Type 2: a GS sprite per entry (+0xB 0: PRIM 0x256, NREG 6 or 7), size +0x30 / +0x34 times +0x40,
+  anchor +0x4A >> 4 & 3, colour bytes (b + 1) / 2, dropped off the GS's range; nothing while the heap is nearly full
+  (0x10D528); TEST_2 put back to 0x5002D after it; mode 0 appends through 0x10F808. +0x1D & 1 writes TEX1_2 from the
+  table 0x467528 by +0x4B (the native material's TEX1). Regress route in check mode: 0 differing.
+- Calling game code from C++: a recompiled function returns to the dispatcher at a call when an EE checkpoint is due
+  (`ctx->pc` the callee), so a call that must finish runs to its return (`runToReturn`: `lookupFunction(ctx->pc)` until
+  the return address with the caller's stack pointer). SC3 keeps stacks and packets in the scratchpad: every guest
+  access goes through `guest()`. Conversions saturate as the EE's (`ps2FpuCvtWS`: no NaN or infinity on the EE).
+- `check`: the game's packets built and drawn, each rewritten call compared word for word with the packet it linked
+  (the text: every A+D write and glyph of every packet, and the text state's words after the call; the native run on
+  restored registers and the formatter's globals). Regress route: text 678,385 calls / 707,096 glyphs, labels 843,740
+  sprites, quads, lines and icons, all equal.
+- `[sc3:2d]` every 250 frames: GIF chain markers read, leaves bound, pages without a texture, per builder calls /
+  native / left to the game / GIF quadwords the game still built, uploads dropped, and the census of 2D packets the game
+  still builds by (return address > insertion function, the depth-sorted 0x10D9A0, 0x10DC90, 0x10E1F8, 0x10D2F0
+  included, and 0x10F808 when a builder appends to the in-order GIF list itself): calls / quadwords.
+  `scripts/regress.sh REGRESS_NATIVE_2D_AB=1`: Mode Select and pause stills off / on; `REGRESS_MENU_SERIES=<n>`
+  alternates pairs of stills off / on in Mode Select and Single Player Modes, whose backdrops never stand still.
+- Census with 0x10F808 counted (native 2D on): 0x1410E8 / 0x1415E8 (~870 quadwords a frame, 64-pixel sprite columns
+  sampling the frame buffer, context 2: the off-screen pass of the menus and the fight, M5) were invisible before, as
+  were SCISSOR 0x1214D8 / XYOFFSET 0x12CB40's direct appends (frame context, M7), 0x12DB20 (from 0x18E240, ~27
+  quadwords a frame) and 0x127620 (one A+D write, from 0x12A400 / 0x12A8A0).
+- 0x115600 (draw item 13: CALLs of a texture file's upload lists, or of a block +0x10, then TEXFLUSH) is dropped
+  while every page of its file +0x14 is in the pack and no item of that file linked a game packet for 120 frames (an
+  item type still the game's, 0x110258, 0x1107E0 and the rest of the table, marks the file of the item that runs when
+  a packet is linked from inside it: they draw from those uploads; a 0x1134A0 / 0x110E50 item left to the GS marks its
+  file too, a head-2 one the file its copy came from), never in the first two frames the upload is seen.
+- The offline GS memory model (`scripts/sc3_texture_pack.py`) takes PSMT8H / PSMT4HL / PSMT4HH uploads: the pause
+  menu's leaf /2/6 uploads its fifteen pages as PSMT8H, so before it had no texture in the 2D pack. It takes PSMT8 /
+  PSMT4 uploads too: stage leaves such as /4/258 (sky, clouds, mountains) upload their pages that way, and their 2D
+  items (head-1 strips, object sprites and screen sprites of the stage) went to the GS for want of a texture.
+- Still the game's on the pause menu: 0x1214D8 SCISSOR_2, 0x12CB40 XYOFFSET (frame context, M7).
+- Menu preview movies (Single Player Modes: a 256x192 and a 128x96 alpha movie, both drawn through pages at TBP
+  0x3D00 of the 0x130-byte leaves /2/33 and /2/34, whose upload list has no texels on disc): the movie task 0x217F78
+  with flag 1 copies `mwPlyGetCurFrm`'s macroblocks into a texture file's pixels (0x217E28: rows of width x 4 bytes;
+  flag 8 copies the top half of the macroblock rows only) and points the file's upload there (0x118B68 -> 0x119BB0 ->
+  0x11A4F0); type-2 draw items (uploads 1, head 0) draw it: the picture and a dim copy over the whole screen (colour
+  19, ALPHA 0x52). With the native 2D on, 0x217E28 is skipped, the pages of a file 0x118B68 points at those pixels
+  take the host decoder's picture as a native texture (alpha from the mask half, 0x80 = 1.0; a version per picture in
+  three slots, PS2Recomp's `NativeTexture::version`), `mwPlyGetCurFrm` writes no macroblocks for a player the task
+  copied in the last 60 frames, and the items' uploads go with their packets. Check mode compares the game's copy
+  with the host picture over the rows it writes (regress route: 1,680 pictures, 0 texels differing). The GS path shows the top half of these previews only (flag 8
+  halves the height `mwPlyGetCurFrm` reports, already without the mask half): the native one shows the whole
+  picture, so off / on stills differ over the preview and the dim copy. The game on PCSX2 (USA BIOS, Single Player
+  Modes, Tales of Souls) shows the whole picture, as the native path does: the half picture is the GS path's fault
+  (the alpha movie's reported height), not the game's. The flag 0x20 path (0x2174C0 -> 0x216E60,
+  16x16 GIF image transfers to TBP 0x2C40 and a sprite) was not seen on the route.
+- 0x21A8A8 and 0x2286B8 are not the fight's HUD: hidden in a fight (`SC3_HIDE_EE`) the attack data panel, the
+  HIGH / MID labels and the combo count stay; they run about once every two frames during hits, build vertices into a
+  buffer of their task (0x226FF0) and mark a group bit (0x2154F0): hit effects, drawn elsewhere (3D / effects).
+- 0x12DB20 is the frame (from the main loop through 0x18E240): its own append (~24 quadwords) is SCANMSK, TEXA,
+  PABE, FBA_1 / FBA_2 and the two drawing environments of 0x13B3F0 (FRAME, ZBUF, XYOFFSET, SCISSOR, TEST, DTHE);
+  0x127620 appends one A+D write: TEXFLUSH from 0x12A400, TEXA (TA1 0x80) and TEXFLUSH from 0x12A8A0. Frame context,
+  M7.
+- Census with the native 2D on (regress route, nested item insertions counted for the item's caller): menus and
+  pause: only frame context (0x1214D8, 0x12CB40, 0x12DB20, 0x12A400 / 0x127620: M7) and the frame-buffer-sampling
+  pass 0x1410E8 / 0x1415E8 (also from 0x141B24 / 0x141C48 during loads, M5). Type-2 sprites of a CT24 page at TBP
+  0x2C40 or 0 (a render target of the M5 pass) go to the GS after the menus.
+- Versus fight (`REGRESS_VERSUS=1`): the HUD is native (gauge frames and round marks type 2, timer and names text
+  0x11EA80, gauge fill type 0x114B50, BATTLE n / FIGHT / K.O. drawn the same both ways). Census with the native 2D on:
+  no game-built 2D packet in the fight windows bar two M5 reads of the frame: strips of form 00000102 (head 0, through
+  0x10DDF8) on a CT16 page at TBP 0x1180 (the display copy, FBP 0x8C) or a CT24 page at TBP 0 (the frame), ~160 calls
+  in a round-transition window, and the CT24 type-2 sprites at TBP 0x2C40 (glow ring). Head-1 strips (a REF of a
+  context-1 register block) draw natively with ALPHA_1 / TEST_1 from the block, as object sprites do; a head-1 item
+  left to the GS keeps the uploads of the loaded leaf its block is in. An empty billboard (no entries) returns as
+  0x112148 does. Character select and load windows: only the CT24 type-2 sprites (M5) and, in a load, /2/0 items
+  of a kind 2 / 3 file with uploads. `REGRESS_VERSUS_PAUSE=1` takes the still rounds paused: off / on equal bar the pause menu's own
+  animations (the 1P PAUSE blink, the CLOSE colour).
+
 #### VU0 microprograms in C++ (`runtime/sc3_vu0.cpp`)
 
 VU0 runs SC3's math library as microcode (`VCALLMS` from about 15 EE functions): one program, the 172 pairs
@@ -719,6 +860,16 @@ branch: `native/renderer` plus the SC3 fixes below, on their way into `native/re
   them back, `=check` compares).
   The regression route holds 60.0 fps capped; uncapped fights run about 62.5 fps drawing directly (61 from the packets), against 55.8 with everything on
   the sandbox and VU0's interpreter.
+- **2D in C++** by default (`runtime/sc3_2d.cpp`, 2026-11-03): the 2D builders (text, labels, icons, quads, lines,
+  triangles, the draw item types: object sprites, strips, screen sprites and quads, billboards, the fight's gauges)
+  draw from the game's variables, textured from the offline 2D pack of the user's disc (`build/sc3_2d.pack`, made by
+  `scripts/build_runtime.sh` when missing); no GIF packet built for them. `SC3_NATIVE_2D=0` gives them back to the
+  game's packets (diagnostic), `check` compares both word for word (0 differing over the regress and versus routes).
+  What is not native yet falls back to the game's own packets as before: the passes that read the frame (CT24 / CT16
+  pages at TBP 0x2C40, 0x1180, 0: M5), the frame context writes (M7) and the draw item type at 0x115018 (one load
+  window). Three regress and three versus runs clean; bench with the fight uncapped, interleaved: fps 57.4 / 65.2 /
+  66.6 native against 60.1 / 60.7 / 58.7 with `SC3_NATIVE_2D=0` (GS frames per 5 s 302 / 331 / 336 against 302 / 308
+  / 302).
 - **Speed**: the regression route runs at 59.6 fps (58.2 on the vblank grid), with 5 frames over 25 ms instead of
   about 590; uncapped (`PS2X_FRAME_CAP=0`) it reaches 90 GS frames per second, 112 game frames per second.
 

@@ -3,6 +3,7 @@
 #include "ps2_recompiled_functions.h"
 #include "runtime/ee_scheduler.h"
 #include "sc3_census.h"
+#include "sc3_2d.h"
 #include "sc3_meshes.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/native/native_gs_hook.h"
@@ -171,8 +172,9 @@ namespace
         }
 
         // The current frame as IPU CSC output: RGBA32 16x16 macroblocks, column by column. Alpha
-        // movies carry their alpha as the luma of the frame's bottom half.
-        bool currentMacroblocks(uint8_t *out, uint32_t capacity, bool alphaMovie, uint32_t &width, uint32_t &height, uint32_t &number)
+        // movies carry their alpha as the luma of the frame's bottom half. write false: the frame advances, nothing
+        // is written.
+        bool currentMacroblocks(uint8_t *out, uint32_t capacity, bool alphaMovie, bool write, uint32_t &width, uint32_t &height, uint32_t &number)
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (!m_active || m_fullScreen)
@@ -185,7 +187,7 @@ namespace
             width = m_width;
             height = outHeight;
             number = m_number;
-            if (m_written == m_number)
+            if (!write || m_written == m_number)
                 return true;
             m_written = m_number;
             uint8_t *dst = out;
@@ -200,6 +202,32 @@ namespace
                         const uint32_t luma = (mask[x * 4u] * 77u + mask[x * 4u + 1u] * 150u + mask[x * 4u + 2u] * 29u) >> 8;
                         dst[x * 4u + 3u] = alphaMovie ? static_cast<uint8_t>((luma * 0x80u + 127u) / 255u) : 0x80u;
                     }
+                }
+            return true;
+        }
+
+        // The current frame as the movie task's copy into a texture's pixels (0x217E28) has it: RGBA rows, alpha as
+        // in the macroblocks. Nothing is copied while known is still the current frame's number.
+        bool currentPicture(bool alphaMovie, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (!m_active || m_fullScreen || m_current.empty())
+                return false;
+            const uint32_t outHeight = alphaMovie ? m_height / 2u : m_height;
+            width = m_width;
+            height = outHeight;
+            number = m_number;
+            if (known == m_number)
+                return true;
+            rgba.resize(static_cast<size_t>(m_width) * outHeight);
+            for (uint32_t y = 0; y < outHeight; ++y)
+                for (uint32_t x = 0; x < m_width; ++x)
+                {
+                    const uint8_t *src = m_current.data() + (static_cast<size_t>(y) * m_width + x) * 4u;
+                    const uint8_t *mask = src + static_cast<size_t>(outHeight) * m_width * 4u;
+                    const uint32_t luma = (mask[0] * 77u + mask[1] * 150u + mask[2] * 29u) >> 8;
+                    const uint32_t alpha = alphaMovie ? (luma * 0x80u + 127u) / 255u : 0x80u;
+                    rgba[static_cast<size_t>(y) * m_width + x] = src[0] | (src[1] << 8) | (src[2] << 16) | (alpha << 24);
                 }
             return true;
         }
@@ -676,7 +704,7 @@ namespace
             std::cerr << "[sc3] mwPlyGetCurFrm handle=0x" << std::hex << handle << " buffer=0x" << buffer << " limit=0x" << limit
                       << " ra=0x" << getRegU32(ctx, 31) << std::dec << " alpha=" << alphaMovie << " active=" << player->active() << std::endl;
         }
-        if (capacity != 0u && player->currentMacroblocks(rdram + (buffer & PS2_RAM_MASK), capacity, alphaMovie, width, height, number))
+        if (capacity != 0u && player->currentMacroblocks(rdram + (buffer & PS2_RAM_MASK), capacity, alphaMovie, !sc3::native2dMovie(handle), width, height, number))
         {
             if (std::getenv("PS2X_SC3_TRACE_MOVIE") && number % 60u == 1u)
                 std::cerr << "[sc3] movie frame handle=0x" << std::hex << handle << " buffer=0x" << buffer << std::dec << " " << width
@@ -687,6 +715,15 @@ namespace
                 std::memcpy(rdram + frame + field[0], &field[1], 4);
         }
         ctx->pc = getRegU32(ctx, 31);
+    }
+
+    bool moviePicture(uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number)
+    {
+        const auto player = g_movies.find(handle);
+        if (!player || !g_movieRuntime)
+            return false;
+        const bool alphaMovie = g_movieRuntime->memory().read32(handle + kMwPlyCompoMode) == kMwPlyCompoAlpha;
+        return player->currentPicture(alphaMovie, known, rgba, width, height, number);
     }
 
     void mwPlyRelCurFrmHost(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -1640,6 +1677,8 @@ namespace
         sc3::installNativeVu0(runtime);
         sc3::installTexturePack(runtime, nativeGs);
         sc3::installNativeMeshes(runtime, nativeGs);
+        sc3::installNative2d(runtime, nativeGs);
+        sc3::setMoviePictures(moviePicture);
         sc3::installCensus(runtime);
         installMovieCounters(runtime);
         // Full-screen movies as the native renderer's held backdrop, Sofdec's decoder set-up without libmpeg or the IPU.

@@ -317,9 +317,11 @@ def walk_chain(d, start, limit=1 << 16):
     return None
 
 
-def play_gif(gs, data, qwords):
-    """Plays the GIF stream's image transfers into gs (`qwords`: the file offset of each qword of `data`). Returns the
-    number of transfers, or raises Unsupported."""
+def play_gif(gs, data, qwords=None):
+    """Plays the GIF stream's image transfers into gs (`qwords`: the file offset of each qword of `data`, none: 0).
+    Returns the number of transfers, or raises Unsupported."""
+    if qwords is None:
+        qwords = [0] * (len(data) // 16)
     regs = {}
     q = 0
     transfers = 0
