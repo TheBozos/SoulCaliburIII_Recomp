@@ -592,7 +592,7 @@ only as this diagnostic) does not match the groups' segments in the pause. With 
 per-object hooks (M3: 0x104af0's commands run in order, a batch's texture CALL right before its draws) the group is
 known at the hook and none of this is needed.
 
-#### Native 2D (`scripts/sc3_2d_pack.py`, `runtime/sc3_2d.cpp`, opt-in)
+#### Native 2D (`scripts/sc3_2d_pack.py`, `runtime/sc3_2d.cpp`, on by default)
 
 The 2D is GIF data on PATH3: the ordering table (8192 buckets of 16 bytes at *(0x5BE754), one table cut into layers,
 0x10D718 setting the layer base *(0x5BE750)) is part of the GIF channel's chain, a bucket a list of packets newest
@@ -831,6 +831,16 @@ branch: `native/renderer` plus the SC3 fixes below, on their way into `native/re
   them back, `=check` compares).
   The regression route holds 60.0 fps capped; uncapped fights run about 62.5 fps drawing directly (61 from the packets), against 55.8 with everything on
   the sandbox and VU0's interpreter.
+- **2D in C++** by default (`runtime/sc3_2d.cpp`, 2026-11-03): the 2D builders (text, labels, icons, quads, lines,
+  triangles, the draw item types: object sprites, strips, screen sprites and quads, billboards, the fight's gauges)
+  draw from the game's variables, textured from the offline 2D pack of the user's disc (`build/sc3_2d.pack`, made by
+  `scripts/build_runtime.sh` when missing); no GIF packet built for them. `SC3_NATIVE_2D=0` gives them back to the
+  game's packets (diagnostic), `check` compares both word for word (0 differing over the regress and versus routes).
+  What is not native yet falls back to the game's own packets as before: the passes that read the frame (CT24 / CT16
+  pages at TBP 0x2C40, 0x1180, 0: M5), the frame context writes (M7) and the draw item type at 0x115018 (one load
+  window). Three regress and three versus runs clean; bench with the fight uncapped, interleaved: fps 57.4 / 65.2 /
+  66.6 native against 60.1 / 60.7 / 58.7 with `SC3_NATIVE_2D=0` (GS frames per 5 s 302 / 331 / 336 against 302 / 308
+  / 302).
 - **Speed**: the regression route runs at 59.6 fps (58.2 on the vblank grid), with 5 frames over 25 ms instead of
   about 590; uncapped (`PS2X_FRAME_CAP=0`) it reaches 90 GS frames per second, 112 game frames per second.
 
