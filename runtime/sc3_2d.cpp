@@ -3092,13 +3092,13 @@ namespace sc3
             }
             const uint32_t file = peek32(item + 0x14u);
             const uint32_t prim = (head == 1u ? 0x54u : 0x254u) | peek8(item + 0xBu);
-            if (head == 1u || (prim & 0x100u) != 0u)
+            if (head > 2u || (prim & 0x100u) != 0u)
             {
                 ++stats.toGs;
                 callOriginal(address, rdram, ctx, runtime);
                 return;
             }
-            if (uploads != 0u && fileAddress(file) && (peek8(file) == 2u || peek8(file) == 3u))
+            if (uploads != 0u && head != 1u && fileAddress(file) && (peek8(file) == 2u || peek8(file) == 3u))
             {
                 ++stats.toGs;
                 callOriginal(address, rdram, ctx, runtime);
@@ -3106,7 +3106,9 @@ namespace sc3
             }
             Page pageRegs;
             if (peek8(item + 0x1Eu) != 0u && fileAddress(file) &&
-                !(head == 2u ? copiedPage(file, pageRegs, stats) : page(file, peek8(item + 0x18u), pageRegs, stats)))
+                !(head == 2u   ? copiedPage(file, pageRegs, stats)
+                  : head == 1u ? blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha
+                               : page(file, peek8(item + 0x18u), pageRegs, stats)))
             {
                 ++stats.toGs;
                 callOriginal(address, rdram, ctx, runtime);
@@ -3123,9 +3125,14 @@ namespace sc3
                 return;
             }
             poke32(kStripInsertion, call.insertion);
-            GsMaterial m = spriteMaterial(pageRegs, call.alpha);
+            GsMaterial m = spriteMaterial(pageRegs, head == 1u ? pageRegs.alpha : call.alpha);
             m.prim = ps2x::gs::decodePrim(call.prim);
             m.prim.type = GS_PRIM_TRIANGLE;
+            if (head == 1u && pageRegs.hasTest)
+            {
+                m.test = pageRegs.test;
+                m.testFromTarget = false;
+            }
             for (size_t i = 0; i < call.packets.size(); ++i)
             {
                 pokeFloat(item + 0x2Cu, call.meanW[i]);
