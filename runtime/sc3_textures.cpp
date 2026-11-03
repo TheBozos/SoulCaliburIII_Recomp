@@ -617,8 +617,9 @@ namespace sc3
     void installTexturePack(PS2Runtime &runtime, bool nativeGs)
     {
         const char *path = std::getenv("SC3_TEXTURE_PACK");
-        const char *mode = std::getenv("SC3_TEXTURE_PACK_MODE");
-        if (!path || !*path || !mode || !*mode || *mode == '0')
+        const char *setting = std::getenv("SC3_TEXTURE_PACK_MODE");
+        const char *mode = setting && *setting ? setting : "1";
+        if (!path || !*path || *mode == '0')
             return;
         const bool followed = mode && *mode == '@';
         if (!nativeGs)

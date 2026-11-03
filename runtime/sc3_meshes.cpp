@@ -194,7 +194,7 @@ namespace sc3
         std::string g_routinesPath, g_routinesSpec;
         std::vector<uint32_t> g_routines;
         uint64_t g_traceFrame = ~0ull;
-        bool g_skinning = false; // SC3_NATIVE_SKINNING=1: B:0x1388 chain parts too (unfinished: the run stops at character select)
+        bool g_skinning = true; // SC3_NATIVE_SKINNING=0: program B's chain parts left to the lifted programs
         std::string g_traceRequest; // SC3_MESH_TRACE=@file: the frame after the file appears (it is removed)
         bool g_traceLists = false;
         std::set<uint32_t> g_tracedLists;
@@ -1980,9 +1980,10 @@ namespace sc3
     void installNativeMeshes(PS2Runtime &runtime, bool nativeGs)
     {
         using namespace meshes;
-        const char *mode = std::getenv("SC3_NATIVE_MESHES");
+        const char *setting = std::getenv("SC3_NATIVE_MESHES");
+        const char *mode = setting && *setting ? setting : "1";
         const char *path = std::getenv("SC3_MESH_PACK");
-        if (!mode || !*mode || *mode == '0')
+        if (*mode == '0')
             return;
         if (!nativeGs || !path || !*path)
         {
@@ -2016,8 +2017,8 @@ namespace sc3
             else
                 parseRoutines(routines);
         }
-        if (const char *skinning = std::getenv("SC3_NATIVE_SKINNING"); skinning && *skinning == '1')
-            g_skinning = true;
+        if (const char *skinning = std::getenv("SC3_NATIVE_SKINNING"); skinning && *skinning == '0')
+            g_skinning = false;
         if (const char *lists = std::getenv("SC3_MESH_TRACE_LISTS"); lists && *lists == '1')
             g_traceLists = true;
         if (const char *trace = std::getenv("SC3_MESH_TRACE"); trace && *trace)

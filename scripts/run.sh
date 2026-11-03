@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Launches the recompiled game with game/ as cdrom0:. Extra args are passed to ps2EntryRunner.
-# The SPU2 follows the host's clock unless PS2X_SPU2_WALLCLOCK=0. SC3_TEXTURE_PACK_MODE=1 draws the direct draws'
-# textures from build/sc3_textures.pack (SC3_TEXTURE_PACK names another; off by default, a diagnostic for now).
+# The SPU2 follows the host's clock unless PS2X_SPU2_WALLCLOCK=0. The 3D is drawn from build/sc3_meshes.pack and
+# build/sc3_textures.pack when they are there (SC3_MESH_PACK / SC3_TEXTURE_PACK name others; SC3_NATIVE_MESHES=0
+# and SC3_TEXTURE_PACK_MODE=0 keep the old path for diagnosis).
 source "$(dirname "$0")/common.sh"
 export PS2X_SPU2_WALLCLOCK="${PS2X_SPU2_WALLCLOCK:-1}"
 BIN="$GAME_BUILD/PS2Recomp/ps2xRuntime/ps2EntryRunner"
