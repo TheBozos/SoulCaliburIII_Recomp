@@ -60,6 +60,10 @@
 #                     from its BATTLE 1 on for REGRESS_FIGHT_SECS (default 120: three battles and the results), no
 #                     pause menu; with REGRESS_NATIVE_2D_AB=1 four stills after every round of attacks, as the menu
 #                     series (versus_fight_<i><a-d>_<off|on>.png, versus_fight_floor_psnr / versus_fight_psnr)
+#   REGRESS_VERSUS_PAUSE=1
+#                     with REGRESS_VERSUS=1 and REGRESS_NATIVE_2D_AB=1: each round's four stills taken with the fight
+#                     paused (START before, START after), the same frame under both ways of drawing
+#                     (versus_pause_<i><a-d>_<off|on>.png, versus_pause_floor_psnr / versus_pause_psnr)
 #   REGRESS_PAUSE_HIDE_EE="0x1f8598 0x10a178 ..."
 #                     in the pause menu, one still per game function returned at entry (SC3_HIDE_EE), as
 #                     pause_hide_ee_<address>.png, and pause_hide_ee.txt: each one's imgdiff against pause.png
@@ -271,8 +275,15 @@ fight()
         t=$((t + 3))
         if [ "$versus" = 1 ] && [ -n "$native2d_switch" ]; then
             n=$((n + 1))
-            still_round versus_fight "$n" || return 1
-            t=$((t + 4))
+            if [ "${REGRESS_VERSUS_PAUSE:-0}" = 1 ]; then
+                press START; await 2 || return 1
+                still_round versus_pause "$n" || return 1
+                press START; await 1 || return 1
+                t=$((t + 7))
+            else
+                still_round versus_fight "$n" || return 1
+                t=$((t + 4))
+            fi
         fi
     done
 }
@@ -479,6 +490,7 @@ series_psnr()
 read -r menu_main_floor_psnr menu_main_psnr menu_main_same_pairs menu_main_mixed_pairs < <(series_psnr menu_main)
 read -r menu_single_floor_psnr menu_single_psnr menu_single_same_pairs menu_single_mixed_pairs < <(series_psnr menu_single)
 read -r versus_fight_floor_psnr versus_fight_psnr versus_fight_same_pairs versus_fight_mixed_pairs < <(series_psnr versus_fight)
+read -r versus_pause_floor_psnr versus_pause_psnr versus_pause_same_pairs versus_pause_mixed_pairs < <(series_psnr versus_pause)
 if [ -n "$hide_ee_file" ]; then
     for address in $REGRESS_PAUSE_HIDE_EE; do
         still=pause_hide_ee_$address.png
@@ -533,6 +545,9 @@ menu_single_pairs=$menu_single_same_pairs/$menu_single_mixed_pairs
 versus_fight_floor_psnr=$versus_fight_floor_psnr
 versus_fight_psnr=$versus_fight_psnr
 versus_fight_pairs=$versus_fight_same_pairs/$versus_fight_mixed_pairs
+versus_pause_floor_psnr=$versus_pause_floor_psnr
+versus_pause_psnr=$versus_pause_psnr
+versus_pause_pairs=$versus_pause_same_pairs/$versus_pause_mixed_pairs
 EOF
 cat > "$out/details.txt" <<EOF
 fight_at_s=$fight_at_s
