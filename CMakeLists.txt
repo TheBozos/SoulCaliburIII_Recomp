@@ -72,6 +72,9 @@ if(SC3_BUILD_TESTS)
         runtime/sc3_vu1_port.cpp
         runtime/sc3_vu1_programs.cpp
         runtime/sc3_draw_sink.cpp
+        runtime/sc3_census.cpp
+        runtime/sc3_textures.cpp
+        runtime/sc3_texture_pack.cpp
         $<TARGET_OBJECTS:sc3_vu1_port>
         PS2Recomp/ps2xTest/src/test_function_table.cpp)
     target_include_directories(sc3_tests PRIVATE runtime PS2Recomp/ps2xTest/include PS2Recomp/ps2xRuntime/include)
