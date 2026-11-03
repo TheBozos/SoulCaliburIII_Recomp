@@ -62,6 +62,7 @@ namespace sc3
             uint32_t tag = 0;    // where 0x10EF78 / 0x10D9A0 copy the CALL tag (the GIF list, an ordering table), 0 unknown
             bool gsUse = false;  // a part left to VU1 may sample what it uploads
             TextureKeys::GameData game; // where the game holds the CALL list's leaf
+            bool nativeUse = false; // a native part sampled one of its textures
         };
 
         struct Read
@@ -72,7 +73,7 @@ namespace sc3
 
         struct Stats
         {
-            uint64_t calls = 0, packed = 0, leftOut = 0, unknown = 0, gsUse = 0, misplaced = 0, incomplete = 0, untagged = 0;
+            uint64_t calls = 0, packed = 0, leftOut = 0, unknown = 0, gsUse = 0, notNative = 0, misplaced = 0, incomplete = 0, untagged = 0;
             std::atomic<uint64_t> bound{0}, missed{0};
         };
 
@@ -280,15 +281,22 @@ namespace sc3
             callOriginal(kOtInsertDepth, rdram, ctx, runtime);
         }
 
-        // At the kick, before the game sends the frame: the CALL of each group no part left to VU1 may sample becomes an
-        // empty CNT, so its uploads are not sent. A group whose uploads also feed textures the pack lacks (partly written by
-        // other uploads) is still sent when a part left to VU1 sampled a texture no group of the frame has in the pack.
+        // At the kick, before the game sends the frame: the CALL of each group a native part sampled and no part left to VU1
+        // may sample becomes an empty CNT, so its uploads are not sent. A group no native part sampled is sent: the game's
+        // own GS draws may sample it (the fight intro's light rays, a PSMT8H texture in the Z buffer's top bytes). A group
+        // whose uploads also feed textures the pack lacks (partly written by other uploads) is still sent when a part left to
+        // VU1 sampled a texture no group of the frame has in the pack.
         void leaveOutUploads()
         {
             for (const Group &g : g_building)
             {
                 if (!g.entry || g.gsUse)
                     continue;
+                if (!g.nativeUse)
+                {
+                    ++g_stats.notNative;
+                    continue;
+                }
                 if ((!g.entry->complete && g_gsMiss) || g.tag == 0u)
                 {
                     ++(g.tag == 0u ? g_stats.untagged : g_stats.incomplete);
@@ -313,12 +321,13 @@ namespace sc3
             const uint64_t transfers = gs.imageTransfers(), bytes = gs.imageBytes();
             std::fprintf(stderr,
                          "[sc3:packets] %llu frames: texture uploads called %llu, from the pack %llu (left out %llu, sent %llu: a part "
-                         "left to VU1 may sample them %llu, CALL tag not where expected %llu, feeding textures the pack lacks one of those may sample %llu, CALL tag "
+                         "left to VU1 may sample them %llu, no native part sampled them %llu, CALL tag not where expected %llu, feeding textures the pack lacks one of those may sample %llu, CALL tag "
                          "place unknown %llu), not in the pack %llu; GS image transfers "
                          "read from GIF packets %llu (%llu bytes)\n",
                          250ull, static_cast<unsigned long long>(g_stats.calls), static_cast<unsigned long long>(g_stats.packed),
                          static_cast<unsigned long long>(g_stats.leftOut),
                          static_cast<unsigned long long>(g_stats.packed - g_stats.leftOut), static_cast<unsigned long long>(g_stats.gsUse),
+                         static_cast<unsigned long long>(g_stats.notNative),
                          static_cast<unsigned long long>(g_stats.misplaced), static_cast<unsigned long long>(g_stats.incomplete),
                          static_cast<unsigned long long>(g_stats.untagged),
                          static_cast<unsigned long long>(g_stats.unknown), static_cast<unsigned long long>(transfers - g_lastTransfers),
@@ -387,7 +396,7 @@ namespace sc3
                          static_cast<unsigned long long>(live.outside));
             g_lastTransfers = transfers;
             g_lastBytes = bytes;
-            g_stats.calls = g_stats.packed = g_stats.leftOut = g_stats.unknown = g_stats.gsUse = g_stats.misplaced = g_stats.incomplete = g_stats.untagged = 0;
+            g_stats.calls = g_stats.packed = g_stats.leftOut = g_stats.unknown = g_stats.gsUse = g_stats.notNative = g_stats.misplaced = g_stats.incomplete = g_stats.untagged = 0;
         }
 
         PackMode parseMode(const std::string &value)
@@ -546,6 +555,7 @@ namespace sc3
                     continue;
                 if (const ps2x::native::NativeTexture *texture = texpack::g_pack.texture(*group.entry, tex0, width, height, &group.game))
                 {
+                    group.nativeUse = true;
                     if (censusTracingDraws())
                         std::fprintf(stderr, "[sc3:trace] hook tex0=%#llx %ux%u part %#x: group %zu/%zu %s entry %u leaf at %#x%s, %s\n",
                                      static_cast<unsigned long long>(tex0), width, height, part, g, texpack::g_building.size(),
