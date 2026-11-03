@@ -961,61 +961,6 @@ namespace sc3
             return v;
         }
 
-        // ---- 0x124C80 (xyz0, xyz1, xyz2 pointers to packed XYZ2 quadwords, a3 / t0 / t1 their RGBAQ quadwords, t2 ALPHA_2,
-        // f12 the depth): one Gouraud-shaded blended triangle, untextured, inserted through 0x120978
-
-        void triangle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            State &s = g_state;
-            BuilderStats &stats = s.triangles;
-            ++stats.calls;
-            if (s.mode != Mode::On)
-            {
-                stats.gifQwords += 9u;
-                callOriginal(kTriangle, rdram, ctx, runtime);
-                return;
-            }
-            uint32_t xyz[3][4], rgba[3][4];
-            for (int i = 0; i < 3; ++i)
-            {
-                const uint32_t at = getRegU32(ctx, 4 + i);
-                for (int w = 0; w < 4; ++w)
-                    xyz[i][w] = peek32(at + static_cast<uint32_t>(w) * 4u);
-                word4(ctx, 7 + i, rgba[i]);
-            }
-            const uint64_t key = newKey();
-            const bool drawn = (xyz[2][3] & 0x8000u) == 0u;
-            if (drawn)
-            {
-                GsMaterial m;
-                m.prim.type = GS_PRIM_TRIANGLE;
-                m.prim.iip = true;
-                m.prim.abe = true;
-                m.prim.ctxt = true;
-                m.alpha = getRegU32(ctx, 10) | (static_cast<uint64_t>(static_cast<uint32_t>(_mm_extract_epi32(ctx->r[10], 1))) << 32);
-                m.testFromTarget = true;
-                const GsVertex v[3] = {packedVertex(rgba[0], xyz[0]), packedVertex(rgba[1], xyz[1]), packedVertex(rgba[2], xyz[2])};
-                ps2x::native::Renderer::instance().drawGsKeyed(key, m, v, 3u);
-            }
-            const Linked linked = insert2d(key, ctx->f[12]);
-            if (linked != Linked::Yes && drawn)
-                discardKeyed(key);
-            if (linked == Linked::NotHere)
-            {
-                ++stats.toGs;
-                stats.gifQwords += 9u;
-                callOriginal(kTriangle, rdram, ctx, runtime);
-                return;
-            }
-            if (linked == Linked::Yes && drawn)
-            {
-                ++stats.sprites;
-                ++stats.markers;
-            }
-            ++stats.native;
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
         // ---- 0x11EA80 (mode, string, argument): the text renderer. Mode 0 measures (the text state's cursor moves, nothing
         // drawn), else it draws (mode < 0: the cursor placed by the text state first); mode & 7 picks the insertion (2 the
         // in-order GIF list 0x10E1C8, 4 a bucket by layer 0x10E068, else the text layers 0x10DF30), the text state's byte 6
@@ -1997,6 +1942,61 @@ namespace sc3
         uint64_t reg64(const R5900Context *ctx, int reg)
         {
             return getRegU32(ctx, reg) | (static_cast<uint64_t>(static_cast<uint32_t>(_mm_extract_epi32(ctx->r[reg], 1))) << 32);
+        }
+
+        // ---- 0x124C80 (xyz0, xyz1, xyz2 pointers to packed XYZ2 quadwords, a3 / t0 / t1 their RGBAQ quadwords, t2 ALPHA_2,
+        // f12 the depth): one Gouraud-shaded blended triangle, untextured, inserted through 0x120978
+
+        void triangle(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            State &s = g_state;
+            BuilderStats &stats = s.triangles;
+            ++stats.calls;
+            if (s.mode != Mode::On)
+            {
+                stats.gifQwords += 9u;
+                callOriginal(kTriangle, rdram, ctx, runtime);
+                return;
+            }
+            uint32_t xyz[3][4], rgba[3][4];
+            for (int i = 0; i < 3; ++i)
+            {
+                const uint32_t at = getRegU32(ctx, 4 + i);
+                for (int w = 0; w < 4; ++w)
+                    xyz[i][w] = peek32(at + static_cast<uint32_t>(w) * 4u);
+                word4(ctx, 7 + i, rgba[i]);
+            }
+            const uint64_t key = newKey();
+            const bool drawn = (xyz[2][3] & 0x8000u) == 0u;
+            if (drawn)
+            {
+                GsMaterial m;
+                m.prim.type = GS_PRIM_TRIANGLE;
+                m.prim.iip = true;
+                m.prim.abe = true;
+                m.prim.ctxt = true;
+                m.alpha = getRegU32(ctx, 10) | (static_cast<uint64_t>(static_cast<uint32_t>(_mm_extract_epi32(ctx->r[10], 1))) << 32);
+                m.testFromTarget = true;
+                const GsVertex v[3] = {packedVertex(rgba[0], xyz[0]), packedVertex(rgba[1], xyz[1]), packedVertex(rgba[2], xyz[2])};
+                ps2x::native::Renderer::instance().drawGsKeyed(key, m, v, 3u);
+            }
+            const Linked linked = insert2d(key, ctx->f[12]);
+            if (linked != Linked::Yes && drawn)
+                discardKeyed(key);
+            if (linked == Linked::NotHere)
+            {
+                ++stats.toGs;
+                stats.gifQwords += 9u;
+                callOriginal(kTriangle, rdram, ctx, runtime);
+                return;
+            }
+            if (linked == Linked::Yes && drawn)
+            {
+                ++stats.sprites;
+                ++stats.markers;
+            }
+            ++stats.native;
+            ctx->pc = getRegU32(ctx, 31);
         }
 
         // ---- 0x123340 (a0 -> the corner (x, y, z, w), a1 RGBA, a2 ALPHA_2 (0: 0x2A, alpha byte 0x80), f12 / f13 the size):
