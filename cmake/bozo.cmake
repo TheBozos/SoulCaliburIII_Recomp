@@ -28,7 +28,7 @@ set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functi
 set(SC3_EXTERNALS "" CACHE FILEPATH "An externals list to generate with instead of bozo-externals' (bozo-calllog-tool externals: a pinned check needs the reference's stubs)")
 set(SC3_ENTRIES "${CMAKE_SOURCE_DIR}/recomp/sc3_entries.txt" CACHE FILEPATH "Explicit entry points for bozo-recomp --entries")
 set(SC3_GEN_FILES 32 CACHE STRING "How many .cpp files the generated code is split into")
-set(SC3_GEN_OPT "-O1" CACHE STRING "Optimisation of the generated code")
+set(SC3_GEN_OPT "-O1;-foptimize-sibling-calls" CACHE STRING "Optimisation of the generated code; a stripped ELF's carved functions continue into each other by tail calls, so they must not grow the stack")
 option(SC3_WINDOW "Build sc3, the game in a window (BozoEngine's bozo_app: SDL3, OpenGL 3.3)" ON)
 if(NOT BOZO_ENGINE_DIR OR NOT EXISTS "${BOZO_ENGINE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "SC3: set BOZO_ENGINE_DIR to BozoEngine's source tree (or git submodule update --init BozoEngine)")
