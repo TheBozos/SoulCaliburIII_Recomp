@@ -11,6 +11,11 @@
 #include "sc3_native.h"
 #include "sc3_textures.h"
 
+#if __has_include("runtime/ps2_reference.h")
+#include "runtime/ps2_reference.h"
+#define SC3_HAS_REFERENCE_RECORDER 1
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1578,8 +1583,33 @@ namespace
 #endif
     }
 
+#if defined(SC3_HAS_REFERENCE_RECORDER)
+    // SC3_CALL_NAMES=<file> (scripts/sc3_call_names.py): the calls the reference recorder names, "name 0xADDR" lines.
+    void nameReferenceCalls()
+    {
+        const char *path = std::getenv("SC3_CALL_NAMES");
+        if (!path || !*path || !ps2x::reference::active())
+            return;
+        static std::deque<std::string> names;
+        static std::vector<ps2x::reference::CallName> calls;
+        std::ifstream file(path);
+        std::string name;
+        std::string address;
+        while (file >> name >> address)
+        {
+            names.push_back(name);
+            calls.push_back({static_cast<uint32_t>(std::stoul(address, nullptr, 16)), names.back().c_str()});
+        }
+        ps2x::reference::setBuild("SC3 main + PS2Recomp sc3/harness");
+        ps2x::reference::setCallNames(calls.data(), calls.size());
+    }
+#else
+    void nameReferenceCalls() {}
+#endif
+
     void applySoulcalibur3(PS2Runtime &runtime)
     {
+        nameReferenceCalls();
         // The IRX modules recompiled by scripts/iop_recomp.sh; PS2X_IOP_NATIVE=0 interprets them.
         setDefaultEnv("PS2X_IOP_NATIVE", "1");
         // The IOP on the host's clock; PS2X_IOP_WALLCLOCK=0 puts it back on the EE cycles the game accounts.
