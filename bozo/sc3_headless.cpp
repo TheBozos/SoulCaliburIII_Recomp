@@ -3,6 +3,7 @@
 //
 //   sc3-headless [--frames n] [--elf SLUS_212.16] [--iso image] [--pad-script [n=]file]... [--card-dir dir]
 //                [--out run.ref] [--report n] [--print] [--quiet] [--profile-io] [--wav file] [--no-sound]
+//                [--dump-ram dir n,n,...]  RAM at the frame ends where the game's frame counter 0x46E608 reaches each n
 #include "sc3_main.h"
 
 #ifdef SC3_NATIVE_SOUND
@@ -15,8 +16,11 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <map>
+#include <sstream>
 #include <string>
+#include <vector>
 
 int main(int argc, char **argv)
 {
@@ -26,7 +30,8 @@ int main(int argc, char **argv)
     opt.elf = BOZO_RUN_DEFAULT_ELF;
     sc3::useSymbolMap(opt);
     uint64_t report = 500;
-    std::string wavPath;
+    std::string wavPath, dumpDir;
+    std::vector<uint32_t> dumpAt;
     for (int k = 1; k < argc; ++k)
     {
         const std::string a = argv[k];
@@ -52,6 +57,13 @@ int main(int argc, char **argv)
             opt.cardDir = value();
         else if (a == "--out")
             opt.out = value();
+        else if (a == "--dump-ram")
+        {
+            dumpDir = value();
+            std::stringstream list(value());
+            for (std::string n; std::getline(list, n, ',');)
+                dumpAt.push_back(static_cast<uint32_t>(std::stoul(n)));
+        }
         else if (a == "--report")
             report = std::stoull(value());
         else if (a == "--quiet")
@@ -114,7 +126,26 @@ int main(int argc, char **argv)
                     secs);
         std::fflush(stdout);
     };
+    size_t nextDump = 0;
     host.onFrame = [&](uint64_t frame, const R5900Context *ctx) {
+        if (nextDump < dumpAt.size())
+        {
+            const uint8_t *ram = d.runtime().memory.ram();
+            uint32_t counter;
+            std::memcpy(&counter, ram + 0x46E608u, 4);
+            if (counter >= dumpAt[nextDump])
+            {
+                const std::string path = dumpDir + "/ram_" + std::to_string(dumpAt[nextDump]) + ".bin";
+                if (std::FILE *f = std::fopen(path.c_str(), "wb"))
+                {
+                    std::fwrite(ram, 1, 0x2000000u, f);
+                    std::fclose(f);
+                }
+                std::printf("RAM dump %s: frame %llu, counter %u, rand state %llx\n", path.c_str(), static_cast<unsigned long long>(frame), counter,
+                            static_cast<unsigned long long>(host.libraries().rand.state));
+                ++nextDump;
+            }
+        }
         if (ctx)
         {
             waiter = host.functionAt(ctx->r[31].uw[0]);
