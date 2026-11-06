@@ -10,6 +10,7 @@ namespace sc3::audio
     namespace
     {
         constexpr uint32_t kHeapStart = 0x00028000u;
+        constexpr uint32_t kNuSoundDelay = 0x00021510u;
     }
 
     std::string moduleName(const std::string &path)
@@ -31,6 +32,11 @@ namespace sc3::audio
             names.push_back(image.name);
             host->addImage(std::move(image));
         }
+        host->bindNative(kNuSoundDelay, [](bozo::native::irx::Env &e)
+                         {
+                             e.cpu.gpr[2] = 1;
+                             e.cpu.pc = e.cpu.gpr[31];
+                         });
         auto *h = host.get();
         libraries.sif.moduleLoaderWithArguments = [h, names, others = int32_t(0)](const std::string &path, const std::vector<std::string> &arguments) mutable
         {

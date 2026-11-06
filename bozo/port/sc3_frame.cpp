@@ -10,6 +10,9 @@ namespace sc3::frame
         constexpr uint32_t kFrameKick = 0x0010F098u;
         constexpr uint32_t kElapsedLines = 0x00148098u;
         constexpr uint32_t kFrameEndReturn = 0x0012EA90u;
+        constexpr uint32_t kAdxmVsyncSleep = 0x003F0F10u;
+        constexpr uint32_t kAdxmVsyncSleepReturn = 0x003F0F60u;
+        constexpr uint32_t kMovieFrameWaitReturn = 0x0012E654u;
         constexpr uint32_t kFinishFlag = 0x0046E5CEu;
         constexpr uint32_t kFinishCount = 0x0046E60Cu;
         constexpr uint32_t kFinishSeen = 0x005BE782u;
@@ -18,6 +21,18 @@ namespace sc3::frame
         constexpr uint32_t kPadCallback = 0x00576DD8u;
 
         bool g_frameOpen = false;
+
+        void adxmVsyncSleep(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t caller = *reinterpret_cast<uint32_t *>(rdram + (getRegU32(ctx, 29) & 0x1FFFFFFu));
+            if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
+            {
+                bozo::port::frameEnd(runtime, ctx);
+                ctx->pc = kAdxmVsyncSleepReturn;
+                return;
+            }
+            func_0x3f0f10(rdram, ctx, runtime);
+        }
 
         template <class R>
         void declareTransfersDone(R &runtime)
@@ -68,5 +83,6 @@ namespace sc3::frame
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
         runtime.registerFunction(kFrameKick, &frameKick);
         runtime.registerFunction(kElapsedLines, &elapsedLines);
+        runtime.registerFunction(kAdxmVsyncSleep, &adxmVsyncSleep);
     }
 }
