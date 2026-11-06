@@ -313,6 +313,21 @@ namespace sc3::draw
     }
 }
 
+namespace sc3
+{
+    RecompiledFunction guestFunction(uint32_t address)
+    {
+        static const std::map<uint32_t, RecompiledFunction> originals = []
+        {
+            std::map<uint32_t, RecompiledFunction> table;
+            for (size_t i = 0; i < sc3_function_count; ++i)
+                table[sc3_function_table[i].address] = sc3_function_table[i].function;
+            return table;
+        }();
+        return originals.at(address);
+    }
+}
+
 namespace sc3::fp
 {
     int32_t ps2FpuCvtWS(float v)

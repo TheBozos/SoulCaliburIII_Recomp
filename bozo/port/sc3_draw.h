@@ -111,6 +111,9 @@ namespace sc3
         ctx->checkpoints = checkpoints;
     }
 
+    // A game function by its address, as generated (its override, if any, not taken).
+    RecompiledFunction guestFunction(uint32_t address);
+
     // The R5900's FPU and VU0 float rules, on host floats holding the guest's bits.
     namespace fp
     {
@@ -182,5 +185,6 @@ namespace sc3
     namespace offscreen
     {
         void install(Registry &runtime);
+        void frameDone();
     }
 }

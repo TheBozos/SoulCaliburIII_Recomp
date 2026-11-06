@@ -221,6 +221,7 @@ namespace sc3::ot
         twoD::frameDone();
         meshes::frameDone();
         textures::frameDone();
+        offscreen::frameDone();
         s.drawsSinceReport += frame.draws;
         s.emptyKicks += frame.draws == 0u ? 1u : 0u;
         if (++s.kicks % 250u == 0u)
