@@ -1,6 +1,6 @@
 // A frame on BozoEngine with no GS: nothing raises the GS interrupt, so what the game waits on is written at the kick
 // (the FINISH side of handler 0x10e658), and the frame ends in the main loop's Timer 3 wait.
-#include "sc3_port.h"
+#include "sc3_draw.h"
 
 namespace sc3::frame
 {
@@ -57,6 +57,7 @@ namespace sc3::frame
 
         void frameKick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            ot::kick(rdram, ctx, runtime);
             func_0x10f098(rdram, ctx, runtime);
             rdram[kFinishFlag] = 1;
             *reinterpret_cast<uint32_t *>(rdram + kFinishCount) += 1;
