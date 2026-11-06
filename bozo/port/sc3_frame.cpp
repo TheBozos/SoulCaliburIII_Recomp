@@ -35,13 +35,6 @@ namespace sc3::frame
             func_0x3f0f10(rdram, ctx, runtime);
         }
 
-        template <class R>
-        void declareTransfersDone(R &runtime)
-        {
-            if constexpr (requires { runtime.transfersAlwaysDone(); })
-                runtime.transfersAlwaysDone();
-        }
-
         void gsDrainWait(uint8_t *, R5900Context *ctx, PS2Runtime *)
         {
             setReturnS32(ctx, 0);
@@ -79,7 +72,7 @@ namespace sc3::frame
 
     void install(Registry &runtime)
     {
-        declareTransfersDone(runtime);
+        runtime.transfersAlwaysDone();
         runtime.registerFunction(kGsDrainWait, &gsDrainWait);
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
         runtime.registerFunction(kGsExecStoreImage, &gsDrainWait);
