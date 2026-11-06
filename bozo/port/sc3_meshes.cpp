@@ -855,6 +855,15 @@ namespace sc3
                 float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f, q0 = 1e9f, q1 = -1e9f;
                 for (const bozo::render::Vertex &v : draw.vertices)
                     u0 = std::min(u0, v.u), u1 = std::max(u1, v.u), v0 = std::min(v0, v.v), v1 = std::max(v1, v.v), q0 = std::min(q0, v.q), q1 = std::max(q1, v.q);
+                uint64_t sum[4] = {};
+                if (draw.texture)
+                    for (uint32_t texel : draw.texture->rgba)
+                        for (int c = 0; c < 4; ++c)
+                            sum[c] += (texel >> (c * 8)) & 0xFFu;
+                const size_t texels = draw.texture && !draw.texture->rgba.empty() ? draw.texture->rgba.size() : 1u;
+                std::fprintf(stderr, "[sc3:mesh] dump object %#x file %s avg %llu %llu %llu %llu key %#llx\n", source.object, s.pack.files().size() > source.file ? s.pack.files()[source.file].name.c_str() : "?",
+                             static_cast<unsigned long long>(sum[0] / texels), static_cast<unsigned long long>(sum[1] / texels), static_cast<unsigned long long>(sum[2] / texels), static_cast<unsigned long long>(sum[3] / texels),
+                             static_cast<unsigned long long>(draw.texture ? draw.texture->key : 0u));
                 std::fprintf(stderr, "[sc3:mesh] dump routine %#x prim %#x tex0 %#llx tw %u th %u psm %#x tex %ux%u clamp %#llx tex1 %#llx alpha %#llx test %#llx u %g..%g v %g..%g q %g..%g verts %zu\n", routine, prim,
                              static_cast<unsigned long long>(s.material.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
                              static_cast<unsigned long long>(material.clamp), static_cast<unsigned long long>(material.tex1), static_cast<unsigned long long>(material.alpha), static_cast<unsigned long long>(material.test),
