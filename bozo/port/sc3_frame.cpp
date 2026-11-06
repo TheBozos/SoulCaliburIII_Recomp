@@ -17,6 +17,7 @@ namespace sc3::frame
         constexpr uint32_t kFinishCount = 0x0046E60Cu;
         constexpr uint32_t kFinishSeen = 0x005BE782u;
         constexpr uint32_t kSignals = 0x00467494u;
+        constexpr uint32_t kGsExecStoreImage = 0x00420370u;
         constexpr uint32_t kPadSetCallback = 0x00422F20u;
         constexpr uint32_t kPadCallback = 0x00576DD8u;
 
@@ -32,13 +33,6 @@ namespace sc3::frame
                 return;
             }
             func_0x3f0f10(rdram, ctx, runtime);
-        }
-
-        template <class R>
-        void declareTransfersDone(R &runtime)
-        {
-            if constexpr (requires { runtime.transfersAlwaysDone(); })
-                runtime.transfersAlwaysDone();
         }
 
         void gsDrainWait(uint8_t *, R5900Context *ctx, PS2Runtime *)
@@ -79,9 +73,10 @@ namespace sc3::frame
 
     void install(Registry &runtime)
     {
-        declareTransfersDone(runtime);
+        runtime.transfersAlwaysDone();
         runtime.registerFunction(kGsDrainWait, &gsDrainWait);
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
+        runtime.registerFunction(kGsExecStoreImage, &gsDrainWait);
         runtime.registerFunction(kFrameKick, &frameKick);
         runtime.registerFunction(kElapsedLines, &elapsedLines);
         runtime.registerFunction(kAdxmVsyncSleep, &adxmVsyncSleep);

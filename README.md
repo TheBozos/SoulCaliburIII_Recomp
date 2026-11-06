@@ -306,7 +306,8 @@ player 2:
 ## On BozoEngine
 
 The port is moving to [BozoEngine](https://github.com/TheBozos/BozoEngine) (the `BozoEngine` submodule, at a merged engine
-commit), next to the PS2Recomp build until the switch. It compiles and links, but does not boot yet.
+commit), next to the PS2Recomp build until the switch. Headless, it boots to the title and runs the reference route's
+11700 frames with no fault. It draws nothing yet, and no movie plays (`mwPlyStart*` report their end).
 
 ```bash
 git submodule update --init BozoEngine
