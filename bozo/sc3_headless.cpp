@@ -5,6 +5,10 @@
 //                [--out run.ref] [--report n] [--print] [--quiet] [--profile-io] [--wav file] [--no-sound]
 #include "sc3_main.h"
 
+#ifdef SC3_NATIVE_SOUND
+#include "sc3_audio.h"
+#endif
+
 #include "bozo/app/determinism.h"
 #include "bozo/audio/wav.h"
 #include "bozo/ee/dispatcher.h"
@@ -84,6 +88,9 @@ int main(int argc, char **argv)
         return 2;
 
     bozo::host::FreeHost host(opt);
+#ifdef SC3_NATIVE_SOUND
+    sc3::audio::attach(host.libraries());
+#endif
     bozo::ee::Dispatcher d(host);
     d.setFunctions(sc3_function_table, sc3_function_count, sc3_resume_table, sc3_resume_count);
     std::string error;

@@ -4,6 +4,7 @@
 #         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>] [-DSC3_WINDOW=OFF]
 #
 # Targets:
+# - sc3-irx-check: SC3's sound modules started natively with no game (SC3_NATIVE_SOUND, cmake/sc3_audio.cmake).
 # - sc3: the game in a window, in real time (BozoEngine's bozo_app: SDL3, OpenGL 3.3; SC3_WINDOW, on by default).
 # - sc3-headless: the game on BozoEngine's free host with no window (every library native, BozoEngine's own timing).
 # - sc3-check: BozoEngine's call-log checker (bozo-run) with SC3's overrides running natively:
@@ -150,3 +151,5 @@ if(SC3_WINDOW)
     target_compile_definitions(sc3 PRIVATE ${sc3_main_defines})
     sc3_static_link(sc3)
 endif()
+
+include("${CMAKE_SOURCE_DIR}/cmake/sc3_audio.cmake")
