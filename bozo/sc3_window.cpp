@@ -43,6 +43,7 @@ int main(int argc, char **argv)
     bozo::app::installCrashHandler();
 
     bozo::host::FreeOptions opt;
+    opt.profileIo = true;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
     sc3::useSymbolMap(opt);
     opt.realTime = true;
@@ -190,6 +191,7 @@ int main(int argc, char **argv)
         const uint64_t frames = host.run();
         device.close();
         wav.close();
+        sc3::reportAcknowledged(host.stats());
         sc3::reportEnd("sc3", host, frames);
         return host.endReason().rfind("FAULT", 0) == 0 ? 1 : 0;
     };

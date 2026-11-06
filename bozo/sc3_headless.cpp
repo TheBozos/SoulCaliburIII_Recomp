@@ -21,6 +21,8 @@
 int main(int argc, char **argv)
 {
     bozo::host::FreeOptions opt;
+    opt.profileIo = true;
+    bool printSites = false;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
     sc3::useSymbolMap(opt);
     uint64_t report = 500;
@@ -57,7 +59,7 @@ int main(int argc, char **argv)
         else if (a == "--print")
             opt.printGameOutput = true;
         else if (a == "--profile-io")
-            opt.profileIo = true;
+            printSites = true;
         else if (a == "--wav")
             wavPath = value();
         else if (a == "--no-sound")
@@ -148,11 +150,12 @@ int main(int argc, char **argv)
     std::printf("\n");
     for (const auto &[name, n] : s.unanswered)
         std::printf("no native answer: %s (%llu)\n", name.c_str(), static_cast<unsigned long long>(n));
-    if (opt.profileIo)
+    if (printSites)
         for (const auto &[site, rw] : s.ioSites)
             std::printf("device access: pc 0x%x address 0x%x: %llu reads, %llu writes\n", site.first, site.second,
                         static_cast<unsigned long long>(rw[0]), static_cast<unsigned long long>(rw[1]));
     std::fflush(stdout);
+    sc3::reportAcknowledged(s);
     sc3::reportEnd("sc3-headless", host, frames);
     return host.endReason().rfind("FAULT", 0) == 0 ? 1 : 0;
 }

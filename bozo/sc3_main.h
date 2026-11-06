@@ -68,6 +68,35 @@ namespace sc3
         return "";
     }
 
+    // PLAN's exit criterion: no guest code on a normal route reaches a register answered with no device behind it. The
+    // count is 0 at release; the sites come with --profile-io.
+    inline void reportAcknowledged(const bozo::host::FreeStats &stats)
+    {
+        uint64_t gifVif = 0, imr = 0, sigLblId = 0, condition = 0, scratchpad = 0, channels = 0;
+        for (const auto &[site, counts] : stats.ioSites)
+        {
+            const uint64_t hits = counts[0] + counts[1];
+            const uint32_t a = site.second == bozo::host::kCop0ConditionSite ? site.second : site.second & 0x1FFFFFFFu;
+            if (a == bozo::host::kCop0ConditionSite)
+                condition += hits;
+            else if (a == 0x10003010u || a == 0x10003020u || a == 0x10003800u || a == 0x10003820u || a == 0x10003C00u || a == 0x10003C20u)
+                gifVif += hits;
+            else if (a == 0x12001010u)
+                imr += hits;
+            else if (a == 0x12001080u)
+                sigLblId += hits;
+            else if (a == 0x1000D000u || a == 0x1000D400u)
+                scratchpad += hits;
+            else if (a >= 0x10008000u && a < 0x1000A040u)
+                channels += hits;
+        }
+        std::fprintf(stderr, "[sc3:acknowledged] %llu hits: GIF/VIF status %llu, GS IMR %llu, SIGLBLID %llu, BC0F/BC0T %llu, scratchpad CHCR %llu; VIF0/VIF1/GIF channels %llu\n",
+                     static_cast<unsigned long long>(gifVif + imr + sigLblId + condition + scratchpad),
+                     static_cast<unsigned long long>(gifVif), static_cast<unsigned long long>(imr),
+                     static_cast<unsigned long long>(sigLblId), static_cast<unsigned long long>(condition),
+                     static_cast<unsigned long long>(scratchpad), static_cast<unsigned long long>(channels));
+    }
+
     // A run's end, said plainly: the first call nothing answers yet is where the port stands.
     inline void reportEnd(const char *program, const bozo::host::FreeHost &host, uint64_t frames)
     {
