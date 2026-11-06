@@ -19,3 +19,4 @@ sceMpegReset 0x3e1908          # sceMpegCreate's call in the reference's sceMpeg
 sceCdReadClock 0x425438        # libcdvd; same a0 15, a1 1, t2 16 and scmd call shape as the reference, without its debug prints; called once by libscf
 sceGsSyncVCallback 0x420a00    # libgraph after sceGsExecStoreImage; 0x41fe08 for its params, func 0: DisableIntc(2), RemoveIntcHandler(2, id); else AddIntcHandler(2, func, -1), EnableIntc(2); returns the old func
 sceMcChdir 0x426b28            # libmc after mceStorePwd; the -100 and -200 guards of its neighbours, -210 on an empty path, RPC function 12 with port, slot, path up to 1023 bytes and an out buffer, reply handler mceStorePwd
+# _vfprintf_r: bozo_symbolmap.py's match says 0x430000, a branch inside it; recomp/sc3_symbols.txt carries 0x42fdc0 by hand, the prologue _vfiprintf_r's tail jump at 0x42fdb4 targets.

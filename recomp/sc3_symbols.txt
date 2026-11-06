@@ -284,7 +284,7 @@ strtoul 0x42fbc8
 strupr 0x42fbf8
 __sprint 0x42fc48
 __sbprintf 0x42fc90
-_vfprintf_r 0x430000
+_vfprintf_r 0x42fdc0
 cvt 0x431430
 exponent 0x4315f0
 __svfscanf 0x4316d0
