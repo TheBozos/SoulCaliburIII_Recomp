@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(SoulCaliburIII_Recomp LANGUAGES C CXX)
 
+option(SC3_BOZO "Build SC3 on BozoEngine (cmake/bozo.cmake) instead of the PS2Recomp runner" OFF)
+if(SC3_BOZO)
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+    include(cmake/bozo.cmake)
+    return()
+endif()
+
 set(SC3_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH
     "Output of ps2_recomp for SLUS_212.16 (scripts/recomp.sh), VU1 microcode compiled by ps2_vu_aot in vu1/")
 
