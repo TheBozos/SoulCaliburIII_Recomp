@@ -11,8 +11,8 @@
 # - sc3_recompile: the generated code alone.
 #
 # The generated code: bozo-recomp with the externals bozo-externals writes from the ELF (the names BozoEngine answers),
-# recomp/sc3_stubs.txt, SC3's override list (scripts/sc3_overrides_list.py, from bozo/port/*.cpp) and, once the engine
-# binds a stripped ELF, the symbol map SC3_SYMBOL_MAP (bozo-externals --symbols).
+# recomp/sc3_stubs.txt, SC3's override list (scripts/sc3_overrides_list.py, from bozo/port/*.cpp) and the symbol map
+# SC3_SYMBOL_MAP (default recomp/sc3_symbols.txt, once BOZO_ENGINE_DIR's engine reads symbol maps).
 
 set(BOZO_ENGINE_DIR "" CACHE PATH "BozoEngine's source tree (default: the BozoEngine submodule)")
 if(NOT BOZO_ENGINE_DIR AND EXISTS "${CMAKE_SOURCE_DIR}/BozoEngine/CMakeLists.txt")
@@ -23,7 +23,7 @@ if(NOT SC3_ELF AND EXISTS "${CMAKE_SOURCE_DIR}/game/SLUS_212.16")
     set(SC3_ELF "${CMAKE_SOURCE_DIR}/game/SLUS_212.16" CACHE FILEPATH "SC3's executable (SLUS_212.16), from the disc" FORCE)
 endif()
 set(SC3_ISO "" CACHE FILEPATH "SC3's disc image, the default of the programs' --iso")
-set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functions (name 0xADDR lines), given to bozo-externals --symbols")
+set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functions (name 0xADDR lines), given to bozo-externals and bozo-recomp --symbols and to the free host")
 set(SC3_ENTRIES "${CMAKE_SOURCE_DIR}/recomp/sc3_entries.txt" CACHE FILEPATH "Explicit entry points for bozo-recomp --entries")
 set(SC3_GEN_FILES 32 CACHE STRING "How many .cpp files the generated code is split into")
 set(SC3_GEN_OPT "-O1" CACHE STRING "Optimisation of the generated code")
@@ -33,6 +33,12 @@ if(NOT BOZO_ENGINE_DIR OR NOT EXISTS "${BOZO_ENGINE_DIR}/CMakeLists.txt")
 endif()
 if(NOT SC3_ELF OR NOT EXISTS "${SC3_ELF}")
     message(FATAL_ERROR "SC3: set SC3_ELF to the game's executable (SLUS_212.16)")
+endif()
+if(NOT SC3_SYMBOL_MAP)
+    file(STRINGS "${BOZO_ENGINE_DIR}/tools/externals/main.cpp" engine_reads_symbol_maps REGEX "\"--symbols\"")
+    if(engine_reads_symbol_maps)
+        set(SC3_SYMBOL_MAP "${CMAKE_SOURCE_DIR}/recomp/sc3_symbols.txt" CACHE FILEPATH "Names of the stripped ELF's library functions (name 0xADDR lines), given to bozo-externals and bozo-recomp --symbols and to the free host" FORCE)
+    endif()
 endif()
 if(SC3_SYMBOL_MAP AND NOT EXISTS "${SC3_SYMBOL_MAP}")
     message(FATAL_ERROR "SC3: SC3_SYMBOL_MAP ${SC3_SYMBOL_MAP} does not exist")
@@ -88,6 +94,10 @@ foreach(i RANGE ${last})
 endforeach()
 set(recomp_args --prefix sc3 --files ${SC3_GEN_FILES} --no-comments --externals ${externals})
 set(recomp_depends bozo-recomp ${externals} ${SC3_ELF})
+if(SC3_SYMBOL_MAP)
+    list(APPEND recomp_args --symbols "${SC3_SYMBOL_MAP}")
+    list(APPEND recomp_depends "${SC3_SYMBOL_MAP}")
+endif()
 if(SC3_ENTRIES)
     list(APPEND recomp_args --entries "${SC3_ENTRIES}")
     list(APPEND recomp_depends "${SC3_ENTRIES}")
@@ -110,7 +120,7 @@ target_link_libraries(sc3_port PUBLIC bozo_port bozo_render bozo_libs bozo_runti
 add_dependencies(sc3_port sc3_generated)
 target_compile_options(sc3_port PRIVATE -Wall -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable)
 
-set(sc3_main_defines BOZO_RUN_DEFAULT_ELF="${SC3_ELF}" SC3_DEFAULT_ISO="${SC3_ISO}")
+set(sc3_main_defines BOZO_RUN_DEFAULT_ELF="${SC3_ELF}" SC3_DEFAULT_ISO="${SC3_ISO}" SC3_DEFAULT_SYMBOL_MAP="${SC3_SYMBOL_MAP}")
 
 function(sc3_static_link target)
     if(MINGW)

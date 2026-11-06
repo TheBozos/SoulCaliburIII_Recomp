@@ -18,6 +18,7 @@ int main(int argc, char **argv)
 {
     bozo::host::FreeOptions opt;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
+    sc3::useSymbolMap(opt);
     uint64_t report = 500;
     std::string wavPath;
     for (int k = 1; k < argc; ++k)

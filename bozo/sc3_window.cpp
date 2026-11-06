@@ -40,6 +40,7 @@ int main(int argc, char **argv)
 
     bozo::host::FreeOptions opt;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
+    sc3::useSymbolMap(opt);
     opt.realTime = true;
     opt.quiet = true;
     bozo::app::WindowOptions window;

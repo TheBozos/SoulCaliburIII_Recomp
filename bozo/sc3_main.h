@@ -17,9 +17,21 @@
 #ifndef SC3_DEFAULT_ISO
 #define SC3_DEFAULT_ISO ""
 #endif
+#ifndef SC3_DEFAULT_SYMBOL_MAP
+#define SC3_DEFAULT_SYMBOL_MAP ""
+#endif
 
 namespace sc3
 {
+    // The build's symbol map for the free host, on an engine that reads them (a pin older than symbol maps has no field).
+    inline void useSymbolMap(bozo::host::FreeOptions &options)
+    {
+        [](auto &o) {
+            if constexpr (requires { o.symbolMap; })
+                o.symbolMap = SC3_DEFAULT_SYMBOL_MAP;
+        }(options);
+    }
+
     // The port's overrides, false (with the addresses listed) when one is not an external of the generated code.
     inline bool installPort(const char *program, bozo::port::Registry &registry)
     {
