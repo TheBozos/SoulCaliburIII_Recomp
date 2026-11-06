@@ -1427,6 +1427,12 @@ namespace
         trace = FrameTrace{};
     }
 
+    bool deterministicRun()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_DETERMINISTIC"); return v && v[0] == '1'; }();
+        return on;
+    }
+
     double hostFrameStep()
     {
         using Clock = std::chrono::steady_clock;
@@ -1459,7 +1465,8 @@ namespace
     double nativeFrameEnd(PS2Runtime *runtime)
     {
         EeScheduler &scheduler = runtime->eeScheduler();
-        const double step = hostFrameStep();
+        const uint32_t cap = runtime->framePacer().cap();
+        const double step = deterministicRun() ? 1.0 / (cap != 0u ? cap : 60u) : hostFrameStep();
         const int64_t real = static_cast<int64_t>(step * static_cast<double>(EeScheduler::kEeClockHz));
         g_eeLead += static_cast<int64_t>(scheduler.currentCycle() - g_frameEndCycle) - real;
         if (g_eeLead < 0)
