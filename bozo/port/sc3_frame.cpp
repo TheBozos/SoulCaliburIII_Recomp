@@ -3,6 +3,8 @@
 // linked or sent, and the frame ends in the main loop's Timer 3 wait.
 #include "sc3_port.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -33,6 +35,9 @@ namespace sc3::frame
                                                0x0010CB20u, 0x0010CB50u, 0x0010CBC8u, 0x0010CC40u, 0x0010CCA8u, 0x0010CCE0u, 0x0010CD48u,
                                                0x0010CD88u, 0x0010CDB8u, 0x0010CE30u, 0x0010CE98u, 0x0010CED0u};
 
+        constexpr uint32_t kInitSys = 0x00440860u;
+        constexpr uint32_t kCdRead = 0x00424E28u;
+
         constexpr uint32_t kRenderer = 0x005BE700u;
         constexpr uint32_t kFrameLists = 0x004674C0u;
         constexpr uint32_t kFinishFlag = 0x0046E5CEu;
@@ -58,6 +63,16 @@ namespace sc3::frame
 
         void answered(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
 
+        // The rest of _InitSys is the kernel's and the timer library's, native. Its first call makes the two library locks
+        // that guest code goes on using (0x5792F8, 0x5792FC: the stdio list at 0x42B358).
+        void initSys(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t returnTo = getRegU32(ctx, 31);
+            func_0x440610(rdram, ctx, runtime);
+            setReturnS32(ctx, 0);
+            ctx->pc = returnTo;
+        }
+
         void adxmVsyncSleep(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t caller = *reinterpret_cast<uint32_t *>(rdram + (getRegU32(ctx, 29) & 0x1FFFFFFu));
@@ -68,6 +83,16 @@ namespace sc3::frame
                 return;
             }
             func_0x3f0f10(rdram, ctx, runtime);
+        }
+
+        // SC3_TRACE_CD: what the game reads, by the game's frame counter, for the comparison with the reference's call log.
+        void cdRead(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            static const bool trace = std::getenv("SC3_TRACE_CD") != nullptr;
+            if (trace)
+                std::fprintf(stderr, "[sc3:cd] f%u %x %x %x\n", get<uint32_t>(rdram, kFrameNumber), getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6));
+            bozo::port::host(runtime).callLibrary(runtime, ctx, kCdRead);
+            ctx->pc = getRegU32(ctx, 31);
         }
 
         void gsDrainWait(uint8_t *, R5900Context *ctx, PS2Runtime *)
@@ -157,6 +182,8 @@ namespace sc3::frame
 
     void install(Registry &runtime)
     {
+        runtime.registerFunction(kInitSys, &initSys);
+        runtime.registerFunction(kCdRead, &cdRead);
         runtime.registerFunction(kGsDrainWait, &gsDrainWait);
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
         runtime.registerFunction(kGsExecStoreImage, &gsDrainWait);
