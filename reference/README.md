@@ -47,8 +47,8 @@ every field for every frame, and their logs differ only in the run name. `menus.
 
 What these records do not cover:
 
-- **Pictures.** With `PS2X_GS_SYNC=1` the window stays blank, so `draws` is the same empty hash on every frame and
-  `drawBatches` is 0. The route was checked by eye in a separate run without `PS2X_GS_SYNC` (`routecheck.env`), which reached
+- **Pictures.** With `PS2X_GS_SYNC=1` the window stays blank, so `drawBatches` and `drawVertices` are 0 on every frame and
+  `draws` says nothing about the picture. The route was checked by eye in a separate run without `PS2X_GS_SYNC` (`routecheck.env`), which reached
   Free Training and the attacks. Its record is not kept: that run is not deterministic.
 - **Timing against a player's run.** EE cycles and the order of GS handshakes are this mode's, not those of a default run.
 - **One-shot movies.** Compare those with pictures and sound. Menu preview movies still start here (`mwPlyStart` files 8-13);
