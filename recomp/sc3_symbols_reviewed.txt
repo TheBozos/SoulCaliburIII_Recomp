@@ -17,3 +17,5 @@ sceMpegGetPicture 0x3e1868     # libmpeg order after sceMpegAddBs; shape 1.00, c
 sceMpegGetPictureRAW8 0x3e18b0 # libmpeg order after sceMpegGetPicture; shape 1.00
 sceMpegReset 0x3e1908          # sceMpegCreate's call in the reference's sceMpegReset place; same -1, 1 loads
 sceCdReadClock 0x425438        # libcdvd; same a0 15, a1 1, t2 16 and scmd call shape as the reference, without its debug prints; called once by libscf
+sceGsSyncVCallback 0x420a00    # libgraph after sceGsExecStoreImage; 0x41fe08 for its params, func 0: DisableIntc(2), RemoveIntcHandler(2, id); else AddIntcHandler(2, func, -1), EnableIntc(2); returns the old func
+sceMcChdir 0x426b28            # libmc after mceStorePwd; the -100 and -200 guards of its neighbours, -210 on an empty path, RPC function 12 with port, slot, path up to 1023 bytes and an out buffer, reply handler mceStorePwd
