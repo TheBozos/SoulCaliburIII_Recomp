@@ -1,10 +1,13 @@
 # SC3 on BozoEngine, next to the PS2Recomp runner until the switch (README.md, "On BozoEngine"). Selected by SC3_BOZO=ON:
 #
 #   cmake -S . -B build/bozo -G Ninja -DSC3_BOZO=ON -DSC3_ELF=<SLUS_212.16> [-DSC3_ISO=<the disc image>]
-#         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>]
+#         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>] [-DSC3_WINDOW=OFF]
 #
 # Targets:
+# - sc3: the game in a window, in real time (BozoEngine's bozo_app: SDL3, OpenGL 3.3; SC3_WINDOW, on by default).
 # - sc3-headless: the game on BozoEngine's free host with no window (every library native, BozoEngine's own timing).
+# - sc3-check: BozoEngine's call-log checker (bozo-run) with SC3's overrides running natively:
+#   sc3-check <log.clg> --pinned --ref <run.ref> ...
 # - sc3_recompile: the generated code alone.
 #
 # The generated code: bozo-recomp with the externals bozo-externals writes from the ELF (the names BozoEngine answers),
@@ -24,6 +27,7 @@ set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functi
 set(SC3_ENTRIES "${CMAKE_SOURCE_DIR}/recomp/sc3_entries.txt" CACHE FILEPATH "Explicit entry points for bozo-recomp --entries")
 set(SC3_GEN_FILES 32 CACHE STRING "How many .cpp files the generated code is split into")
 set(SC3_GEN_OPT "-O1" CACHE STRING "Optimisation of the generated code")
+option(SC3_WINDOW "Build sc3, the game in a window (BozoEngine's bozo_app: SDL3, OpenGL 3.3)" ON)
 if(NOT BOZO_ENGINE_DIR OR NOT EXISTS "${BOZO_ENGINE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "SC3: set BOZO_ENGINE_DIR to BozoEngine's source tree (or git submodule update --init BozoEngine)")
 endif()
@@ -40,7 +44,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(BOZO_TMB_ELF "" CACHE FILEPATH "" FORCE)
-set(BOZO_APP OFF CACHE BOOL "" FORCE)
+set(BOZO_APP ${SC3_WINDOW} CACHE BOOL "" FORCE)
 add_subdirectory("${BOZO_ENGINE_DIR}" bozo)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -118,3 +122,21 @@ add_executable(sc3-headless bozo/sc3_headless.cpp)
 target_link_libraries(sc3-headless PRIVATE sc3_port sc3_generated bozo_host)
 target_compile_definitions(sc3-headless PRIVATE ${sc3_main_defines})
 sc3_static_link(sc3-headless)
+
+# bozo-run's library names the generated tables tmb_*: they are SC3's here.
+if(TARGET bozo_run)
+    add_executable(sc3-check bozo/sc3_check.cpp)
+    target_link_libraries(sc3-check PRIVATE sc3_port sc3_generated bozo_run)
+    target_compile_definitions(sc3-check PRIVATE ${sc3_main_defines})
+    foreach(table function_table function_count resume_table resume_count external_table external_count)
+        target_link_options(sc3-check PRIVATE "LINKER:--defsym=tmb_${table}=sc3_${table}")
+    endforeach()
+    sc3_static_link(sc3-check)
+endif()
+
+if(SC3_WINDOW)
+    add_executable(sc3 bozo/sc3_window.cpp)
+    target_link_libraries(sc3 PRIVATE sc3_port sc3_generated bozo_host bozo_app)
+    target_compile_definitions(sc3 PRIVATE ${sc3_main_defines})
+    sc3_static_link(sc3)
+endif()
