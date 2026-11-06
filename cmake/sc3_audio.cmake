@@ -1,6 +1,6 @@
 # SC3's sound modules (bozo/sound/sc3_audio.h): CRI_ADXI, NUSOUND and SDRDRV translated at build time from the player's disc
 # by BozoEngine's tools/native_irx. Everything generated stays in the build tree. Included by bozo.cmake once its programs exist.
-option(SC3_NATIVE_SOUND "SC3's sound modules translated and run natively (BozoEngine needs sc3/irx-sound: on once the submodule's pin has it)" OFF)
+option(SC3_NATIVE_SOUND "SC3's sound modules translated and run natively " ON)
 if(NOT SC3_NATIVE_SOUND)
     return()
 endif()
