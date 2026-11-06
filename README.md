@@ -303,6 +303,22 @@ player 2:
 
 </details>
 
+## On BozoEngine
+
+The port is moving to [BozoEngine](https://github.com/TheBozos/BozoEngine) (the `BozoEngine` submodule, at a merged engine
+commit), next to the PS2Recomp build until the switch. It compiles and links, but does not boot yet.
+
+```bash
+git submodule update --init BozoEngine
+scripts/bozo_build.sh                 # build/bozo: sc3, sc3-headless, sc3-check (SC3_ELF, SC3_ISO; on Windows: scripts/sc3_build.py)
+scripts/bozo_headless.sh first --frames 300
+```
+
+`-DBOZO_ENGINE_DIR=<tree>` (`sc3_build.py --engine`) builds against another engine tree. `-DSC3_EXTERNALS=<file>`
+generates with `bozo-calllog-tool externals`' list, which `sc3-check --pinned` needs. The program sources are in `bozo/`, the
+recompiler's inputs in `recomp/` (`sc3_stubs.txt`, `sc3_entries.txt`, `sc3_symbols.txt`), and what it is compared with in
+[`reference/`](reference/README.md).
+
 ## Disc facts
 
 | | |
@@ -318,6 +334,8 @@ player 2:
 | Path | Contents |
 |---|---|
 | `PS2Recomp/` | The recompiler and runtime (git submodule, TheBozos/PS2Recomp branch `sc3/windows`) |
+| `BozoEngine/`, `cmake/bozo.cmake`, `bozo/` | The port on BozoEngine: the engine (git submodule), its build (`SC3_BOZO=ON`), the three programs and port code |
+| `reference/` | Hashes and scripts of the reference runs of the PS2Recomp build |
 | `CMakeLists.txt` | Builds the runtime with the generated code and the game overrides linked in |
 | `recomp/` | Recompiler config (`sc3.toml`), the VU programs to lift (`vu1_lift_spec.json`), the Ghidra function map and the entry-point hint lists |
 | `runtime/` | Game override module (`sc3_overrides.cpp`), the native VU1 hooks (`sc3_native.cpp`), the VU1 program ports' entry table (`sc3_vu1_programs.cpp`), the VU0 hook (`sc3_vu0.cpp`), B:0x1388 by hand (`sc3_vu1_port.cpp`) |
