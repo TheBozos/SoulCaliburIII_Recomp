@@ -17,7 +17,12 @@ namespace sc3
     constexpr uint32_t kEntry = 0x100008u;
 
     namespace frame { void install(Registry &runtime); }
-    namespace ot { void install(Registry &runtime); }
+    namespace ot
+    {
+        void install(Registry &runtime);
+        void kick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+        void dropFrame(uint8_t *rdram);
+    }
     namespace twoD { void install(Registry &runtime); }
     namespace meshes { void install(Registry &runtime); }
     namespace textures { void install(Registry &runtime); }
