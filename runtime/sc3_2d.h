@@ -19,4 +19,21 @@ namespace sc3
 
     // The native 2D draws this player's pictures from the host decoder: they need not be written into the game's memory.
     bool native2dMovie(uint32_t handle);
+
+    // GIF chain markers of the native 2D's kind (its marker gate), for other native work placed where a game packet would
+    // have gone: a key (Renderer::drawGsKeyed / passKeyed) linked into the in-order GIF list (0x10F808), the current OT
+    // layer's last bucket (0x10E1F8), a bucket of the current layer by depth (0x10D9A0) or a fixed bucket of the whole
+    // table (0x10DDF8). False when the frame takes no packet there (or the native 2D, whose gate reads them, is off).
+    enum class MarkerPlace
+    {
+        GifList,
+        LayerEnd,
+        LayerDepth,
+        Bucket,
+    };
+    bool nativeMarkers();
+    uint64_t nativeMarkerKey();
+    bool linkNativeMarker(uint64_t key, MarkerPlace place, float depth = 0.0f, int bucket = 0);
+    // The scratchpad's packet half switched, as each packet the game closes switches it (0x10F808 and the insertions).
+    void switchPacketHalf();
 }

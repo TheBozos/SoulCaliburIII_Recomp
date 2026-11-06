@@ -50,6 +50,9 @@
 #                     menu_2d.png (menu_2d_psnr, against menu_2d_off.png) and off again; in the pause menu
 #                     pause_2d_off.png a little after pause.png (pause_2d_floor_psnr), then on for pause_2d.png
 #                     (pause_2d_psnr, against pause.png)
+#   REGRESS_AB_SWITCHES="SC3_NATIVE_GLOW SC3_NATIVE_SHADOWS ..."
+#                     as REGRESS_NATIVE_2D_AB=1 (the same stills and psnr keys, named _2d), the native 2D left on and
+#                     these switches (=@file) turned off and on instead
 #   REGRESS_MENU_SERIES=<n>
 #                     with REGRESS_NATIVE_2D_AB=1: in the main menu and in Single Player Modes, n rounds of four
 #                     stills a presented frame apart, two with the native 2D off and two on (menu_<screen>_<i>_<off|on>.png);
@@ -159,6 +162,11 @@ if [ "${REGRESS_NATIVE_2D_AB:-0}" = 1 ]; then
     native2d_switch=$out/native_2d.switch
     echo 0 > "$native2d_switch"
     export SC3_NATIVE_2D="@$native2d_switch"
+fi
+if [ -n "${REGRESS_AB_SWITCHES:-}" ]; then
+    native2d_switch=$out/ab.switch
+    echo 0 > "$native2d_switch"
+    for v in $REGRESS_AB_SWITCHES; do export "$v=@$native2d_switch"; done
 fi
 texpack_switch=
 if [ -n "${REGRESS_TEXPACK_AB:-}" ] && [ "${REGRESS_TEXPACK_AB}" != 0 ]; then

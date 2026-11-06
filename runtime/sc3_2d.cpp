@@ -1,4 +1,5 @@
 #include "sc3_2d.h"
+#include "sc3_offscreen.h"
 #include "runtime/native/native_texture_pack.h"
 
 #include "ps2_runtime.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -86,6 +88,10 @@ namespace sc3
             bool hasAlpha = false, hasTest = false;
             uint32_t width = 0, height = 0;
             const ps2x::native::NativeTexture *texture = nullptr;
+            // A page that is a render target the game draws (the frame at TBP 0, the glow's half picture at 0x2C40):
+            // drawn natively from the native frame (SC3_NATIVE_FRAME_READS), no texture.
+            ps2x::native::Renderer::TargetPass::Surface surface = ps2x::native::Renderer::TargetPass::Surface::Target;
+            bool readsFrame = false;
         };
 
         struct BuilderStats
@@ -392,6 +398,59 @@ namespace sc3
         }
 
         // A register block inside a loaded leaf, as the 2D pack has it (a page's TEX0 / TEX1 / CLAMP and its texture).
+        struct FrameReads
+        {
+            bool on = false;
+            std::string path;
+            std::chrono::steady_clock::time_point read{};
+            uint64_t items = 0, vertices = 0, glowOff = 0;
+        };
+        FrameReads g_frameReads;
+
+        bool frameReads()
+        {
+            FrameReads &f = g_frameReads;
+            if (f.path.empty())
+                return f.on;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - f.read >= std::chrono::milliseconds(200))
+            {
+                f.read = now;
+                std::ifstream file(f.path);
+                std::string line;
+                f.on = std::getline(file, line) && !line.empty() && line[0] == '1';
+            }
+            return f.on;
+        }
+
+        // A page whose TEX0 is one of the game's render targets: the frame (CT32 / CT24 at TBP 0) or the glow's half
+        // picture (0x2C40, only with the glow native: else the GS draws it there).
+        bool frameReadPage(Page &out)
+        {
+            using Surface = ps2x::native::Renderer::TargetPass::Surface;
+            if (!frameReads())
+                return false;
+            const uint32_t tbp = static_cast<uint32_t>(out.tex0 & 0x3FFFu), psm = static_cast<uint32_t>((out.tex0 >> 20) & 0x3Fu);
+            if (psm > 1u)
+                return false;
+            if (tbp == 0u)
+                out.surface = Surface::Target;
+            else if (tbp == 0x2C40u)
+            {
+                if (!nativeGlowOn())
+                {
+                    ++g_frameReads.glowOff;
+                    return false;
+                }
+                out.surface = Surface::Glow;
+            }
+            else
+                return false;
+            out.readsFrame = true;
+            out.texture = nullptr;
+            return true;
+        }
+
         bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp)
         {
             State &s = g_state;
@@ -489,6 +548,8 @@ namespace sc3
                 }
             }
             if (moviePage(block, out))
+                return true;
+            if (frameReadPage(out))
                 return true;
             ++stats.noTexture;
             ++s.textureMisses[out.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
@@ -3020,17 +3081,69 @@ namespace sc3
         {
             State &s = g_state;
             const auto copy = s.pageCopies.find(block);
-            if (copy == s.pageCopies.end())
-            {
-                ++stats.noBlock;
-                return false;
-            }
-            if (copy->second.resolved)
+            if (copy != s.pageCopies.end() && copy->second.resolved)
             {
                 out = copy->second.resolvedPage;
                 return true;
             }
-            return resolveCopy(copy->second, out, stats);
+            if (copy == s.pageCopies.end())
+                ++stats.noBlock;
+            else if (resolveCopy(copy->second, out, stats))
+                return true;
+            Page target;
+            target.tex1 = peek64(block + 0x10u);
+            target.tex0 = peek64(block + 0x20u);
+            target.clamp = peek64(block + 0x30u);
+            if (!frameReadPage(target))
+                return false;
+            out = target;
+            return true;
+        }
+
+        // A keyed draw of a page that is a render target: the native pass sampling the native frame (or the glow's
+        // picture) where the GS stream reaches the key, s, t in the target's pixels; triangles, or sprites' corners.
+        void drawFrameRead(uint64_t key, const GsMaterial &m, const Page &page, const GsVertex *v, uint32_t count)
+        {
+            using Pass = ps2x::native::Renderer::TargetPass;
+            Pass p;
+            p.kind = Pass::Kind::Sprites;
+            p.surface = page.surface;
+            p.frame = 0x000A0000ull;
+            p.zbuf = 0x1010000D2ull;
+            p.xyoffset = (0x7200ull << 32) | 0x6C00ull;
+            p.triangles = m.prim.type != GS_PRIM_SPRITE;
+            p.blend = m.prim.abe;
+            p.alpha = m.alpha;
+            const uint32_t tfx = static_cast<uint32_t>((page.tex0 >> 35) & 3u);
+            p.modulate = tfx != 1u;
+            p.linear = ((page.tex1 >> 5) & 1u) != 0u;
+            const uint64_t texa = ps2x::native::Renderer::instance().gsTexa();
+            if (((page.tex0 >> 20) & 0x3Fu) == 1u)
+                p.texelAlpha = static_cast<int>(texa & 0xFFu);
+            if (((page.tex0 >> 34) & 1u) == 0u)
+                p.texelAlpha = 0x80;
+            const float tw = static_cast<float>(1u << ((page.tex0 >> 26) & 0xFu)), th = static_cast<float>(1u << ((page.tex0 >> 30) & 0xFu));
+            p.up.assign(v, v + count);
+            for (GsVertex &g : p.up)
+            {
+                if (m.prim.fst)
+                {
+                    uint32_t uv[2];
+                    std::memcpy(&uv[0], &g.s, 4);
+                    std::memcpy(&uv[1], &g.t, 4);
+                    g.s = static_cast<float>(uv[0] & 0x3FFFu) / 16.0f;
+                    g.t = static_cast<float>(uv[1] & 0x3FFFu) / 16.0f;
+                }
+                else
+                {
+                    const float q = g.q != 0.0f ? g.q : 1.0f;
+                    g.s = g.s / q * tw;
+                    g.t = g.t / q * th;
+                }
+            }
+            ++g_frameReads.items;
+            g_frameReads.vertices += count;
+            ps2x::native::Renderer::instance().passKeyed(key, std::move(p));
         }
 
         // The texture file a draw item's head names: +0x14, or for a head-2 item the file its page copy came from.
@@ -3191,7 +3304,9 @@ namespace sc3
                     continue;
                 const uint64_t key = newKey();
                 const std::vector<GsVertex> triangles = stripTriangles(packet);
-                if (!triangles.empty())
+                if (!triangles.empty() && pageRegs.readsFrame)
+                    drawFrameRead(key, m, pageRegs, triangles.data(), static_cast<uint32_t>(triangles.size()));
+                else if (!triangles.empty())
                     ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles.data(), static_cast<uint32_t>(triangles.size()));
                 const Linked linked = insert2d(key, call.mode, packet.depth);
                 if (linked != Linked::Yes && !triangles.empty())
@@ -4791,7 +4906,10 @@ namespace sc3
                 if (sprites)
                 {
                     const GsVertex corners[2] = {stripVertex(o.st[0], o.colour, o.xyz[0]), stripVertex(o.st[1], o.colour, o.xyz[1])};
-                    ps2x::native::Renderer::instance().drawGsKeyed(key, m, corners, 2u);
+                    if (pageRegs.readsFrame)
+                        drawFrameRead(key, m, pageRegs, corners, 2u);
+                    else
+                        ps2x::native::Renderer::instance().drawGsKeyed(key, m, corners, 2u);
                 }
                 else
                 {
@@ -4799,7 +4917,10 @@ namespace sc3
                     for (int i = 0; i < 4; ++i)
                         v[i] = stripVertex(o.st[i], o.colour, o.xyz[i]);
                     const GsVertex triangles[6] = {v[0], v[1], v[2], v[1], v[2], v[3]};
-                    ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles, 6u);
+                    if (pageRegs.readsFrame)
+                        drawFrameRead(key, m, pageRegs, triangles, 6u);
+                    else
+                        ps2x::native::Renderer::instance().drawGsKeyed(key, m, triangles, 6u);
                 }
                 if (insert2d(key, call.mode, o.depth) != Linked::Yes)
                     discardKeyed(key);
@@ -5021,6 +5142,13 @@ namespace sc3
                               static_cast<unsigned long long>(sorted[i].second.first), static_cast<unsigned long long>(sorted[i].second.second));
                 top += item;
             }
+            if (!g_frameReads.path.empty() || g_frameReads.on)
+            {
+                std::fprintf(stderr, "[sc3:2d]   frame reads %s: %llu draws native (%llu vertices), %llu left to the GS (the glow not native)\n",
+                             frameReads() ? "on" : "off", static_cast<unsigned long long>(g_frameReads.items),
+                             static_cast<unsigned long long>(g_frameReads.vertices), static_cast<unsigned long long>(g_frameReads.glowOff));
+                g_frameReads.items = g_frameReads.vertices = g_frameReads.glowOff = 0;
+            }
             std::fprintf(stderr, "[sc3:2d]   2D packets the game still builds: %llu qwords (ra>insert:calls/qwords)%s\n",
                          static_cast<unsigned long long>(qwords), top.c_str());
             s.inserted.clear();
@@ -5102,6 +5230,13 @@ namespace sc3
             std::fprintf(stderr, "[sc3:2d] %s: no leaves\n", leaves.c_str());
             return;
         }
+        if (const char *reads = std::getenv("SC3_NATIVE_FRAME_READS"); reads && *reads && *reads != '0')
+        {
+            if (*reads == '@')
+                g_frameReads.path = reads + 1;
+            else
+                g_frameReads.on = true;
+        }
         if (mode && *mode == '@')
             s.switchPath = mode + 1;
         else
@@ -5156,6 +5291,31 @@ namespace sc3
     }
 
     void setMoviePictures(MoviePicture pictures) { native2d::g_state.moviePictures = pictures; }
+
+    bool nativeMarkers() { return native2d::g_state.installed; }
+
+    uint64_t nativeMarkerKey() { return native2d::newKey(); }
+
+    bool linkNativeMarker(uint64_t key, MarkerPlace place, float depth, int bucket)
+    {
+        using namespace native2d;
+        if (!g_state.installed)
+            return false;
+        switch (place)
+        {
+        case MarkerPlace::GifList:
+            return linkGifListMarker(key);
+        case MarkerPlace::LayerEnd:
+            return linkMarker(key, static_cast<int>(peek32(kRenderer + 0x64u)) - 1, true);
+        case MarkerPlace::LayerDepth:
+            return insert2d(key, 1u, depth) == Linked::Yes;
+        case MarkerPlace::Bucket:
+            return linkMarker(key, bucket);
+        }
+        return false;
+    }
+
+    void switchPacketHalf() { native2d::switchScratchHalf(); }
 
     bool native2dMovie(uint32_t handle)
     {

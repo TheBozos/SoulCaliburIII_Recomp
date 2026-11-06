@@ -4,6 +4,7 @@
 #include "runtime/ee_scheduler.h"
 #include "sc3_census.h"
 #include "sc3_2d.h"
+#include "sc3_offscreen.h"
 #include "sc3_meshes.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/native/native_gs_hook.h"
@@ -1678,6 +1679,7 @@ namespace
         sc3::installTexturePack(runtime, nativeGs);
         sc3::installNativeMeshes(runtime, nativeGs);
         sc3::installNative2d(runtime, nativeGs);
+        sc3::installOffscreen(runtime, nativeGs);
         sc3::setMoviePictures(moviePicture);
         sc3::installCensus(runtime);
         installMovieCounters(runtime);
