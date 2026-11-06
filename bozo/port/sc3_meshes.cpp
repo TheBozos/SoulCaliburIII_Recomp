@@ -140,7 +140,14 @@ namespace sc3
                 uint32_t flags = 0, address = 0, qwc = 0;
                 bool valid = false;
             } clip;
-            std::vector<packs::LoadedImages::Image> copies; // copies of a loaded leaf's model (0x12FE98's), newest last
+            std::map<uint32_t, uint32_t> listBases; // SC3_MESH_TRACE_LISTS: a chain list -> its model's relocation
+            std::set<uint32_t> tracedLists;
+            struct Copy
+            {
+                packs::LoadedImages::Image image; // base: where the leaf's start would be
+                uint32_t to = 0, size = 0;
+            };
+            std::vector<Copy> copies; // copies of a loaded leaf's model (0x12FE98's), newest last
             std::vector<size_t> unflushed; // indices into the draws since the last packet flush
             std::vector<Sc3Draw> pendingDraws;
             Stats stats;
@@ -170,17 +177,17 @@ namespace sc3
 
         void dropCopies(uint32_t address, uint32_t size)
         {
-            std::vector<packs::LoadedImages::Image> &copies = g_state.copies;
-            copies.erase(std::remove_if(copies.begin(), copies.end(), [&](const packs::LoadedImages::Image &c) { return c.base < address + size && address < c.base + c.size; }), copies.end());
+            auto &copies = g_state.copies;
+            copies.erase(std::remove_if(copies.begin(), copies.end(), [&](const State::Copy &c) { return c.to < address + size && address < c.to + c.size; }), copies.end());
         }
 
         bool findImage(uint32_t address, packs::LoadedImages::Image &image)
         {
-            const std::vector<packs::LoadedImages::Image> &copies = g_state.copies;
+            const auto &copies = g_state.copies;
             for (size_t i = copies.size(); i-- > 0;)
-                if (address >= copies[i].base && address < copies[i].base + copies[i].size)
+                if (address >= copies[i].to && address - copies[i].to < copies[i].size)
                 {
-                    image = copies[i];
+                    image = copies[i].image;
                     return true;
                 }
             return g_state.loaded.find(address, image);
@@ -249,6 +256,7 @@ namespace sc3
                 if (leaf->covered >= leaf->size)
                 {
                     s.noFog.erase(s.noFog.lower_bound(base), s.noFog.lower_bound(base + leaf->size));
+                    dropCopies(base, leaf->size);
                     const packs::LoadedImages::Bound bound = s.loaded.bind(s.pack, s.rdram, leaf->name, base, leaf->size, false);
                     leaf->bound = true;
                     if (bound.image.file)
@@ -270,13 +278,15 @@ namespace sc3
             State &s = g_state;
             const uint32_t to = getRegU32(ctx, 4) & kRamMask, from = getRegU32(ctx, 5) & kRamMask, size = getRegU32(ctx, 6);
             packs::LoadedImages::Image image;
-            if (size >= kModelCopyMin && size < 0x2000000u && s.loaded.find(from, image) && image.file && from + size <= image.base + image.size)
+            if (size >= kModelCopyMin && size < 0x2000000u && findImage(from, image) && image.file && from + size <= image.base + image.size)
             {
                 s.noFog.erase(s.noFog.lower_bound(to), s.noFog.lower_bound(to + size));
                 dropCopies(to, size);
-                packs::LoadedImages::Image bound = image;
-                bound.base = to - (from - image.base);
-                bound.size = (from - image.base) + size;
+                State::Copy bound;
+                bound.image = image;
+                bound.image.base = to - (from - image.base);
+                bound.to = to;
+                bound.size = size;
                 s.copies.push_back(bound);
                 ++s.stats.copies;
             }
@@ -312,6 +322,20 @@ namespace sc3
         void relocate(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
+            if (std::getenv("SC3_MESH_TRACE_LISTS"))
+            {
+                const uint32_t offset = getRegU32(ctx, 6);
+                for (uint32_t at = getRegU32(ctx, 4) & kRamMask, n = 0; n < 65536u; ++n)
+                {
+                    const uint32_t word = peek32(at);
+                    const uint32_t command = word & 0xFFu, size = (word >> 8) & 0xFFu;
+                    if (command == 0u || size == 0u)
+                        break;
+                    if (command == 5u)
+                        s.listBases[(peek32(at + 4u) + offset) & kRamMask] = offset & kRamMask;
+                    at += size;
+                }
+            }
             if ((getRegU32(ctx, 7) & 2u) == 0u && (getRegU32(ctx, 9) & 1u) != 0u)
             {
                 const uint32_t offset = getRegU32(ctx, 6);
@@ -1161,6 +1185,9 @@ namespace sc3
             if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != qwc * 16u)
             {
                 ++s.stats.notInPack;
+                if (std::getenv("SC3_MESH_TRACE_LISTS") && s.tracedLists.insert(address).second)
+                    std::fprintf(stderr, "[sc3:mesh] raw part not in the pack: %#x %s +%#x qwc %u flags %#x ra %#x object %s kind %u size %u\n", address, image.file ? image.file->name.c_str() : "(no leaf)", address - image.base, qwc, flags,
+                                 getRegU32(ctx, 31), object ? "yes" : "no", object ? object->kind : 0u, object ? object->attribute<uint32_t>(0) : 0u);
                 return false;
             }
             std::vector<In> in;
@@ -1345,6 +1372,12 @@ namespace sc3
             if (!batches || batches->size < 8u)
             {
                 ++s.stats.chainNotInPack;
+                if (std::getenv("SC3_MESH_TRACE_LISTS") && s.tracedLists.insert(list).second)
+                {
+                    const auto base = s.listBases.find(list);
+                    std::fprintf(stderr, "[sc3:mesh] chain list not in the pack: %#x %s +%#x%s, model base %s%#x, chain object %s kind %u\n", list, image.file ? image.file->name.c_str() : "(no leaf)", list - image.base,
+                                 chain ? " (object)" : "", base == s.listBases.end() ? "unknown " : "+", base == s.listBases.end() ? 0u : base->second - image.base, chain ? "yes" : "no", chain ? chain->kind : 0u);
+                }
                 return false;
             }
             struct Batch
