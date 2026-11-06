@@ -3,6 +3,8 @@
 // linked or sent, and the frame ends in the main loop's Timer 3 wait.
 #include "sc3_port.h"
 
+#include "bozo/app/frame_pacer.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -49,6 +51,16 @@ namespace sc3::frame
         constexpr uint32_t kKickedFrameNumber = 0x0047100Cu;
 
         bool g_frameOpen = false;
+        bozo::app::FramePacer g_pacer;
+
+        void endOfFrame(R5900Context *ctx, PS2Runtime *runtime)
+        {
+            movies::tick(runtime);
+            g_pacer.setCap(60u);
+            g_pacer.setPaced(bozo::port::realTime(runtime));
+            g_pacer.frameEnd();
+            bozo::port::frameEnd(runtime, ctx);
+        }
 
         template <typename T>
         T get(const uint8_t *rdram, uint32_t address)
@@ -78,9 +90,8 @@ namespace sc3::frame
             const uint32_t caller = *reinterpret_cast<uint32_t *>(rdram + (getRegU32(ctx, 29) & 0x1FFFFFFu));
             if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
             {
-                movies::tick(runtime);
                 ot::presentAlone();
-                bozo::port::frameEnd(runtime, ctx);
+                endOfFrame(ctx, runtime);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;
             }
@@ -176,8 +187,7 @@ namespace sc3::frame
             if (g_frameOpen && getRegU32(ctx, 31) == kFrameEndReturn)
             {
                 g_frameOpen = false;
-                movies::tick(runtime);
-                bozo::port::frameEnd(runtime, ctx);
+                endOfFrame(ctx, runtime);
             }
             func_0x148098(rdram, ctx, runtime);
         }
