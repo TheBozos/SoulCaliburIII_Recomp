@@ -68,6 +68,10 @@ namespace sc3
         return "";
     }
 
+    // A frame that ends with no wait of its own (a movie's, in ADXM's sleep) still takes a field of EE time: what the game's
+    // threads, the mixer and a deterministic movie clock run on.
+    constexpr uint64_t kFramePeriodCycles = bozo::port::kEeClockHz * 1001u / 60000u;
+
     // PLAN's exit criterion: no guest code on a normal route reaches a register answered with no device behind it. The
     // count is 0 at release; the sites come with --profile-io.
     inline void reportAcknowledged(const bozo::host::FreeStats &stats)

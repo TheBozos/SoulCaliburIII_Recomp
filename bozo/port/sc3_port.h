@@ -8,6 +8,8 @@
 #include "bozo/recomp.h"
 #include "sc3_functions.h"
 
+#include <vector>
+
 using PS2Runtime = Runtime;
 
 namespace sc3
@@ -27,6 +29,14 @@ namespace sc3
     namespace meshes { void install(Registry &runtime); }
     namespace textures { void install(Registry &runtime); }
     namespace vu0 { void install(Registry &runtime); }
-    namespace movies { void install(Registry &runtime); }
+    namespace movies
+    {
+        void install(Registry &runtime);
+        // At every frame end: the movies' clocks, pictures and soundtracks.
+        void tick(PS2Runtime *runtime);
+        // A smaller movie's current picture by Sofdec handle, for the 2D builders: RGBA rows, nothing copied while `known` is
+        // its number.
+        bool picture(PS2Runtime *runtime, uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number);
+    }
     namespace audio { void install(Registry &runtime); }
 }

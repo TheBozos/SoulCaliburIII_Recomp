@@ -78,6 +78,7 @@ namespace sc3::frame
             const uint32_t caller = *reinterpret_cast<uint32_t *>(rdram + (getRegU32(ctx, 29) & 0x1FFFFFFu));
             if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
             {
+                movies::tick(runtime);
                 bozo::port::frameEnd(runtime, ctx);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;
@@ -174,6 +175,7 @@ namespace sc3::frame
             if (g_frameOpen && getRegU32(ctx, 31) == kFrameEndReturn)
             {
                 g_frameOpen = false;
+                movies::tick(runtime);
                 bozo::port::frameEnd(runtime, ctx);
             }
             func_0x148098(rdram, ctx, runtime);
