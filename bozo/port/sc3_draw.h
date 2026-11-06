@@ -90,7 +90,7 @@ namespace sc3
         // The key's batches as one draw of the ordering table (taken: the key is free again).
         ot::Draw takeKeyed(uint64_t key);
         // The Renderer's material and triangles of a GS draw: the sprites and lines as two triangles.
-        void toRenderer(const GsMaterial &material, const GsVertex *vertices, uint32_t count, bozo::render::Material &out,
+        void toRenderer(GsMaterial &material, const GsVertex *vertices, uint32_t count, bozo::render::Material &out,
                         std::vector<bozo::render::Vertex> &triangles);
         extern const float kIdentity[16];
     }

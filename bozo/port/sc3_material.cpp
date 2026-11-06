@@ -50,7 +50,7 @@ namespace sc3::draw
     {
         struct Mapping
         {
-            float scaleU = 1.0f, scaleV = 1.0f;
+            float scaleU = 1.0f, scaleV = 1.0f, offsetU = 0.0f, offsetV = 0.0f;
             bool decal = false;
         };
 
@@ -61,8 +61,8 @@ namespace sc3::draw
             v.y = g.y;
             v.z = static_cast<float>(z);
             const float q = g.q != 0.0f ? g.q : 1.0f;
-            v.u = g.s / q * map.scaleU;
-            v.v = g.t / q * map.scaleV;
+            v.u = g.s / q * map.scaleU - map.offsetU;
+            v.v = g.t / q * map.scaleV - map.offsetV;
             v.q = q > 0.0f ? q : 1.0f;
             v.rgba = map.decal ? 0x80808080u : rgba;
             v.fog = g.fog;
@@ -120,6 +120,56 @@ namespace sc3::draw
             out.push_back(toVertex(c, map, c.rgba, c.z));
         }
 
+        struct Window
+        {
+            uint32_t first = 0, size = 0;
+            bool clamp = false;
+        };
+
+        // CLAMP's mode and fields along one axis, against the image's size: the texels the draw addresses.
+        Window windowOf(uint32_t mode, uint32_t min, uint32_t max, uint32_t size)
+        {
+            Window w;
+            w.size = size;
+            if (mode == 3u) // REGION_REPEAT: (u & MIN) | MAX
+            {
+                w.first = std::min(max, size - 1u);
+                w.size = std::min(min + 1u, size - w.first);
+            }
+            else if (mode == 2u) // REGION_CLAMP: MIN..MAX
+            {
+                w.first = std::min(min, size - 1u);
+                w.size = std::min(max >= min ? max - min + 1u : 1u, size - w.first);
+                w.clamp = true;
+            }
+            else
+                w.clamp = mode == 1u;
+            return w;
+        }
+
+        using TexturePtr = std::shared_ptr<const bozo::render::Texture>;
+
+        // A window smaller than the image is an image of its own, kept for the program's life: only then does the GPU's wrap do
+        // what the GS's addressing does.
+        TexturePtr windowImage(const TexturePtr &image, const Window &u, const Window &v, uint64_t clamp)
+        {
+            static std::map<std::pair<uint64_t, uint64_t>, TexturePtr> windows;
+            const std::pair<uint64_t, uint64_t> key{image->key, clamp};
+            const auto it = windows.find(key);
+            if (it != windows.end())
+                return it->second;
+            auto out = std::make_shared<bozo::render::Texture>();
+            out->width = u.size;
+            out->height = v.size;
+            out->rgba.resize(static_cast<size_t>(u.size) * v.size);
+            for (uint32_t y = 0; y < v.size; ++y)
+                for (uint32_t x = 0; x < u.size; ++x)
+                    out->rgba[static_cast<size_t>(y) * u.size + x] = image->rgba[static_cast<size_t>(v.first + y) * image->width + u.first + x];
+            out->key = (image->key * 0x9E3779B97F4A7C15ull) ^ clamp;
+            windows.emplace(key, out);
+            return out;
+        }
+
         // TEST as the Renderer has it. AFAIL RGB_ONLY with ATST NEVER is a write mask (0x3001): RGB written, not alpha or Z.
         void fromTest(uint64_t test, Material &m)
         {
@@ -145,11 +195,10 @@ namespace sc3::draw
         }
     }
 
-    void toRenderer(const GsMaterial &gs, const GsVertex *in, uint32_t count, Material &m, std::vector<Vertex> &out)
+    void toRenderer(GsMaterial &gs, const GsVertex *in, uint32_t count, Material &m, std::vector<Vertex> &out)
     {
         Mapping map;
-        const std::shared_ptr<const bozo::render::Texture> &texture = gs.texture;
-        m.textured = gs.prim.tme && texture;
+        m.textured = gs.prim.tme && gs.texture;
         m.blend = gs.prim.abe ? Material::Blend::Alpha : Material::Blend::Opaque;
         m.alphaBlend = gs.prim.abe;
         if (gs.prim.abe)
@@ -169,16 +218,25 @@ namespace sc3::draw
             fromTest(gs.test, m);
         if (m.textured)
         {
-            m.tex0 = texture->key;
+            const TexturePtr image = gs.texture;
+            const uint32_t width = image->width, height = image->height;
+            const uint64_t clamp = gs.clamp;
+            const Window u = windowOf(static_cast<uint32_t>(clamp & 3u), static_cast<uint32_t>((clamp >> 4) & 0x3FFu), static_cast<uint32_t>((clamp >> 14) & 0x3FFu), width);
+            const Window v = windowOf(static_cast<uint32_t>((clamp >> 2) & 3u), static_cast<uint32_t>((clamp >> 24) & 0x3FFu), static_cast<uint32_t>((clamp >> 34) & 0x3FFu), height);
             map.decal = gs.tex0.tfx == 1u;
-            if (texture->width != 0u && texture->height != 0u)
+            if (u.size != width || v.size != height)
+                gs.texture = windowImage(image, u, v, clamp);
+            m.tex0 = gs.texture->key;
+            if (width != 0u && height != 0u)
             {
-                map.scaleU = static_cast<float>(1u << std::min(gs.tex0.tw, 10u)) / static_cast<float>(texture->width);
-                map.scaleV = static_cast<float>(1u << std::min(gs.tex0.th, 10u)) / static_cast<float>(texture->height);
+                map.scaleU = static_cast<float>(1u << std::min(gs.tex0.tw, 10u)) / static_cast<float>(u.size);
+                map.scaleV = static_cast<float>(1u << std::min(gs.tex0.th, 10u)) / static_cast<float>(v.size);
+                map.offsetU = static_cast<float>(u.first) / static_cast<float>(u.size);
+                map.offsetV = static_cast<float>(v.first) / static_cast<float>(v.size);
             }
             m.nearest = ((gs.tex1 >> 5) & 1u) == 0u;
-            m.clampU = (gs.clamp & 3u) != 0u;
-            m.clampV = ((gs.clamp >> 2) & 3u) != 0u;
+            m.clampU = u.clamp;
+            m.clampV = v.clamp;
         }
         out.clear();
         const bool shaded = gs.prim.iip;
@@ -226,8 +284,9 @@ namespace sc3::draw
     void drawKeyed(uint64_t key, const GsMaterial &material, const GsVertex *vertices, uint32_t count)
     {
         KeyedBatch batch;
-        toRenderer(material, vertices, count, batch.material, batch.vertices);
-        batch.texture = material.texture;
+        GsMaterial gs = material;
+        toRenderer(gs, vertices, count, batch.material, batch.vertices);
+        batch.texture = gs.texture;
         g_keyed[key].push_back(std::move(batch));
     }
 

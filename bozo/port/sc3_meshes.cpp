@@ -843,12 +843,23 @@ namespace sc3
             std::vector<GsVertex> triangles;
             toTriangles(prim, *out, triangles);
             s.stats.triangles += triangles.size() / 3u;
-            draw.texture = material.texture;
             material.prim.type = GS_PRIM_TRIANGLE;
             toRenderer(material, triangles.data(), static_cast<uint32_t>(triangles.size()), draw.material, draw.vertices);
+            draw.texture = material.texture;
             const uint64_t alpha = material.alpha & 0xFFu;
             draw.material.depthWrite = !material.prim.abe || alpha == 0x0Au || alpha == 0x58u;
             draw.material.fogColour = fogColour();
+            static const uint64_t dumpFrame = std::getenv("SC3_MESH_DUMP") ? std::strtoull(std::getenv("SC3_MESH_DUMP"), nullptr, 10) : ~0ull;
+            if (s.frames == dumpFrame && !draw.vertices.empty())
+            {
+                float u0 = 1e9f, u1 = -1e9f, v0 = 1e9f, v1 = -1e9f, q0 = 1e9f, q1 = -1e9f;
+                for (const bozo::render::Vertex &v : draw.vertices)
+                    u0 = std::min(u0, v.u), u1 = std::max(u1, v.u), v0 = std::min(v0, v.v), v1 = std::max(v1, v.v), q0 = std::min(q0, v.q), q1 = std::max(q1, v.q);
+                std::fprintf(stderr, "[sc3:mesh] dump routine %#x prim %#x tex0 %#llx tw %u th %u psm %#x tex %ux%u clamp %#llx tex1 %#llx alpha %#llx test %#llx u %g..%g v %g..%g q %g..%g verts %zu\n", routine, prim,
+                             static_cast<unsigned long long>(s.material.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
+                             static_cast<unsigned long long>(material.clamp), static_cast<unsigned long long>(material.tex1), static_cast<unsigned long long>(material.alpha), static_cast<unsigned long long>(material.test),
+                             u0, u1, v0, v1, q0, q1, draw.vertices.size());
+            }
             return true;
         }
 
