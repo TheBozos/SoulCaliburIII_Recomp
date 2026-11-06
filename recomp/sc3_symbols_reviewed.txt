@@ -1,0 +1,19 @@
+# SC3's library functions named by reading the code, where bozo_symbolmap.py's automatic tiers stop at a candidate
+# (SDK 3.0 rewrote them beyond a word-level match with the 2.8 reference). Each line says why; none comes from any
+# other tool's names. Input of `bozo_symbolmap.py match --reviewed`, which refuses a line contradicting its own matches.
+# Regenerate recomp/sc3_symbols.txt with BozoEngine's tools/symbolmap/bozo_symbolmap.py:
+#   match SLUS_212.16 --ref <CoN>/SLUS_205.65 --ref <CoN>/NTGUI2.ELF --reviewed recomp/sc3_symbols_reviewed.txt --out recomp/sc3_symbols.txt
+scePadGetDmaStr 0x422060       # libpad order after scePadPortClose; all 10 libpad readers call it, as they call scePadGetDmaStr; constants 112, 28
+scePadRead 0x422210            # libpad order after scePadGetFrameCount; 0x422060 then memcpy to the third argument, the one game call at 0x130a4c
+scePadGetState 0x422288        # libpad order before scePadStateIntToStr; same 112, 28, 99, 6, 2, 5 loads as the reference
+scePadSetReqState 0x422338     # libpad order after scePadStateIntToStr; all 4 pad requests call it; 112, 28, then stores the state in the DMA block
+scePadInfoAct 0x422480         # libpad order after scePadReqIntToStr; same 112, 28, 1, -1, 2, 3, 4 loads, shape 0.87
+scePadInfoComb 0x422598        # libpad order after scePadInfoAct; same 112, 28, 1, -1, 2 loads, shape 0.89
+scePadInfoMode 0x4226b0        # libpad order before scePadSetMainMode; shape 0.95, called by the game's pad set-up just before scePadSetMainMode
+scePadSetActDirect 0x4228a0    # libpad order between scePadSetMainMode and scePadSetActAlign; shape 0.98, calls send_to_iop
+sceMpegCreate 0x3e0bc8         # calls memset, _Error, _alalcInit, _alalcAlloc, _alalcSetDynamic as the reference; "The size of work area is too small"
+sceMpegDelete 0x3e1820         # the two-word return between sceMpegInit and sceMpegAddBs, as in the reference's order
+sceMpegGetPicture 0x3e1868     # libmpeg order after sceMpegAddBs; shape 1.00, called by the movie player
+sceMpegGetPictureRAW8 0x3e18b0 # libmpeg order after sceMpegGetPicture; shape 1.00
+sceMpegReset 0x3e1908          # sceMpegCreate's call in the reference's sceMpegReset place; same -1, 1 loads
+sceCdReadClock 0x425438        # libcdvd; same a0 15, a1 1, t2 16 and scmd call shape as the reference, without its debug prints; called once by libscf
