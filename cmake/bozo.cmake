@@ -25,6 +25,7 @@ if(NOT SC3_ELF AND EXISTS "${CMAKE_SOURCE_DIR}/game/SLUS_212.16")
 endif()
 set(SC3_ISO "" CACHE FILEPATH "SC3's disc image, the default of the programs' --iso")
 set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functions (name 0xADDR lines), given to bozo-externals and bozo-recomp --symbols and to the free host")
+set(SC3_EXTERNALS "" CACHE FILEPATH "An externals list to generate with instead of bozo-externals' (bozo-calllog-tool externals: a pinned check needs the reference's stubs)")
 set(SC3_ENTRIES "${CMAKE_SOURCE_DIR}/recomp/sc3_entries.txt" CACHE FILEPATH "Explicit entry points for bozo-recomp --entries")
 set(SC3_GEN_FILES 32 CACHE STRING "How many .cpp files the generated code is split into")
 set(SC3_GEN_OPT "-O1" CACHE STRING "Optimisation of the generated code")
@@ -74,11 +75,15 @@ if(SC3_SYMBOL_MAP)
     list(APPEND externals_args --symbols "${SC3_SYMBOL_MAP}")
     list(APPEND externals_depends "${SC3_SYMBOL_MAP}")
 endif()
-add_custom_command(
-    OUTPUT ${externals}
-    COMMAND bozo-externals ${SC3_ELF} ${externals} ${externals_args}
-    DEPENDS bozo-externals ${externals_depends} ${SC3_ELF}
-    COMMENT "Writing the externals list")
+if(SC3_EXTERNALS)
+    set(externals "${SC3_EXTERNALS}")
+else()
+    add_custom_command(
+        OUTPUT ${externals}
+        COMMAND bozo-externals ${SC3_ELF} ${externals} ${externals_args}
+        DEPENDS bozo-externals ${externals_depends} ${SC3_ELF}
+        COMMENT "Writing the externals list")
+endif()
 
 set(gen_files ${gen_dir}/sc3_functions.h ${gen_dir}/sc3_table.cpp)
 math(EXPR last "${SC3_GEN_FILES} - 1")
