@@ -79,6 +79,7 @@ namespace sc3::frame
             if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
             {
                 movies::tick(runtime);
+                ot::presentAlone();
                 bozo::port::frameEnd(runtime, ctx);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;

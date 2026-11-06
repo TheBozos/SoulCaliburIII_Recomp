@@ -24,6 +24,8 @@ namespace sc3
         void install(Registry &runtime);
         void kick(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
         void dropFrame(uint8_t *rdram);
+        // A frame with no kick (a movie's): presents what the renderer holds.
+        void presentAlone();
     }
     namespace twoD { void install(Registry &runtime); }
     namespace meshes { void install(Registry &runtime); }
