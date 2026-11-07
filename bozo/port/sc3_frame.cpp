@@ -36,6 +36,8 @@ namespace sc3::frame
 
         // Where recomp/sc3_patches.txt points the game's CSR FIELD reads: the kernel's unused pages, below the image.
         constexpr uint32_t kFieldWord = 0x000FFFF0u;
+        // And the handler's read of the lines.
+        constexpr uint32_t kVblankLinesWord = 0x000FFFF8u;
 
         // VIF0, VIF1 and GIF: wait, sends and stops of the driver at 0x10C9D0-0x10CED0.
         constexpr uint32_t kChannelDriver[] = {0x0010C9D0u, 0x0010CA00u, 0x0010CA78u, 0x0010CAE0u,
@@ -89,6 +91,7 @@ namespace sc3::frame
         void vblankHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             noteField(rdram, runtime);
+            put<uint32_t>(rdram, kVblankLinesWord, clock::lines(runtime, ctx));
             func_0x12cf38(rdram, ctx, runtime);
         }
 
@@ -195,7 +198,8 @@ namespace sc3::frame
                 g_frameOpen = false;
                 endOfFrame(rdram, ctx, runtime);
             }
-            func_0x148098(rdram, ctx, runtime);
+            setReturnU32(ctx, clock::linesSinceVblank(rdram, ctx, runtime));
+            ctx->pc = getRegU32(ctx, 31);
         }
     }
 
