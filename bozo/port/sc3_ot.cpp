@@ -121,6 +121,8 @@ namespace sc3::ot
                 std::vector<Draw> &bucket = frame.buckets[b];
                 for (size_t i = bucket.size(); i-- > 0;)
                 {
+                    if (!bucket[i])
+                        continue;
                     bucket[i](renderer);
                     ++frame.draws;
                 }
