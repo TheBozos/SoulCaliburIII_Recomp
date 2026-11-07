@@ -68,6 +68,7 @@ namespace sc3
         struct List
         {
             std::string name;
+            uint32_t index = 0;
             std::vector<uint32_t> sources;
             const std::vector<bozo::render::packs::TextureRecord> *records = nullptr;
             std::vector<Key> keys;

@@ -108,6 +108,7 @@ namespace sc3
                 return false;
             List &list = m_lists.emplace_back();
             list.name = name;
+            list.index = l;
             list.records = m_pack.file(name);
             Leaf &leaf = leaves[offset];
             leaf.offset = offset;
@@ -171,6 +172,11 @@ namespace sc3
                 std::memcpy(palette, records[record].texels.data(), std::min<size_t>(sizeof(palette), records[record].texels.size()));
         }
 
+        uint64_t stableId(const TextureKeys::List &list, const TextureKeys::Key &key)
+        {
+            return (1ull << 62) | (static_cast<uint64_t>(list.index) << 24) | static_cast<uint64_t>(&key - list.keys.data());
+        }
+
         TexturePtr decodeInto(const TextureKeys::Key &key, const bozo::render::packs::TextureRecord &texels, const uint32_t (&palette)[256], uint64_t id)
         {
             auto image = std::make_shared<bozo::render::Texture>();
@@ -188,7 +194,7 @@ namespace sc3
         {
             uint32_t palette[256];
             texture_keys::packPalette(*list.records, key.palette, palette);
-            decoded = m_decoded.emplace(&key, texture_keys::decodeInto(key, (*list.records)[key.texels], palette, reinterpret_cast<uintptr_t>(&key))).first;
+            decoded = m_decoded.emplace(&key, texture_keys::decodeInto(key, (*list.records)[key.texels], palette, texture_keys::stableId(list, key))).first;
         }
         return decoded->second->rgba.empty() ? nullptr : decoded->second;
     }
@@ -201,7 +207,7 @@ namespace sc3
         Live &live = m_live[{&key, game.leaf}];
         if (live.frame == game.frame)
             return live.texture;
-        const bool texelsDue = live.frame == ~0ull || ((game.frame + (reinterpret_cast<uintptr_t>(&key) >> 4)) & 7u) == 0u;
+        const bool texelsDue = live.frame == ~0ull || ((game.frame + texture_keys::stableId(list, key)) & 7u) == 0u;
         live.frame = game.frame;
         ++m_liveStats.checked;
         const auto at = [&](uint32_t offset, uint32_t bytes) -> const uint8_t *
@@ -250,7 +256,7 @@ namespace sc3
             return live.texture = decoded(list, key);
         ++m_liveStats.palettes;
         uint64_t id = (static_cast<uint64_t>(texture_keys::kCrc32(0u, reinterpret_cast<const uint8_t *>(palette), sizeof(palette))) << 32) ^
-                      reinterpret_cast<uintptr_t>(&key);
+                      texture_keys::stableId(list, key);
         id = (id ^ (id >> 30)) * 0xBF58476D1CE4E5B9ull;
         id = (id ^ (id >> 27)) * 0x94D049BB133111EBull;
         id = (id ^ (id >> 31)) | (1ull << 63);
