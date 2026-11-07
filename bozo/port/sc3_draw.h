@@ -82,6 +82,9 @@ namespace sc3
             uint64_t tex1 = 0, clamp = 0, alpha = 0x44u, test = 0;
             bool testFromTarget = false; // TEST as the draws before it left it
             std::shared_ptr<const bozo::render::Texture> texture;
+            // A page the game drew rather than uploaded: 0 the frame so far, else the Renderer's target of that number; its size in GS pixels.
+            int8_t frameSource = -1;
+            uint16_t sourceWidth = 0, sourceHeight = 0;
         };
 
         // A builder's batches, kept by a key until the game's link call says where they go (or discard).
@@ -185,6 +188,8 @@ namespace sc3
 
     namespace offscreen
     {
+        // The glow's half-size picture (FBP 0x162, TBP 0x2C40), the target it is drawn in.
+        constexpr uint8_t kGlowHalf = 1u;
         void install(Registry &runtime);
         void frameDone();
         // The game's last pass on a frame (0x141C80's builders, FBP 0x8C): the frame through Highlight2 with the colour

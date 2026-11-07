@@ -202,7 +202,7 @@ namespace sc3::draw
     void toRenderer(GsMaterial &gs, const GsVertex *in, uint32_t count, Material &m, std::vector<Vertex> &out)
     {
         Mapping map;
-        m.textured = gs.prim.tme && gs.texture;
+        m.textured = gs.prim.tme && (gs.texture || gs.frameSource >= 0);
         m.blend = gs.prim.abe ? Material::Blend::Alpha : Material::Blend::Opaque;
         m.alphaBlend = gs.prim.abe;
         if (gs.prim.abe)
@@ -222,7 +222,30 @@ namespace sc3::draw
             fromTest(gs.test, m);
         else if (gs.prim.ctxt)
             fromTest(kTest2, m);
-        if (m.textured)
+        if (m.textured && !gs.texture)
+        {
+            m.textureFunction = static_cast<Material::TextureFunction>(gs.tex0.tfx);
+            m.textureAlpha = gs.tex0.tcc != 0u && gs.tex0.psm != 1u;
+            m.nearest = ((gs.tex1 >> 5) & 1u) == 0u;
+            m.clampU = m.clampV = true;
+            m.tex0 = 0u;
+            if (gs.frameSource == 0)
+            {
+                m.sampleTarget = true;
+                map.scaleU = static_cast<float>(1u << std::min(gs.tex0.tw, 10u));
+                map.scaleV = static_cast<float>(1u << std::min(gs.tex0.th, 10u));
+            }
+            else
+            {
+                m.fromFrame = 1u;
+                m.source = static_cast<uint8_t>(gs.frameSource);
+                m.frameWidth = gs.sourceWidth;
+                m.frameHeight = gs.sourceHeight;
+                map.scaleU = static_cast<float>(1u << std::min(gs.tex0.tw, 10u)) / static_cast<float>(gs.sourceWidth);
+                map.scaleV = static_cast<float>(1u << std::min(gs.tex0.th, 10u)) / static_cast<float>(gs.sourceHeight);
+            }
+        }
+        else if (m.textured)
         {
             const TexturePtr image = gs.texture;
             const uint32_t width = image->width, height = image->height;

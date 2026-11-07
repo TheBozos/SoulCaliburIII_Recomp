@@ -38,6 +38,7 @@ namespace sc3
         // of a file's upload to those pixels (pixels, file, call, page).
         constexpr uint32_t kMovieCopy = 0x00217E28u, kFilePixels = 0x00118B68u;
         constexpr uint64_t kMovieKey = 1ull << 63;
+        constexpr uint32_t kGlowPage = 0x2C40u;
         constexpr uint32_t kMovieSlots = 3u; // pictures a draw may still be waiting to use from the GS thread
         constexpr uint32_t kGameStart = 0x00100008u;
         constexpr uint32_t kLabels = 0x001388E8u;
@@ -86,6 +87,8 @@ namespace sc3
             bool hasAlpha = false, hasTest = false;
             uint32_t width = 0, height = 0;
             std::shared_ptr<const bozo::render::Texture> texture;
+            int8_t frameSource = -1;
+            uint16_t sourceWidth = 0, sourceHeight = 0;
         };
 
         struct BuilderStats
@@ -169,7 +172,7 @@ namespace sc3
             MoviePicture moviePictures = nullptr;
             std::map<uint32_t, Movie> movies;
             std::map<uint32_t, uint32_t> movieDests, moviePages;
-            uint64_t movieCopiesSkipped = 0, movieTextures = 0, movieChecks = 0, movieTexelsDiffering = 0;
+            uint64_t movieCopiesSkipped = 0, movieTextures = 0, movieChecks = 0, movieTexelsDiffering = 0, frameTextures = 0;
         };
 
         std::optional<State> g_owner{std::in_place};
@@ -332,6 +335,7 @@ namespace sc3
         // the one the file's own uploads write (decoded on first use, kept for the program's life).
         bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp);
         bool moviePage(uint32_t block, Page &out);
+        bool framePage(Page &out);
 
         bool page(uint32_t file, uint32_t index, Page &out, BuilderStats &stats, uint32_t cbp = ~0u)
         {
@@ -444,7 +448,7 @@ namespace sc3
                     return true;
                 }
             }
-            if (moviePage(block, out))
+            if (moviePage(block, out) || framePage(out))
                 return true;
             ++stats.noTexture;
             ++s.textureMisses[out.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
@@ -488,6 +492,19 @@ namespace sc3
                 return false;
             out.texture = std::move(picture);
             ++s.movieTextures;
+            return true;
+        }
+
+        // A CT32 / CT24 page at TBP 0 (the frame) or 0x2C40 (the glow's half picture, FBP 0x162): what the game drew there.
+        bool framePage(Page &out)
+        {
+            const uint32_t tbp = static_cast<uint32_t>(out.tex0 & 0x3FFFu), psm = static_cast<uint32_t>((out.tex0 >> 20) & 0x3Fu);
+            if (psm > 1u || (tbp != 0u && tbp != kGlowPage))
+                return false;
+            out.frameSource = tbp == 0u ? 0 : static_cast<int8_t>(offscreen::kGlowHalf);
+            out.sourceWidth = tbp == 0u ? 640u : 320u;
+            out.sourceHeight = tbp == 0u ? 448u : 224u;
+            ++g_state.frameTextures;
             return true;
         }
 
@@ -683,6 +700,9 @@ namespace sc3
             m.alpha = alpha;
             m.testFromTarget = true;
             m.texture = page.texture;
+            m.frameSource = page.frameSource;
+            m.sourceWidth = page.sourceWidth;
+            m.sourceHeight = page.sourceHeight;
             return m;
         }
 
@@ -4109,8 +4129,9 @@ namespace sc3
                 misses += item;
             }
             s.textureMisses.clear();
-            std::fprintf(stderr, "[sc3:2d] 250 frames: leaves bound %llu (not the pack's %llu);%s\n", static_cast<unsigned long long>(s.bound),
-                         static_cast<unsigned long long>(s.boundBad), misses.empty() ? " no texture misses" : misses.c_str());
+            std::fprintf(stderr, "[sc3:2d] 250 frames: leaves bound %llu (not the pack's %llu), frame pages %llu;%s\n", static_cast<unsigned long long>(s.bound),
+                         static_cast<unsigned long long>(s.boundBad), static_cast<unsigned long long>(s.frameTextures), misses.empty() ? " no texture misses" : misses.c_str());
+            s.frameTextures = 0;
             const auto builder = [](const char *name, BuilderStats &b)
             {
                 if (b.calls != 0u)

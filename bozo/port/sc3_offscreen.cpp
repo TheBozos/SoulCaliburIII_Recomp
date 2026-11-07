@@ -19,7 +19,7 @@ namespace sc3::offscreen
         constexpr uint32_t kStoreImage = 0x0013BDF0u;
         constexpr float kOffsetX = 2048.0f - 320.0f - 0.5f, kOffsetY = 2048.0f - 224.0f - 0.5f;
         constexpr uint32_t kGlowLayerEnd = 0x001725C0u, kGlowBufferBuild = 0x001705B0u, kGlowBufferDraw = 0x00172E90u;
-        constexpr uint8_t kHalf = 1u, kQuarter = 2u, kBlur = 3u;
+        constexpr uint8_t kHalf = kGlowHalf, kQuarter = 2u, kBlur = 3u;
 
         constexpr uint32_t kShadowSetup = 0x001F70E0u, kShadowVolumes = 0x001F8598u, kShadowResolve = 0x001F7530u, kShadowDarken = 0x001F6C48u;
         constexpr uint32_t kEnvSlot = 0x00144198u, kColourLerp = 0x00102FA0u, kColourBytes = 0x0011AAF8u, kMatrixMul = 0x00101058u;
