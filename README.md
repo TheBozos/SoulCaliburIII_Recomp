@@ -110,7 +110,8 @@ python3 scripts/sc3_build.py --disc "/path/to/Soulcalibur III (USA).iso" --out ~
 modules), builds BozoEngine's recompiler, generates the code, converts the packs, compiles `sc3` and stages a game
 folder: `sc3`, `SLUS_212.16`, `sc3_symbols.txt`, `packs/`, `disc.iso` (a hard link to your image when it can) and
 `play_sc3.sh` (`Play SC3.cmd` on Windows). Each step is skipped when its inputs did not change; `--check` only checks a
-disc. On 8 threads a build from nothing takes about 18 minutes, 15 of them the packs.
+disc. On 8 threads (Ryzen 7 7800X3D) a build from nothing took 649 s, 550 of them the packs; the work folder takes
+8.9 GB.
 
 | Key | |
 |---|---|
