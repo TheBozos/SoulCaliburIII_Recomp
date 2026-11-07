@@ -521,8 +521,8 @@ namespace sc3
             // A:0x1AB8: three lights (vf20-22) and, instead of a fourth, a highlight from the fourth normal lane
             // (vf24-26.w) offset by vf15.zw, clamped, scaled by vf16.zw (w at most vf16.y) and added as vf23 * 128.
             bool highlight = false;
-            // A:0x450 / A:0xF68 / A:0x768: a vertex also gets bit 15 when the triangle it ends faces away (as B:0x15E8); A:0x768
-            // is A:0x450 without fog.
+            // A:0x450 / A:0xF68 / A:0x768 / A:0x1268: a vertex also gets bit 15 when the triangle it ends faces away (as B:0x15E8);
+            // A:0x768 is A:0x450 without fog, A:0x1268 A:0xC18 culled.
             bool cull = false;
         };
 
@@ -543,6 +543,7 @@ namespace sc3
             case 0x450u: shade = {true, true, false, false, false, true}; return true;
             case 0xF68u: shade = {false, true, false, false, false, true}; return true;
             case 0x768u: shade = {true, false, false, false, false, true}; return true;
+            case 0x1268u: shade = {false, false, false, false, false, true}; return true;
             default: return false;
             }
         }
