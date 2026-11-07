@@ -5,7 +5,8 @@
 
 namespace sc3::meshes
 {
-    void frameDone();
+    void frameStart();
+        void frameDone();
     void noteRequest(R5900Context *ctx);
     void noteReadBefore(uint8_t *rdram, R5900Context *ctx);
     void noteReadAfter(uint8_t *rdram, R5900Context *ctx);

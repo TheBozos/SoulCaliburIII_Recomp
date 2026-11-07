@@ -8,6 +8,7 @@
 #include "sc3_draw.h"
 
 #include <cmath>
+#include <cstring>
 #include <initializer_list>
 #include <map>
 
@@ -16,7 +17,7 @@ namespace sc3::offscreen
     namespace
     {
         constexpr uint32_t kStoreImage = 0x0013BDF0u;
-        constexpr float kOffsetX = 2048.0f - 320.0f, kOffsetY = 2048.0f - 224.0f;
+        constexpr float kOffsetX = 2048.0f - 320.0f - 0.5f, kOffsetY = 2048.0f - 224.0f - 0.5f;
         constexpr uint32_t kGlowLayerEnd = 0x001725C0u, kGlowBufferBuild = 0x001705B0u, kGlowBufferDraw = 0x00172E90u;
         constexpr uint8_t kHalf = 1u, kQuarter = 2u, kBlur = 3u;
 
@@ -24,6 +25,15 @@ namespace sc3::offscreen
         constexpr uint32_t kEnvSlot = 0x00144198u, kColourLerp = 0x00102FA0u, kColourBytes = 0x0011AAF8u, kMatrixMul = 0x00101058u;
         constexpr uint32_t kShadowFlags = 0x004F8403u, kShadowWanted = 0x004F8402u, kGame = 0x0046DB10u, kView = 0x0046DA88u;
         constexpr uint32_t kSpr = 0x70000000u;
+        constexpr uint32_t kDisplay = 0x00469234u, kDisplayCopy = 0x00141C80u;
+        constexpr float kFadeOn = 1.0f / 255.0f;
+
+        uint32_t load32(const uint8_t *rdram, uint32_t address)
+        {
+            uint32_t value = 0;
+            std::memcpy(&value, rdram + (address & 0x01FFFFFFu), 4u);
+            return value;
+        }
 
         uint8_t *g_rdram = nullptr, *g_spr = nullptr;
         uint64_t g_frames = 0, g_glows = 0, g_setups = 0, g_volumes = 0, g_volumesDropped = 0, g_triangles = 0, g_darkens = 0;
@@ -480,6 +490,41 @@ namespace sc3::offscreen
             g_spr = bozo::port::scratchpad(runtime);
             Hook(rdram, ctx, runtime);
         }
+    }
+
+    void displayCopy(uint8_t *rdram, bozo::render::Renderer &renderer)
+    {
+        if (ot::hidden(kDisplayCopy))
+            return;
+        const uint32_t display = load32(rdram, kDisplay);
+        if (display == 0u)
+            return;
+        bozo::render::Material copy = targetCopy(0u, 0u);
+        copy.nearest = true;
+        copy.textureFunction = bozo::render::Material::TextureFunction::Highlight2;
+        float fade = 0.0f;
+        std::memcpy(&fade, rdram + display + 0xE0u, 4u);
+        copy.fog = fade > kFadeOn;
+        copy.fogColour = load32(rdram, display + 0x60u);
+        bozo::render::Vertex v[6];
+        const float corners[6][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 0}, {1, 1}, {0, 1}};
+        for (int i = 0; i < 6; ++i)
+        {
+            v[i].x = kOffsetX + corners[i][0] * 640.0f;
+            v[i].y = kOffsetY + corners[i][1] * 448.0f;
+            v[i].u = corners[i][0];
+            v[i].v = corners[i][1];
+            v[i].rgba = load32(rdram, display + 0x64u);
+            v[i].fog = static_cast<float>(load32(rdram, display + 0x68u) & 0xFFu) / 255.0f;
+        }
+        renderer.draw(copy, draw::kIdentity, v, 6u);
+        // 1, 2, 1 over three lines: the copy samples half a line up (v 0 on bilinear), PMODE 0x8063 averages DISPFB1 (DBY 1) and DISPFB2.
+        bozo::render::Material line = targetCopy(0u, 0u);
+        line.nearest = true;
+        line.gsBlend = true;
+        line.blendA = 0u, line.blendB = 1u, line.blendC = 2u, line.blendD = 1u, line.blendFix = 0x40u;
+        wholeTarget(renderer, line, 0x80808080u, 0.0f, 1.0f / 448.0f);
+        wholeTarget(renderer, line, 0x80808080u, 0.0f, -1.0f / 448.0f);
     }
 
     void frameDone()

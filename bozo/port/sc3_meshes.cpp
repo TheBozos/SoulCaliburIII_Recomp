@@ -35,6 +35,7 @@ namespace sc3
         constexpr uint32_t kRawPartTail = 0x00109990u;
         constexpr uint32_t kChainPart = 0x0010A4E8u;
         constexpr uint32_t kPacketFlush = 0x0010F8B8u;
+        constexpr uint32_t kRegisterPacket = 0x001276E8u;
         constexpr uint32_t kOtInsertDepth = 0x0010D9A0u;
         constexpr uint32_t kOtInsertFixed = 0x0010DC90u;
         constexpr uint32_t kClipper = 0x0010B970u;
@@ -91,6 +92,7 @@ namespace sc3
             bozo::render::Material material;
             std::vector<bozo::render::Vertex> vertices;
             std::shared_ptr<const bozo::render::Texture> texture;
+            bool secondContext = false;
         };
 
         struct Leaf
@@ -870,8 +872,7 @@ namespace sc3
             material.prim.type = GS_PRIM_TRIANGLE;
             toRenderer(material, triangles.data(), static_cast<uint32_t>(triangles.size()), draw.material, draw.vertices);
             draw.texture = material.texture;
-            const uint64_t alpha = material.alpha & 0xFFu;
-            draw.material.depthWrite = !material.prim.abe || alpha == 0x0Au || alpha == 0x58u;
+            draw.secondContext = material.prim.ctxt;
             draw.material.fogColour = fogColour();
             static const uint64_t dumpFrame = std::getenv("SC3_MESH_DUMP") ? std::strtoull(std::getenv("SC3_MESH_DUMP"), nullptr, 10) : ~0ull;
             if (s.frames == dumpFrame && !draw.vertices.empty())
@@ -1428,6 +1429,21 @@ namespace sc3
             callOriginal(kChainPart, rdram, ctx, runtime);
         }
 
+        // ZBUF_1's ZMSK where the game's list writes it (0x1276E8, in the VIF1 list), for the draws played after it.
+        bool g_depthMasked = false;
+
+        void registerPacket(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t reg = getRegU32(ctx, 4);
+            const uint64_t value = getRegU32(ctx, 5) | (static_cast<uint64_t>(ctx->r[5].uw[1]) << 32);
+            func_0x1276e8(rdram, ctx, runtime);
+            if (reg == 0x4Eu)
+            {
+                const bool masked = ((value >> 32) & 1u) != 0u;
+                ot::appendVif(rdram, [masked](bozo::render::Renderer &) { g_depthMasked = masked; });
+            }
+        }
+
         ot::Draw asDraw(Sc3Draw &&part)
         {
             auto held = std::make_shared<Sc3Draw>(std::move(part));
@@ -1435,6 +1451,7 @@ namespace sc3
             {
                 if (held->vertices.empty())
                     return;
+                held->material.depthWrite = !held->secondContext && !g_depthMasked;
                 if (held->texture)
                     renderer.draw(held->material, kIdentity, held->vertices.data(), static_cast<uint32_t>(held->vertices.size()), held->texture);
                 else
@@ -1561,6 +1578,8 @@ namespace sc3
     }
     }
 
+    void meshes::frameStart() { g_depthMasked = false; }
+
     void meshes::frameDone()
     {
         if (g_ready)
@@ -1632,6 +1651,7 @@ namespace sc3
         runtime.registerFunction(kClipper, &hooked<clipper>);
         runtime.registerFunction(kClipEmit, &hooked<clipEmit>);
         runtime.registerFunction(kPacketFlush, &hooked<packetFlush>);
+        runtime.registerFunction(kRegisterPacket, &hooked<registerPacket>);
         runtime.registerFunction(kOtInsertDepth, &hooked<otInsertDepth>);
         runtime.registerFunction(kOtInsertFixed, &hooked<otInsertFixed>);
         std::fprintf(stderr, "[sc3:mesh] native meshes: %s, %zu leaves, %zu objects\n", path, s.pack.files().size(), s.pack.objectCount());
