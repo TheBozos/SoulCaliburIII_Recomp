@@ -85,6 +85,7 @@ namespace sc3::frame
             g_pacer.setCap(60u);
             g_pacer.setPaced(bozo::port::realTime(runtime));
             g_pacer.frameEnd();
+            ot::holdStill();
             bozo::port::frameEnd(runtime, ctx);
             noteField(rdram, runtime);
         }

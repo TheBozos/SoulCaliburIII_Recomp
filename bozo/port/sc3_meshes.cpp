@@ -734,7 +734,7 @@ namespace sc3
                 v.x = static_cast<float>(static_cast<uint32_t>(o.xyz[0]) & 0xFFFFu) / 16.0f;
                 v.y = static_cast<float>(static_cast<uint32_t>(o.xyz[1]) & 0xFFFFu) / 16.0f;
                 v.z = (static_cast<uint32_t>(o.xyz[2]) >> 4) & 0xFFFFFFu;
-                v.fog = static_cast<uint8_t>((o.w >> 4) & 0xFFu);
+                v.fog = static_cast<float>((o.w >> 4) & 0xFFu) / 255.0f;
                 if (++queued < 3u)
                     continue;
                 if ((o.w & 0x8000u) == 0u)

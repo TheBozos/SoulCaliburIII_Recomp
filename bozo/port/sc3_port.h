@@ -33,6 +33,8 @@ namespace sc3
         void dropFrame(uint8_t *rdram);
         // A frame with no kick (a movie's): presents what the renderer holds.
         void presentAlone();
+        void holdStill();
+        bool hidden(uint32_t address);
     }
     namespace twoD { void install(Registry &runtime); }
     namespace meshes { void install(Registry &runtime); }

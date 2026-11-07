@@ -160,6 +160,14 @@ namespace sc3::offscreen
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        void sunFlare(uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
+        {
+            if (ot::hidden(0x00163650u))
+                returnFrom(ctx);
+            else
+                func_0x163650(rdram, ctx, runtime);
+        }
+
         void storeImage(uint8_t *rdram, R5900Context *ctx, Runtime *)
         {
             const int32_t x = getRegS32(ctx, 7), y = getRegS32(ctx, 8);
@@ -196,6 +204,11 @@ namespace sc3::offscreen
 
         void glowBufferDraw(uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
         {
+            if (ot::hidden(kGlowBufferDraw))
+            {
+                returnFrom(ctx);
+                return;
+            }
             const auto it = g_glowBuffers.find(peek32(getRegU32(ctx, 4) + 0x50u));
             if (it == g_glowBuffers.end())
             {
@@ -445,6 +458,8 @@ namespace sc3::offscreen
             const uint32_t colour = callGame(kColourBytes, rdram, ctx, runtime, {mixed}, 255.0f);
             setRegU32(ctx, 29, sp + 0x60u);
             ++g_darkens;
+            if (ot::hidden(0x001F6C48u))
+                return;
             ot::appendGif(rdram, [colour](bozo::render::Renderer &renderer)
                           {
                               bozo::render::Material m;
@@ -487,5 +502,6 @@ namespace sc3::offscreen
         runtime.registerFunction(kGlowLayerEnd, &hooked<glowLayerEnd>);
         runtime.registerFunction(kGlowBufferBuild, &hooked<glowBufferBuild>);
         runtime.registerFunction(kGlowBufferDraw, &hooked<glowBufferDraw>);
+        runtime.registerFunction(0x00163650u, &hooked<sunFlare>);
     }
 }
