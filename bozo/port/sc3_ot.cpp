@@ -58,7 +58,7 @@ namespace sc3::ot
 
         struct FrameMirror
         {
-            List gif, vif;
+            List gif, vif[2]; // the VIF1 list by 0x10EA38's selector (kRenderer + 0x8C): 0 is played before 1
             std::vector<std::vector<Draw>> buckets = std::vector<std::vector<Draw>>(kBuckets);
             std::vector<uint32_t> usedBuckets;
             uint64_t draws = 0;
@@ -70,6 +70,8 @@ namespace sc3::ot
             bool ready = false;
             uint64_t kicks = 0, drawsSinceReport = 0, batchesSinceReport = 0, emptyKicks = 0;
         } g_state;
+
+        uint32_t selectedVif(const uint8_t *rdram) { return word(rdram, kRenderer + 0x8Cu) & 1u; }
 
         FrameMirror &building(const uint8_t *rdram) { return g_state.frames[word(rdram, kRenderer + 0x38u) & 1u]; }
 
@@ -91,7 +93,7 @@ namespace sc3::ot
             if (channel == 1u)
                 ++frame.gif.current;
             else if (channel == 2u)
-                ++frame.vif.current;
+                ++frame.vif[selectedVif(rdram)].current;
             func_0x10f9d0(rdram, ctx, runtime);
         }
 
@@ -140,17 +142,25 @@ namespace sc3::ot
 
         void walk(FrameMirror &frame, bozo::render::Renderer &renderer)
         {
-            const size_t segments = std::max(frame.gif.segments.size(), frame.vif.segments.size());
+            const size_t segments = std::max({frame.gif.segments.size(), frame.vif[0].segments.size(), frame.vif[1].segments.size()});
+            size_t lastOfFirst = 0;
+            for (size_t i = 0; i < frame.vif[0].segments.size(); ++i)
+                if (!frame.vif[0].segments[i].empty())
+                    lastOfFirst = i;
             for (size_t s = 0; s < segments; ++s)
             {
                 if (s < frame.gif.segments.size())
                     drawList(frame, renderer, frame.gif.segments[s]);
-                if (s < frame.vif.segments.size())
-                    drawList(frame, renderer, frame.vif.segments[s]);
+                if (s < frame.vif[0].segments.size())
+                    drawList(frame, renderer, frame.vif[0].segments[s]);
+                if (s == lastOfFirst)
+                    for (std::vector<ListEntry> &segment : frame.vif[1].segments)
+                        drawList(frame, renderer, segment);
             }
             drawBuckets(frame, renderer, 0u, kBuckets);
             frame.gif.reset();
-            frame.vif.reset();
+            frame.vif[0].reset();
+            frame.vif[1].reset();
         }
     }
 
@@ -191,7 +201,7 @@ namespace sc3::ot
             return false;
         ListEntry entry;
         entry.draw = std::move(draw);
-        building(rdram).vif.add(std::move(entry));
+        building(rdram).vif[selectedVif(rdram)].add(std::move(entry));
         return true;
     }
 
@@ -211,7 +221,8 @@ namespace sc3::ot
     {
         FrameMirror &frame = g_state.frames[(word(rdram, kRenderer + 0x80u) & 0xFFFFu) & 1u];
         frame.gif.reset();
-        frame.vif.reset();
+        frame.vif[0].reset();
+        frame.vif[1].reset();
         for (std::vector<Draw> &bucket : frame.buckets)
             bucket.clear();
     }
@@ -266,6 +277,7 @@ namespace sc3::ot
         }
         FrameMirror &frame = s.frames[(word(rdram, kRenderer + 0x80u) & 0xFFFFu) & 1u];
         frame.draws = 0;
+        meshes::frameStart();
         walk(frame, renderer);
         offscreen::displayCopy(rdram, renderer);
         renderer.endFrame();

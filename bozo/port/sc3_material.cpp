@@ -2,7 +2,6 @@
 // triangles.
 #include "sc3_draw.h"
 
-#include <cstdio>
 #include <cstdlib>
 
 #include <algorithm>
@@ -278,18 +277,6 @@ namespace sc3::draw
         }
         if (m.textured)
         {
-            static const char *const look = std::getenv("SC3_LOOK_TBP");
-            static int looks = 0;
-            if (look && std::strtoul(look, nullptr, 16) == gs.tex0.tbp && looks < 40)
-            {
-                ++looks;
-                std::fprintf(stderr, "[sc3:look] tbp %#x psm %#x prim %u abe %d alpha %#llx test %#llx tcc %u tfx %u tex %ux%u key %#llx clamp %#llx n %u:", gs.tex0.tbp, gs.tex0.psm, static_cast<uint32_t>(gs.prim.type), gs.prim.abe,
-                             static_cast<unsigned long long>(gs.alpha), static_cast<unsigned long long>(gs.test), gs.tex0.tcc, gs.tex0.tfx, gs.texture->width, gs.texture->height, static_cast<unsigned long long>(gs.texture->key),
-                             static_cast<unsigned long long>(gs.clamp), count);
-                for (uint32_t i = 0; i < count && i < 12u; ++i)
-                    std::fprintf(stderr, " %08x", in[i].rgba);
-                std::fprintf(stderr, "\n");
-            }
             static const char *const hide = std::getenv("SC3_HIDE_TBP");
             if (hide)
                 for (const char *p = hide; *p;)
