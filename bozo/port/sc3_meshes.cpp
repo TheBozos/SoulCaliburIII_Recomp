@@ -975,8 +975,9 @@ namespace sc3
             bool highlight = true, cull = false, orVi3 = false, environment = false;
             // B:0x910: the colour times h12 with no lights, the texture coordinates scrolled by h4; B:0x1A40: B:0x1CA8's
             // environment map. Both fogged: the guard's w clamped (h16.x / h15.y, or h9.x / h9.y) in place of vi3. B:0xB78:
-            // B:0x910 with no fog.
+            // B:0x910 with no fog. B:0xD8: B:0x350 fogged, clamped to h15.x / h15.y.
             bool fog = false, unlit = false;
+            int fogMost = 16;
         };
 
         bool skinRoutine(uint32_t routine, Skinning &k)
@@ -992,6 +993,7 @@ namespace sc3
             case 0x910u: k = {false, false, false, false, true, true}; return true;
             case 0xB78u: k = {false, false, false, false, false, true}; return true;
             case 0x1A40u: k = {false, false, false, true, true, false}; return true;
+            case 0xD8u: k = {false, false, false, false, true, false, 15}; return true;
             default: return false;
             }
         }
@@ -1132,7 +1134,7 @@ namespace sc3
                 o.s = (kind.unlit ? h.f(4, 0) + st[0] * h.f(18, 0) : st[0] * h.f(18, 0)) * qv;
                 o.t = (kind.unlit ? h.f(4, 1) + st[1] * h.f(18, 1) : st[1] * h.f(18, 1)) * qv;
                 o.q = qv;
-                finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(16, 0), h.f(15, 1)) : vi3);
+                finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(kind.fogMost, 0), h.f(15, 1)) : vi3);
             }
             return true;
         }
