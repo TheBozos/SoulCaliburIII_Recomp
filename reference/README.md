@@ -65,3 +65,12 @@ What these records do not cover:
       reference/scripts/run.sh boot 2400 ref_boot.env
 
 Compare with BozoEngine's `tools/capture/ref_compare.py` and `calllog_read.py <log> compare <other>`.
+
+## Stills at one frame (`ab/`)
+
+A fight compared with main needs one game state on both builds. `route_frames.txt` already fixes the stage (Lost Cathedral: the Right at 5220) and the characters (Zasalamel, Tira), and a pad script keyed on game frames puts both builds in the same fight within a frame or so; `ab/route_ab.txt` is that route, cut after 8640 and paused at 8700.
+
+- Reference: `ab/reference_hold_frames.patch` on the reference runner's `EeScheduler.cpp`: `PS2X_HOLD_FRAMES=n,n,..` stands the game at those frames' ends and saves the window as `held_<n>.png` (with `PS2X_CAPTURE_WINDOW_DIR`). `routecheck.env`'s settings, no `PS2X_GS_SYNC`.
+- Port: `sc3 --no-sound --pad-script ab/route_ab.txt --capture-dir d --capture-frames n,n,..` with `SC3_HOLD_FRAMES=n,n,..` and `SC3_NO_MOVIES=1`: the game runs faster than the window presents, the hold gives the capture that frame's picture.
+- Both window sizes must match (the compositor tiles: one game window at a time); `ab/cmp.py a b prefix` crops each to its 4:3 picture, resizes to 640x448 and gives the PSNR. `ab/curve.py` gives the tone curve between two stills.
+- Floors: two reference runs against each other. `SC3_HIDE_EE=0x172e90,0x163650` hides the object glow and the sun flare on both builds (0x1f6c48, the shadows' darkening, on the port).
