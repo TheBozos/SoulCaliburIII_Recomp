@@ -19,6 +19,13 @@ namespace sc3
     constexpr uint32_t kEntry = 0x100008u;
 
     namespace frame { void install(Registry &runtime); }
+    namespace clock
+    {
+        void install(Registry &runtime);
+        // The horizontal blanks so far, 16 bits; reading the same count again charges a line (a poll takes time).
+        uint32_t lines(PS2Runtime *runtime, R5900Context *ctx);
+        uint32_t linesSinceVblank(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+    }
     namespace packet
     {
         void install(Registry &runtime);

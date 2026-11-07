@@ -186,5 +186,8 @@ namespace sc3
     {
         void install(Registry &runtime);
         void frameDone();
+        // The game's last pass on a frame (0x141C80's builders, FBP 0x8C): the frame through Highlight2 with the colour
+        // 0x13D130 computes, faded by fog.
+        void displayCopy(uint8_t *rdram, bozo::render::Renderer &renderer);
     }
 }
