@@ -932,7 +932,7 @@ static void drawTitle(float x, float y)
 {
     ui::glowText(ImVec2(x, y), "Soulcalibur III", 52, ui::color::ink, 1.0f, true, 1.0f);
     const float h = ui::measure("Soulcalibur III", 52, 1.0f).y;
-    ui::glowText(ImVec2(x + S(2), y + h + S(2)), L("PC port \xE2\x80\x94 your own disc required", "Portage PC \xE2\x80\x94 votre propre disque requis"),
+    ui::glowText(ImVec2(x + S(2), y + h + S(2)), L("PC port, your own disc required", "Portage PC, votre propre disque requis"),
                  19, ui::color::inkDim, 1.2f, false, 0);
 }
 
