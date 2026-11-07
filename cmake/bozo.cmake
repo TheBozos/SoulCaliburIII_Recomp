@@ -80,8 +80,9 @@ if(SC3_EXTERNALS)
 else()
     add_custom_command(
         OUTPUT ${externals}
-        COMMAND bozo-externals ${SC3_ELF} ${externals} ${externals_args}
-        DEPENDS bozo-externals ${externals_depends} ${SC3_ELF}
+        COMMAND bozo-externals ${SC3_ELF} ${externals}.base ${externals_args}
+        COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/sc3_externals_all_transfers.py" ${externals}.base ${externals}
+        DEPENDS bozo-externals ${externals_depends} ${SC3_ELF} "${CMAKE_SOURCE_DIR}/scripts/sc3_externals_all_transfers.py"
         COMMENT "Writing the externals list")
 endif()
 

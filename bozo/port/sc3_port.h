@@ -19,6 +19,13 @@ namespace sc3
     constexpr uint32_t kEntry = 0x100008u;
 
     namespace frame { void install(Registry &runtime); }
+    namespace packet
+    {
+        void install(Registry &runtime);
+        void copyScratchpad(PS2Runtime *runtime, uint32_t ram, uint32_t scratchpad, uint32_t quadwords, bool toScratchpad);
+        void closeDepth(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+        void closeFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
+    }
     namespace ot
     {
         void install(Registry &runtime);

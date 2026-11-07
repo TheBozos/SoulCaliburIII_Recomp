@@ -5,8 +5,8 @@
 
 #include "bozo/app/frame_pacer.h"
 
+#include <cstdio>
 #include <cstring>
-#include <stdexcept>
 
 namespace sc3::frame
 {
@@ -29,6 +29,13 @@ namespace sc3::frame
         constexpr uint32_t kFromScratchpadStop = 0x0010CF88u;
         constexpr uint32_t kToScratchpadWait = 0x0010CFC8u;
         constexpr uint32_t kToScratchpad = 0x0010CFF8u;
+        constexpr uint32_t kSetDisplay = 0x00127908u;
+        constexpr uint32_t kSetDisplayFields = 0x00127980u;
+        constexpr uint32_t kVblankHandler = 0x0012CF38u;
+        constexpr uint32_t kFileUpload = 0x001177E0u;
+
+        // Where recomp/sc3_patches.txt points the game's CSR FIELD reads: the kernel's unused pages, below the image.
+        constexpr uint32_t kFieldWord = 0x000FFFF0u;
 
         // VIF0, VIF1 and GIF: wait, sends and stops of the driver at 0x10C9D0-0x10CED0.
         constexpr uint32_t kChannelDriver[] = {0x0010C9D0u, 0x0010CA00u, 0x0010CA78u, 0x0010CAE0u,
@@ -50,16 +57,6 @@ namespace sc3::frame
         bool g_frameOpen = false;
         bozo::app::FramePacer g_pacer;
 
-        void endOfFrame(R5900Context *ctx, PS2Runtime *runtime)
-        {
-            movies::tick(runtime);
-            g_pacer.setCap(60u);
-            g_pacer.setPaced(bozo::port::realTime(runtime));
-            g_pacer.frameEnd();
-            ot::holdStill();
-            bozo::port::frameEnd(runtime, ctx);
-        }
-
         template <typename T>
         T get(const uint8_t *rdram, uint32_t address)
         {
@@ -72,6 +69,39 @@ namespace sc3::frame
         void put(uint8_t *rdram, uint32_t address, T v) { std::memcpy(rdram + address, &v, sizeof(T)); }
 
         void answered(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
+
+        // The intermittent fault at 0x117808 (STATUS.md, not reproduced on demand): a file with no entries says who passed it.
+        void fileUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t file = getRegU32(ctx, 5);
+            if (file >= 0x100000u && file < 0x2000000u && rdram[file + 5u] == 0u && rdram[file + 7u] == 0u)
+                std::fprintf(stderr, "[sc3:frame] 0x1177E0 file 0x%x has no entries: index %u, packet 0x%x, ra 0x%x, frame %u, words %08x %08x %08x %08x\n", file,
+                             getRegU32(ctx, 6), getRegU32(ctx, 4), getRegU32(ctx, 31), get<uint32_t>(rdram, kFrameNumber), get<uint32_t>(rdram, file),
+                             get<uint32_t>(rdram, file + 4u), get<uint32_t>(rdram, file + 8u), get<uint32_t>(rdram, file + 12u));
+            func_0x1177e0(rdram, ctx, runtime);
+        }
+
+        void noteField(uint8_t *rdram, PS2Runtime *runtime)
+        {
+            put<uint64_t>(rdram, kFieldWord, (bozo::port::vblankCount(runtime) & 1u) << 13);
+        }
+
+        void vblankHandler(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            noteField(rdram, runtime);
+            func_0x12cf38(rdram, ctx, runtime);
+        }
+
+        void endOfFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            movies::tick(runtime);
+            g_pacer.setCap(60u);
+            g_pacer.setPaced(bozo::port::realTime(runtime));
+            g_pacer.frameEnd();
+            ot::holdStill();
+            bozo::port::frameEnd(runtime, ctx);
+            noteField(rdram, runtime);
+        }
 
         // The rest of _InitSys is the kernel's and the timer library's, native. Its first call makes the two library locks
         // that guest code goes on using (0x5792F8, 0x5792FC: the stdio list at 0x42B358).
@@ -89,7 +119,7 @@ namespace sc3::frame
             if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
             {
                 ot::presentAlone();
-                endOfFrame(ctx, runtime);
+                endOfFrame(rdram, ctx, runtime);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;
             }
@@ -110,27 +140,15 @@ namespace sc3::frame
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        void copyScratchpad(PS2Runtime *runtime, uint32_t ram, uint32_t scratchpad, uint32_t quadwords, bool toScratchpad)
-        {
-            for (uint32_t i = 0; i < quadwords; ++i, ram += 16u, scratchpad += 16u)
-            {
-                uint8_t *r = runtime->memory.hostPointer(ram, 16);
-                uint8_t *s = runtime->memory.hostPointer(0x70000000u | (scratchpad & 0x3FF0u), 16);
-                if (!r || !s)
-                    throw std::runtime_error("sc3: scratchpad copy outside memory");
-                std::memcpy(toScratchpad ? s : r, toScratchpad ? r : s, 16);
-            }
-        }
-
         void fromScratchpad(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
         {
-            copyScratchpad(runtime, getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6) & 0xFFFFu, false);
+            packet::copyScratchpad(runtime, getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6) & 0xFFFFu, false);
             ctx->pc = getRegU32(ctx, 31);
         }
 
         void toScratchpad(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
         {
-            copyScratchpad(runtime, getRegU32(ctx, 5), getRegU32(ctx, 4), getRegU32(ctx, 6) & 0xFFFFu, true);
+            packet::copyScratchpad(runtime, getRegU32(ctx, 5), getRegU32(ctx, 4), getRegU32(ctx, 6) & 0xFFFFu, true);
             ctx->pc = getRegU32(ctx, 31);
         }
 
@@ -175,7 +193,7 @@ namespace sc3::frame
             if (g_frameOpen && getRegU32(ctx, 31) == kFrameEndReturn)
             {
                 g_frameOpen = false;
-                endOfFrame(ctx, runtime);
+                endOfFrame(rdram, ctx, runtime);
             }
             func_0x148098(rdram, ctx, runtime);
         }
@@ -198,6 +216,10 @@ namespace sc3::frame
         runtime.registerFunction(kToScratchpadWait, &answered);
         runtime.registerFunction(kToScratchpad, &toScratchpad);
         runtime.registerFunction(kElapsedLines, &elapsedLines);
+        runtime.registerFunction(kSetDisplay, &answered);
+        runtime.registerFunction(kSetDisplayFields, &answered);
+        runtime.registerFunction(kVblankHandler, &vblankHandler);
+        runtime.registerFunction(kFileUpload, &fileUpload);
         runtime.registerFunction(kAdxmVsyncSleep, &adxmVsyncSleep);
     }
 }

@@ -1484,14 +1484,14 @@ namespace sc3
                 s.unflushed.clear();
                 s.pendingDraws.clear();
             }
-            func_0x10d9a0(rdram, ctx, runtime);
+            packet::closeDepth(rdram, ctx, runtime);
         }
 
         void otInsertFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const float z = ps2_fmul(ctx->f[12], 0.12f);
             linkUnflushed(rdram, ps2FpuCvtWS(z < 1.0f ? ps2_fmul(z, otScale()) : otScale()));
-            func_0x10dc90(rdram, ctx, runtime);
+            packet::closeFixed(rdram, ctx, runtime);
         }
         void report()
         {
