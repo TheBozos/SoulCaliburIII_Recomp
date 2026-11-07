@@ -5,6 +5,7 @@
 
 #include "bozo/app/frame_pacer.h"
 
+#include <cstdio>
 #include <cstring>
 
 namespace sc3::frame
@@ -31,6 +32,7 @@ namespace sc3::frame
         constexpr uint32_t kSetDisplay = 0x00127908u;
         constexpr uint32_t kSetDisplayFields = 0x00127980u;
         constexpr uint32_t kVblankHandler = 0x0012CF38u;
+        constexpr uint32_t kFileUpload = 0x001177E0u;
 
         // Where recomp/sc3_patches.txt points the game's CSR FIELD reads: the kernel's unused pages, below the image.
         constexpr uint32_t kFieldWord = 0x000FFFF0u;
@@ -67,6 +69,17 @@ namespace sc3::frame
         void put(uint8_t *rdram, uint32_t address, T v) { std::memcpy(rdram + address, &v, sizeof(T)); }
 
         void answered(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
+
+        // The intermittent fault at 0x117808 (STATUS.md, not reproduced on demand): a file with no entries says who passed it.
+        void fileUpload(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t file = getRegU32(ctx, 5);
+            if (file >= 0x100000u && file < 0x2000000u && rdram[file + 5u] == 0u && rdram[file + 7u] == 0u)
+                std::fprintf(stderr, "[sc3:frame] 0x1177E0 file 0x%x has no entries: index %u, packet 0x%x, ra 0x%x, frame %u, words %08x %08x %08x %08x\n", file,
+                             getRegU32(ctx, 6), getRegU32(ctx, 4), getRegU32(ctx, 31), get<uint32_t>(rdram, kFrameNumber), get<uint32_t>(rdram, file),
+                             get<uint32_t>(rdram, file + 4u), get<uint32_t>(rdram, file + 8u), get<uint32_t>(rdram, file + 12u));
+            func_0x1177e0(rdram, ctx, runtime);
+        }
 
         void noteField(uint8_t *rdram, PS2Runtime *runtime)
         {
@@ -206,6 +219,7 @@ namespace sc3::frame
         runtime.registerFunction(kSetDisplay, &answered);
         runtime.registerFunction(kSetDisplayFields, &answered);
         runtime.registerFunction(kVblankHandler, &vblankHandler);
+        runtime.registerFunction(kFileUpload, &fileUpload);
         runtime.registerFunction(kAdxmVsyncSleep, &adxmVsyncSleep);
     }
 }
