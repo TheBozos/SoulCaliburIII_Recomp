@@ -8,6 +8,7 @@
 #include "sc3_draw.h"
 
 #include <cmath>
+#include <cstring>
 #include <initializer_list>
 #include <map>
 
@@ -24,6 +25,15 @@ namespace sc3::offscreen
         constexpr uint32_t kEnvSlot = 0x00144198u, kColourLerp = 0x00102FA0u, kColourBytes = 0x0011AAF8u, kMatrixMul = 0x00101058u;
         constexpr uint32_t kShadowFlags = 0x004F8403u, kShadowWanted = 0x004F8402u, kGame = 0x0046DB10u, kView = 0x0046DA88u;
         constexpr uint32_t kSpr = 0x70000000u;
+        constexpr uint32_t kDisplay = 0x00469234u, kDisplayCopy = 0x00141C80u;
+        constexpr float kFadeOn = 1.0f / 255.0f;
+
+        uint32_t load32(const uint8_t *rdram, uint32_t address)
+        {
+            uint32_t value = 0;
+            std::memcpy(&value, rdram + (address & 0x01FFFFFFu), 4u);
+            return value;
+        }
 
         uint8_t *g_rdram = nullptr, *g_spr = nullptr;
         uint64_t g_frames = 0, g_glows = 0, g_setups = 0, g_volumes = 0, g_volumesDropped = 0, g_triangles = 0, g_darkens = 0;
@@ -480,6 +490,34 @@ namespace sc3::offscreen
             g_spr = bozo::port::scratchpad(runtime);
             Hook(rdram, ctx, runtime);
         }
+    }
+
+    void displayCopy(uint8_t *rdram, bozo::render::Renderer &renderer)
+    {
+        if (ot::hidden(kDisplayCopy))
+            return;
+        const uint32_t display = load32(rdram, kDisplay);
+        if (display == 0u)
+            return;
+        bozo::render::Material copy = targetCopy(0u, 0u);
+        copy.nearest = true;
+        copy.textureFunction = bozo::render::Material::TextureFunction::Highlight2;
+        float fade = 0.0f;
+        std::memcpy(&fade, rdram + display + 0xE0u, 4u);
+        copy.fog = fade > kFadeOn;
+        copy.fogColour = load32(rdram, display + 0x60u);
+        bozo::render::Vertex v[6];
+        const float corners[6][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 0}, {1, 1}, {0, 1}};
+        for (int i = 0; i < 6; ++i)
+        {
+            v[i].x = kOffsetX + corners[i][0] * 640.0f;
+            v[i].y = kOffsetY + corners[i][1] * 448.0f;
+            v[i].u = corners[i][0];
+            v[i].v = corners[i][1];
+            v[i].rgba = load32(rdram, display + 0x64u);
+            v[i].fog = static_cast<float>(load32(rdram, display + 0x68u) & 0xFFu) / 255.0f;
+        }
+        renderer.draw(copy, draw::kIdentity, v, 6u);
     }
 
     void frameDone()

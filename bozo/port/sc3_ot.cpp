@@ -266,6 +266,7 @@ namespace sc3::ot
         FrameMirror &frame = s.frames[(word(rdram, kRenderer + 0x80u) & 0xFFFFu) & 1u];
         frame.draws = 0;
         walk(frame, renderer);
+        offscreen::displayCopy(rdram, renderer);
         renderer.endFrame();
         renderer.beginFrame(screen());
         twoD::frameDone();
