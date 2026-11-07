@@ -274,21 +274,23 @@ namespace sc3
             }
         }
 
-        // memcpy: a model the game copies out of a loaded leaf (character select's) is found at the copy.
+        // memcpy: a model the game copies out of a loaded leaf (character select's, creation's parts with the size rounded up past
+        // the leaf's end) is found at the copy.
         void copy(R5900Context *ctx)
         {
             State &s = g_state;
             const uint32_t to = getRegU32(ctx, 4) & kRamMask, from = getRegU32(ctx, 5) & kRamMask, size = getRegU32(ctx, 6);
             packs::LoadedImages::Image image;
-            if (size >= kModelCopyMin && size < 0x2000000u && findImage(from, image) && image.file && from + size <= image.base + image.size)
+            if (size >= kModelCopyMin && size < 0x2000000u && findImage(from, image) && image.file && from >= image.base && from < image.base + image.size)
             {
+                const uint32_t kept = std::min(size, image.base + image.size - from);
                 s.noFog.erase(s.noFog.lower_bound(to), s.noFog.lower_bound(to + size));
                 dropCopies(to, size);
                 State::Copy bound;
                 bound.image = image;
                 bound.image.base = to - (from - image.base);
                 bound.to = to;
-                bound.size = size;
+                bound.size = kept;
                 s.copies.push_back(bound);
                 ++s.stats.copies;
             }
