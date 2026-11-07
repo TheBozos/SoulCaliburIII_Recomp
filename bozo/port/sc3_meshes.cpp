@@ -913,7 +913,8 @@ namespace sc3
         {
             bool highlight = true, cull = false, orVi3 = false, environment = false;
             // B:0x910: the colour times h12 with no lights, the texture coordinates scrolled by h4; B:0x1A40: B:0x1CA8's
-            // environment map. Both fogged: the guard's w clamped (h16.x / h15.y, or h9.x / h9.y) in place of vi3.
+            // environment map. Both fogged: the guard's w clamped (h16.x / h15.y, or h9.x / h9.y) in place of vi3. B:0xB78:
+            // B:0x910 with no fog.
             bool fog = false, unlit = false;
         };
 
@@ -928,6 +929,7 @@ namespace sc3
             case 0x1CA8u: k = {false, false, false, true}; return true;
             case 0x1EF0u: k = {false, true, true, true}; return true;
             case 0x910u: k = {false, false, false, false, true, true}; return true;
+            case 0xB78u: k = {false, false, false, false, false, true}; return true;
             case 0x1A40u: k = {false, false, false, true, true, false}; return true;
             default: return false;
             }
