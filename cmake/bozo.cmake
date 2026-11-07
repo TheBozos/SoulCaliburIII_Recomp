@@ -11,6 +11,8 @@
 #   sc3-check <log.clg> --pinned --ref <run.ref> ...
 # - sc3_recompile: the generated code alone.
 #
+# Cross build for Windows from Linux: cmake/mingw-cross.cmake (the command is at its top), scripts/build_win_ffmpeg.sh.
+#
 # The generated code: bozo-recomp with the externals bozo-externals writes from the ELF (the names BozoEngine answers),
 # recomp/sc3_stubs.txt, SC3's override list (scripts/sc3_overrides_list.py, from bozo/port/*.cpp) and the symbol map
 # SC3_SYMBOL_MAP (default recomp/sc3_symbols.txt, once BOZO_ENGINE_DIR's engine reads symbol maps).
@@ -51,6 +53,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+set(SC3_HOST_TOOLS "" CACHE PATH "A cross build: the folder with bozo-externals and bozo-recomp built for this machine")
+if(CMAKE_CROSSCOMPILING)
+    if(NOT SC3_HOST_TOOLS)
+        message(FATAL_ERROR "SC3: a cross build needs SC3_HOST_TOOLS (bozo-externals and bozo-recomp built for this machine)")
+    endif()
+    set(sc3_externals_tool "${SC3_HOST_TOOLS}/bozo-externals")
+    set(sc3_recomp_tool "${SC3_HOST_TOOLS}/bozo-recomp")
+else()
+    set(sc3_externals_tool bozo-externals)
+    set(sc3_recomp_tool bozo-recomp)
+endif()
+
 set(BOZO_TMB_ELF "" CACHE FILEPATH "" FORCE)
 set(BOZO_APP ${SC3_WINDOW} CACHE BOOL "" FORCE)
 add_subdirectory("${BOZO_ENGINE_DIR}" bozo)
@@ -80,9 +94,9 @@ if(SC3_EXTERNALS)
 else()
     add_custom_command(
         OUTPUT ${externals}
-        COMMAND bozo-externals ${SC3_ELF} ${externals}.base ${externals_args}
+        COMMAND ${sc3_externals_tool} ${SC3_ELF} ${externals}.base ${externals_args}
         COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/scripts/sc3_externals_all_transfers.py" ${externals}.base ${externals}
-        DEPENDS bozo-externals ${externals_depends} ${SC3_ELF} "${CMAKE_SOURCE_DIR}/scripts/sc3_externals_all_transfers.py"
+        DEPENDS ${sc3_externals_tool} ${externals_depends} ${SC3_ELF} "${CMAKE_SOURCE_DIR}/scripts/sc3_externals_all_transfers.py"
         COMMENT "Writing the externals list")
 endif()
 
@@ -101,7 +115,7 @@ foreach(i RANGE ${last})
 endforeach()
 set(sc3_patches "${CMAKE_SOURCE_DIR}/recomp/sc3_patches.txt")
 set(recomp_args --prefix sc3 --files ${SC3_GEN_FILES} --no-comments --externals ${externals} --patches ${sc3_patches})
-set(recomp_depends bozo-recomp ${externals} ${SC3_ELF} ${sc3_patches})
+set(recomp_depends ${sc3_recomp_tool} ${externals} ${SC3_ELF} ${sc3_patches})
 if(SC3_SYMBOL_MAP)
     list(APPEND recomp_args --symbols "${SC3_SYMBOL_MAP}")
     list(APPEND recomp_depends "${SC3_SYMBOL_MAP}")
@@ -112,7 +126,7 @@ if(SC3_ENTRIES)
 endif()
 add_custom_command(
     OUTPUT ${gen_files}
-    COMMAND bozo-recomp ${SC3_ELF} ${gen_dir} ${recomp_args}
+    COMMAND ${sc3_recomp_tool} ${SC3_ELF} ${gen_dir} ${recomp_args}
     DEPENDS ${recomp_depends}
     COMMENT "Recompiling SC3")
 add_custom_target(sc3_recompile DEPENDS ${gen_files})
@@ -149,9 +163,17 @@ target_compile_options(sc3_port PRIVATE -Wall -Wno-unused-function -Wno-unused-v
 
 set(sc3_main_defines BOZO_RUN_DEFAULT_ELF="${SC3_ELF}" SC3_DEFAULT_ISO="${SC3_ISO}" SC3_DEFAULT_SYMBOL_MAP="${SC3_SYMBOL_MAP}")
 
+if(WIN32)
+    enable_language(RC)
+    set_source_files_properties("${CMAKE_SOURCE_DIR}/bozo/app/utf8.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/bozo/app/sc3.manifest")
+endif()
 function(sc3_static_link target)
     if(MINGW)
         target_link_options(${target} PRIVATE -static -Wl,--stack,268435456)
+    endif()
+    if(WIN32)
+        target_sources(${target} PRIVATE "${CMAKE_SOURCE_DIR}/bozo/app/utf8.rc")
     endif()
 endfunction()
 
@@ -176,6 +198,39 @@ if(SC3_WINDOW)
     target_link_libraries(sc3 PRIVATE sc3_port sc3_generated bozo_host bozo_app)
     target_compile_definitions(sc3 PRIVATE ${sc3_main_defines})
     sc3_static_link(sc3)
+    if(WIN32)
+        option(SC3_GUI_SUBSYSTEM "sc3.exe without a console window (a player's build)" OFF)
+        if(SC3_GUI_SUBSYSTEM)
+            set_target_properties(sc3 PROPERTIES WIN32_EXECUTABLE ON)
+        endif()
+    endif()
 endif()
+
+# The packs: from the disc's files, into packs/ beside the programs, where they look for them. Not part of the default build.
+set(SC3_DISC_DIR "" CACHE PATH "The disc's files for sc3_packs (default: SC3_ELF's folder)")
+if(NOT SC3_DISC_DIR)
+    get_filename_component(SC3_DISC_DIR "${SC3_ELF}" DIRECTORY)
+endif()
+set(pack_dir "${CMAKE_BINARY_DIR}/packs")
+set(pack_env ${CMAKE_COMMAND} -E env "BOZO_ENGINE_TOOLS=${BOZO_ENGINE_DIR}/tools")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_textures.pack ${pack_dir}/sc3_textures.keys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} ${Python3_EXECUTABLE} -I "${CMAKE_SOURCE_DIR}/scripts/sc3_texture_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_textures.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_texture_pack.py"
+    COMMENT "Building the texture pack from the disc")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_meshes.pack
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} ${Python3_EXECUTABLE} -I "${CMAKE_SOURCE_DIR}/scripts/sc3_mesh_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_meshes.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_mesh_pack.py"
+    COMMENT "Building the mesh pack from the disc")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_2d.pack
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} ${Python3_EXECUTABLE} -I "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_2d.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py"
+    COMMENT "Building the 2D pack from the disc")
+add_custom_target(sc3_packs DEPENDS ${pack_dir}/sc3_textures.pack ${pack_dir}/sc3_meshes.pack ${pack_dir}/sc3_2d.pack)
 
 include("${CMAKE_SOURCE_DIR}/cmake/sc3_audio.cmake")

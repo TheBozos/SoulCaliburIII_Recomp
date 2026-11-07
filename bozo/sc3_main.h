@@ -23,13 +23,44 @@
 
 namespace sc3
 {
-    // The build's symbol map for the free host, on an engine that reads them (a pin older than symbol maps has no field).
-    inline void useSymbolMap(bozo::host::FreeOptions &options)
+    // SC3_SYMBOL_MAP, else sc3_symbols.txt beside the program, else the build's own map.
+    inline void useSymbolMap(bozo::host::FreeOptions &options, const char *program)
     {
-        [](auto &o) {
+        namespace fs = std::filesystem;
+        std::string path = SC3_DEFAULT_SYMBOL_MAP;
+        std::error_code ec;
+        const fs::path beside = fs::path(program).parent_path() / "sc3_symbols.txt";
+        if (const char *env = std::getenv("SC3_SYMBOL_MAP"); env && *env)
+            path = env;
+        else if (fs::is_regular_file(beside, ec))
+            path = beside.string();
+        [&](auto &o) {
             if constexpr (requires { o.symbolMap; })
-                o.symbolMap = SC3_DEFAULT_SYMBOL_MAP;
+                o.symbolMap = path;
         }(options);
+    }
+
+    // The packs' variables a run did not set, from the packs/ folder beside the program. Before installPort, which reads them.
+    inline void useDefaultPacks(const char *program)
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::path(program).parent_path() / "packs";
+        const struct
+        {
+            const char *variable, *file;
+        } packs[] = {{"SC3_2D_PACK", "sc3_2d.pack"}, {"SC3_TEXTURE_PACK", "sc3_textures.pack"}, {"SC3_MESH_PACK", "sc3_meshes.pack"}};
+        for (const auto &pack : packs)
+        {
+            std::error_code ec;
+            const fs::path path = dir / pack.file;
+            if (std::getenv(pack.variable) || !fs::is_regular_file(path, ec))
+                continue;
+#ifdef _WIN32
+            _putenv_s(pack.variable, path.string().c_str());
+#else
+            setenv(pack.variable, path.c_str(), 0);
+#endif
+        }
     }
 
     // The port's overrides, false (with the addresses listed) when one is not an external of the generated code.

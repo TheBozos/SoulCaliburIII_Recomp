@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     opt.framePeriodCycles = sc3::kFramePeriodCycles;
     bool printSites = false;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
-    sc3::useSymbolMap(opt);
+    sc3::useSymbolMap(opt, argv[0]);
     uint64_t report = 500;
     std::string wavPath, dumpDir;
     std::vector<uint32_t> dumpAt;
@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     }
     bozo::det::setEnabled(true);
 
+    sc3::useDefaultPacks(argv[0]);
     bozo::port::Registry registry;
     if (!sc3::installPort("sc3-headless", registry))
         return 2;
