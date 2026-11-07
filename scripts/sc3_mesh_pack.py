@@ -15,6 +15,12 @@ the GS F) as a float; one strip (the tag's PRIM, its word 3 as the material word
 words the UNPACKs leave in VU memory: u32 vertex count, u32 fields (bit 0 normals, bit 1 one colour for all, an S-32
 UNPACK), the 16-byte GIF tag, then per vertex 16 u32: ST, colour, position, normal (normal zero without them).
 
+Chain parts (the lists 0x10A4E8 CALLs: a REF and a CNT per batch, then a RET, REF addresses relative to the model
+the list is in): kind 2 at the list's offset, section 'SC3C': per batch u32 leaf offset and u32 quadword count of its
+block. A program A block is a raw part (kind 1); a program B block (B:0x1388's skinned vertices) is kind 3, section
+'SC3B': the quadwords its UNPACK writes from VU TOP + 0 (the GIF tag, then per vertex its bone influences, texture
+coordinates and colour).
+
 Register blocks: every GS A+D block of a leaf (a PACKED GIF tag of 1-8 A+D writes, the model's materials, the block the
 game REFs to VU TOP + 0x19F), at the tag's offset, with its writes (the register in the address's low byte: the game
 keeps other bits above it) and, as register 0x100 (no GS register), the tag's
@@ -39,11 +45,15 @@ for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(HERE, '..',
         break
 sys.path.insert(0, HERE)
 from native_pack import mesh  # noqa: E402
-from sc3_texture_pack import olk_leaves  # noqa: E402
+from sc3_texture_pack import MODEL_MAGIC, olk_leaves  # noqa: E402
 
 STCYCL_11 = 0x01000101
 TAG_UNPACK = 0x6C018000
 KIND_RAW_PART = 1
+KIND_CHAIN_PART = 2
+KIND_VU_BLOCK = 3
+TAG_REF, TAG_CNT, TAG_RET = 3, 1, 6
+CHARACTER_MAGIC = 0x0B1C0E09
 GS_REGISTER_LIMIT = 0x63
 TAG_REGS = 0x100
 
@@ -97,8 +107,8 @@ def decode_raw_part(d, q, size):
                 words = words * 4
                 fields |= 2
             row = vertices[i]
-            for c in range(min(comps, 4)):
-                row[field * 4 + c] = words[c]
+            for c, word in enumerate(words):
+                row[field * 4 + c] = word
         if field == 3:
             fields |= 1
         pos += comps * 4 * n
@@ -123,6 +133,92 @@ def add_raw_part(f, d, q, size):
     blob = [struct.pack('<II4I', len(vertices), fields, *tag)]
     blob.extend(struct.pack('<16I', *v) for v in vertices)
     o.add_section('SC3V', b''.join(blob))
+
+
+def vu_block_codes(d, q):
+    """Offset of the STCYCL 1,1 and V4-32 UNPACK to VU TOP + 0 a block of VU data a chain part REFs starts with (after
+    up to two NOPs), or None."""
+    for at in (q, q + 8):
+        if q < 0 or at + 8 > len(d):
+            return None
+        stcycl, unpack = struct.unpack_from('<II', d, at)
+        if stcycl == STCYCL_11 and (unpack & 0xFF00FFFF) == 0x6C008000:
+            return at
+        if at == q and struct.unpack_from('<II', d, q) != (0, 0):
+            return None
+    return None
+
+
+def vu_block(d, q):
+    return vu_block_codes(d, q) is not None
+
+
+def model_starts(d):
+    """Where a leaf's models may start: the leaf, a container's entries (u32 count, then that many ascending offsets),
+    the model headers (03 04 04 00; 09 0e 1c 0b for characters)."""
+    starts = {0}
+    count = struct.unpack_from('<I', d, 0)[0] if len(d) >= 4 else 0
+    if 0 < count < 64 and len(d) >= 4 + 4 * count:
+        offsets = struct.unpack_from('<%dI' % count, d, 4)
+        if all(0 < o < len(d) and o % 16 == 0 for o in offsets) and list(offsets) == sorted(offsets):
+            starts.update(offsets)
+    starts.update(q for q in range(0, len(d) - 4, 16) if struct.unpack_from('<I', d, q)[0] in (MODEL_MAGIC, CHARACTER_MAGIC))
+    return sorted(starts)
+
+
+def chain_list(d, q):
+    """[(relative address, qwc)] of a chain list at q (REF, CNT per batch, then a RET), or None."""
+    batches = []
+    at = q
+    while at + 32 <= len(d):
+        ref, address = struct.unpack_from('<II', d, at)
+        cnt = struct.unpack_from('<I', d, at + 16)[0]
+        if (ref >> 28) & 7 != TAG_REF or ref & 0x0FFF0000 or not ref & 0xFFFF or cnt != TAG_CNT << 28:
+            break
+        batches.append((address, ref & 0xFFFF))
+        at += 32
+    if batches and at + 4 <= len(d) and struct.unpack_from('<I', d, at)[0] == TAG_RET << 28:
+        return batches
+    return None
+
+
+def chain_parts(d):
+    """(offset, [(data offset, qwc)]) of the chain parts in a leaf: the lists 0x10A4E8 CALLs, a REF to a block of VU data
+    and a CNT (the game puts the MSCAL in it at run time) per batch, ended by a RET. A REF's address is relative to the
+    model the list is in: the nearest model start before it whose REFs all land on VU data blocks."""
+    starts = model_starts(d)
+    out = []
+    q = 0
+    while q + 48 <= len(d):
+        batches = chain_list(d, q)
+        found = None
+        if batches:
+            for base in reversed([b for b in starts if b <= q]):
+                if all(vu_block(d, base + address) for address, _ in batches):
+                    found = [(base + address, qwc) for address, qwc in batches]
+                    break
+        if found:
+            out.append((q, found))
+            q += 32 * len(found) + 16
+        else:
+            q += 16
+    return out
+
+
+def add_chain_part(f, q, batches):
+    f.add_object(q, kind=KIND_CHAIN_PART, attributes=struct.pack('<I', len(batches)))
+    f.objects[-1].add_section('SC3C', b''.join(struct.pack('<II', offset, qwc) for offset, qwc in batches))
+
+
+def add_vu_block(f, d, q, qwc):
+    """A chain part's block that is not a raw part (program B's): the quadwords its UNPACK writes from VU TOP + 0."""
+    at = vu_block_codes(d, q)
+    num = (struct.unpack_from('<I', d, at + 4)[0] >> 16) & 0xFF or 256
+    data = d[at + 8:at + 8 + 16 * num]
+    if len(data) != 16 * num:
+        return
+    o = f.add_object(q, kind=KIND_VU_BLOCK, attributes=struct.pack('<I', qwc * 16))
+    o.add_section('SC3B', data)
 
 
 def register_blocks(d):
@@ -162,11 +258,19 @@ def convert_leaf(job):
             q += n
         else:
             q += 16
-    if not parts:
+    chains = chain_parts(d)
+    if not parts and not chains:
         return path, offset, size, None
     f = mesh.MeshFile(path, d)
     for q, n in parts:
         add_raw_part(f, d, q, n)
+    raw = {q for q, _ in parts}
+    blocks = set()
+    for q, batches in chains:
+        add_chain_part(f, q, batches)
+        blocks.update((at, qwc) for at, qwc in batches if at not in raw)
+    for at, qwc in sorted(blocks):
+        add_vu_block(f, d, at, qwc)
     for q, writes in register_blocks(d):
         f.add_register_block(q, writes)
     return path, offset, size, f.encode()
