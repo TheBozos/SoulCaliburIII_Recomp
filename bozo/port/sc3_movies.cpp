@@ -76,10 +76,20 @@ namespace sc3::movies
         constexpr uint32_t kMwPlyRelCurFrm = 0x003ABF50u;
         constexpr uint32_t kMwPlyIsNextFrmReady = 0x003AC008u;
         constexpr uint32_t kMwPlyStop = 0x003AD870u;
-        constexpr uint32_t kSceMpegInit = 0x003E1770u;
-        constexpr uint32_t kSceMpegCreate = 0x003E0BC8u;
-        constexpr uint32_t kSceMpegAddCallback = 0x003E19E0u;
-        constexpr uint32_t kSfdIpuContextSave = 0x003C2020u;
+        constexpr uint32_t kMwPlyCreate = 0x003AA698u;
+        constexpr uint32_t kMwPlyDestroy = 0x003AAC38u;
+        constexpr uint32_t kMwPlyPause = 0x003AD8F0u;
+        constexpr uint32_t kMwPlyIsPause = 0x003AD300u;
+        // Set on a decoder the game never gets: its volume, an output setting, a memory area, a frame's information.
+        constexpr uint32_t kMwPlyDecoderSettings[] = {0x003AEF20u, 0x003B0178u, 0x003A8A98u, 0x003B3AD0u};
+
+        constexpr uint32_t kMwPlySlots = 0x0054D6C4u;
+        constexpr uint32_t kMwPlySlotCount = 8u;
+        constexpr uint32_t kMwPlySlotSize = 0x304u;
+        constexpr uint32_t kMwPlyParameters = 0x08u;
+        constexpr uint32_t kMwPlyParametersSize = 0x30u;
+        constexpr uint32_t kMwPlyPaused = 0x40u;
+        constexpr uint32_t kMwPlyLastEntry = 0x2FCu;
         constexpr int32_t kMwPlyStatPlaying = 2;
         constexpr uint32_t kMovieAfsPartition = 1u;
         constexpr uint32_t kMwPlyCompoMode = 0x08u;
@@ -568,21 +578,16 @@ namespace sc3::movies
 
         // The game takes a frame object with no pixels: the pictures go to the renderer by handle (picture below), never
         // through its GIF image packets. The object's buffer is the player's unused work area.
-        void getCurFrm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        void getCurFrm(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t handle = getRegU32(ctx, 4);
             const auto player = find(handle);
-            if (!player)
-            {
-                func_0x3ab630(rdram, ctx, runtime);
-                return;
-            }
             uint8_t *object = runtime->memory.hostPointer(getRegU32(ctx, 5), kFrameObjectSize);
             if (object)
                 std::memset(object, 0, kFrameObjectSize);
             uint32_t width = 0, height = 0, number = 0;
             const uint32_t buffer = (readWord(runtime, handle + kMwPlyWork) + 63u) & ~63u;
-            if (object && player->frameInfo(readWord(runtime, handle + kMwPlyCompoMode) == kMwPlyCompoAlpha, width, height, number))
+            if (object && player && player->frameInfo(readWord(runtime, handle + kMwPlyCompoMode) == kMwPlyCompoAlpha, width, height, number))
             {
                 const uint32_t fields[][2] = {{0x00u, buffer}, {0x04u, number}, {0x0Cu, width}, {0x10u, height}, {0x14u, width}, {0x18u, height}, {0x24u, number}};
                 for (const auto &field : fields)
@@ -591,63 +596,34 @@ namespace sc3::movies
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        void relCurFrm(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        void isNextFrmReady(uint8_t *, R5900Context *ctx, PS2Runtime *)
         {
-            if (!find(getRegU32(ctx, 4)))
-            {
-                func_0x3abf50(rdram, ctx, runtime);
-                return;
-            }
+            setReturnS32(ctx, find(getRegU32(ctx, 4)) ? 1 : 0);
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        void isNextFrmReady(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            if (!find(getRegU32(ctx, 4)))
-            {
-                func_0x3ac008(rdram, ctx, runtime);
-                return;
-            }
-            setReturnS32(ctx, 1);
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
-        void stopCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        void stopCall(uint8_t *, R5900Context *ctx, PS2Runtime *)
         {
             stopPlayer(getRegU32(ctx, 4));
-            func_0x3ad870(rdram, ctx, runtime);
-        }
-
-        void mpegInit(uint8_t *, R5900Context *ctx, PS2Runtime *)
-        {
-            setReturnU32(ctx, 0u);
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
-        void mpegCreate(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            if (uint8_t *p = runtime->memory.hostPointer(getRegU32(ctx, 4), 0x40u))
-                std::memset(p, 0, 0x40u);
-            setReturnU32(ctx, getRegU32(ctx, 5));
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
-        void mpegAddCallback(uint8_t *, R5900Context *ctx, PS2Runtime *)
-        {
-            static uint32_t next = 1u;
-            setReturnU32(ctx, next++);
-            ctx->pc = getRegU32(ctx, 31);
-        }
-
-        void ipuContextSave(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            if (uint8_t *p = runtime->memory.hostPointer(getRegU32(ctx, 4) + 0x1Cu, 0x24u))
-                std::memset(p, 0, 0x24u);
-            setReturnU32(ctx, 1u);
             ctx->pc = getRegU32(ctx, 31);
         }
 #else
+        void stopPlayer(uint32_t) {}
+
         void start(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
+
+        void getCurFrm(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (uint8_t *object = runtime->memory.hostPointer(getRegU32(ctx, 5), kFrameObjectSize))
+                std::memset(object, 0, kFrameObjectSize);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void isNextFrmReady(uint8_t *, R5900Context *ctx, PS2Runtime *)
+        {
+            setReturnS32(ctx, 0);
+            ctx->pc = getRegU32(ctx, 31);
+        }
 
         void getStat(uint8_t *, R5900Context *ctx, PS2Runtime *)
         {
@@ -661,6 +637,56 @@ namespace sc3::movies
             ctx->pc = getRegU32(ctx, 31);
         }
 #endif
+
+        void answered(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
+
+        // A handle holds what the game gave and the overrides read: no decoder is ever made behind it, which is what
+        // keeps Sofdec's own create and destroy, with their timer and IPU set-up, from being reached.
+        void create(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t parameters = getRegU32(ctx, 4);
+            uint32_t created = 0u;
+            for (uint32_t i = 0u; parameters != 0u && i < kMwPlySlotCount && created == 0u; ++i)
+            {
+                const uint32_t handle = kMwPlySlots + i * kMwPlySlotSize;
+                uint32_t used = 0u;
+                std::memcpy(&used, rdram + handle, 4);
+                if (used == 1u)
+                    continue;
+                std::memset(rdram + handle, 0, kMwPlySlotSize);
+                std::memcpy(rdram + handle + kMwPlyParameters, rdram + parameters, kMwPlyParametersSize);
+                const uint32_t usedNow = 1u, noEntry = ~0u;
+                std::memcpy(rdram + handle, &usedNow, 4);
+                std::memcpy(rdram + handle + kMwPlyLastEntry, &noEntry, 4);
+                created = handle;
+            }
+            setReturnU32(ctx, created);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void destroy(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t handle = getRegU32(ctx, 4);
+            stopPlayer(handle);
+            if (handle != 0u)
+                std::memset(rdram + handle, 0, kMwPlySlotSize);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void pause(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            const uint32_t paused = getRegU32(ctx, 5);
+            std::memcpy(rdram + getRegU32(ctx, 4) + kMwPlyPaused, &paused, 4);
+            ctx->pc = getRegU32(ctx, 31);
+        }
+
+        void isPause(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
+        {
+            uint32_t paused = 0u;
+            std::memcpy(&paused, rdram + getRegU32(ctx, 4) + kMwPlyPaused, 4);
+            setReturnU32(ctx, paused);
+            ctx->pc = getRegU32(ctx, 31);
+        }
     }
 
     void tick(PS2Runtime *runtime)
@@ -699,19 +725,25 @@ namespace sc3::movies
         runtime.registerFunction(kMwPlyGetStat, &getStat);
         runtime.registerFunction(kMoviePlayStat, &playStat);
         runtime.registerFunction(kMovieTaskEnd, &taskEndReleasesJob);
+        runtime.registerFunction(kMwPlyCreate, &create);
+        runtime.registerFunction(kMwPlyDestroy, &destroy);
+        runtime.registerFunction(kMwPlyPause, &pause);
+        runtime.registerFunction(kMwPlyIsPause, &isPause);
+        for (uint32_t setting : kMwPlyDecoderSettings)
+            runtime.registerFunction(setting, &answered);
+        runtime.registerFunction(kMwPlyGetCurFrm, &getCurFrm);
+        runtime.registerFunction(kMwPlyRelCurFrm, &answered);
+        runtime.registerFunction(kMwPlyIsNextFrmReady, &isNextFrmReady);
 #ifdef SC3_HAVE_FFMPEG
         twoD::setMoviePictures([](uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number)
                                { return g_runtime && picture(g_runtime, handle, known, rgba, width, height, number); });
         runtime.registerFunction(kMwPlyStartAfs, &startAfs);
         runtime.registerFunction(kMwPlyStartAfsLp, &startAfsLp);
-        runtime.registerFunction(kMwPlyGetCurFrm, &getCurFrm);
-        runtime.registerFunction(kMwPlyRelCurFrm, &relCurFrm);
-        runtime.registerFunction(kMwPlyIsNextFrmReady, &isNextFrmReady);
         runtime.registerFunction(kMwPlyStop, &stopCall);
-        runtime.registerFunction(kSceMpegInit, &mpegInit);
-        runtime.registerFunction(kSceMpegCreate, &mpegCreate);
-        runtime.registerFunction(kSceMpegAddCallback, &mpegAddCallback);
-        runtime.registerFunction(kSfdIpuContextSave, &ipuContextSave);
+#else
+        runtime.registerFunction(kMwPlyStartAfs, &start);
+        runtime.registerFunction(kMwPlyStartAfsLp, &start);
+        runtime.registerFunction(kMwPlyStop, &start);
 #endif
     }
 }
