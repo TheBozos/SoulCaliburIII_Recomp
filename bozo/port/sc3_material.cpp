@@ -199,6 +199,16 @@ namespace sc3::draw
     // TEST_2 as the game's builders leave it: those that change it put this back.
     constexpr uint64_t kTest2 = 0x5002Du;
 
+    bool mipmapsOn()
+    {
+        static const bool on = []
+        {
+            const char *setting = std::getenv("SC3_MIPMAPS");
+            return !(setting && *setting == '0');
+        }();
+        return on;
+    }
+
     void toRenderer(GsMaterial &gs, const GsVertex *in, uint32_t count, Material &m, std::vector<Vertex> &out)
     {
         Mapping map;
@@ -265,6 +275,8 @@ namespace sc3::draw
                 map.offsetV = static_cast<float>(v.first) / static_cast<float>(v.size);
             }
             m.nearest = ((gs.tex1 >> 5) & 1u) == 0u;
+            if (mipmapsOn())
+                m.mipmap = bozo::render::mipmapOf(gs.tex1);
             m.clampU = u.clamp;
             m.clampV = v.clamp;
         }

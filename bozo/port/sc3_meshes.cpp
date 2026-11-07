@@ -19,6 +19,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace sc3
@@ -113,6 +114,7 @@ namespace sc3
             uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, copies = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
+            uint64_t mipOwn = 0, mipMade = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
             std::map<std::string, uint64_t> refused; // "<routine> <reason>"
             std::map<uint64_t, uint64_t> textureMisses;
@@ -824,6 +826,51 @@ namespace sc3
             return rgb;
         }
 
+        // The texture with the game's own mip levels 1..MXL (MIPTBP1's pages, uploaded by the same lists as level 0); null when
+        // one is not in the pack (the renderer then makes them from level 0). Kept while level 0 and the levels are the same.
+        TexturePtr withLevels(const TexturePtr &base, uint64_t tex0, uint64_t tex1, uint64_t miptbp1, uint32_t width, uint32_t height, uint32_t part)
+        {
+            struct Joined
+            {
+                std::weak_ptr<const bozo::render::Texture> base;
+                std::vector<TexturePtr> levels;
+                TexturePtr texture;
+            };
+            static std::unordered_map<const bozo::render::Texture *, Joined> s_joined;
+            const uint32_t tw = static_cast<uint32_t>((tex0 >> 26) & 0xFu), th = static_cast<uint32_t>((tex0 >> 30) & 0xFu);
+            const uint32_t count = std::min<uint32_t>(static_cast<uint32_t>((tex1 >> 2) & 7u), 3u);
+            std::vector<TexturePtr> levels;
+            for (uint32_t n = 1; n <= count && (n <= tw || n <= th); ++n)
+            {
+                const uint64_t field = miptbp1 >> (20u * (n - 1u));
+                uint64_t level = tex0 & ~(0x3FFFull | (0x3Full << 14) | (0xFull << 26) | (0xFull << 30));
+                level |= (field & 0x3FFFu) | (((field >> 14) & 0x3Fu) << 14) | (static_cast<uint64_t>(tw > n ? tw - n : 0u) << 26) |
+                         (static_cast<uint64_t>(th > n ? th - n : 0u) << 30);
+                const uint32_t w = std::max(width >> n, 1u), h = std::max(height >> n, 1u);
+                TexturePtr image = textures::atHook(level, w, h, part);
+                if (!image || image->width != w || image->height != h)
+                    return nullptr;
+                levels.push_back(std::move(image));
+            }
+            if (levels.empty())
+                return nullptr;
+            Joined &joined = s_joined[base.get()];
+            if (joined.texture && joined.base.lock() == base && joined.levels == levels)
+                return joined.texture;
+            if (s_joined.size() > 4096u)
+            {
+                s_joined.clear();
+                return withLevels(base, tex0, tex1, miptbp1, width, height, part);
+            }
+            auto texture = std::make_shared<bozo::render::Texture>(*base);
+            texture->key = base->key ^ 0x6D69700000000000ull;
+            texture->levels.clear();
+            for (const TexturePtr &level : levels)
+                texture->levels.push_back(level->rgba);
+            joined = Joined{base, std::move(levels), texture};
+            return texture;
+        }
+
         // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
         // the header and material the game sent last. False: nothing drawn, the reason counted.
         bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
@@ -857,6 +904,13 @@ namespace sc3
                     ++s.stats.noTexture;
                     ++s.stats.textureMisses[s.material.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
                     return false;
+                }
+                if (mipmapsOn() && bozo::render::mipmapOf(s.material.tex1).levels != 0u)
+                {
+                    TexturePtr joined = withLevels(material.texture, s.material.tex0, s.material.tex1, s.material.miptbp1, width, height, source.object & kRamMask);
+                    ++(joined ? s.stats.mipOwn : s.stats.mipMade);
+                    if (joined)
+                        material.texture = std::move(joined);
                 }
             }
             std::vector<Out> own;
@@ -1549,6 +1603,9 @@ namespace sc3
                          static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.clipped),
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedDropped), static_cast<unsigned long long>(t.drawsSubmitted),
                          static_cast<unsigned long long>(t.bound), static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), left.c_str(), miss.c_str());
+            if (t.mipOwn + t.mipMade != 0u)
+                std::fprintf(stderr, "[sc3:mesh] 250 frames: mipmapped parts %llu, the game's own levels %llu, made from level 0 %llu\n",
+                             static_cast<unsigned long long>(t.mipOwn + t.mipMade), static_cast<unsigned long long>(t.mipOwn), static_cast<unsigned long long>(t.mipMade));
             const uint64_t bound = t.bound, bad = t.boundBad;
             t = Stats{};
             t.bound = bound;

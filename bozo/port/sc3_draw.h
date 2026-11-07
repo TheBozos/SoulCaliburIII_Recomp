@@ -96,6 +96,8 @@ namespace sc3
         // The Renderer's material and triangles of a GS draw: the sprites and lines as two triangles.
         void toRenderer(GsMaterial &material, const GsVertex *vertices, uint32_t count, bozo::render::Material &out,
                         std::vector<bozo::render::Vertex> &triangles);
+        // Textures sampled with the mip levels TEX1 asks for (SC3_MIPMAPS=0: level 0 only, as before).
+        bool mipmapsOn();
         extern const float kIdentity[16];
     }
 
