@@ -163,9 +163,17 @@ target_compile_options(sc3_port PRIVATE -Wall -Wno-unused-function -Wno-unused-v
 
 set(sc3_main_defines BOZO_RUN_DEFAULT_ELF="${SC3_ELF}" SC3_DEFAULT_ISO="${SC3_ISO}" SC3_DEFAULT_SYMBOL_MAP="${SC3_SYMBOL_MAP}")
 
+if(WIN32)
+    enable_language(RC)
+    set_source_files_properties("${CMAKE_SOURCE_DIR}/bozo/app/utf8.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/bozo/app/sc3.manifest")
+endif()
 function(sc3_static_link target)
     if(MINGW)
         target_link_options(${target} PRIVATE -static -Wl,--stack,268435456)
+    endif()
+    if(WIN32)
+        target_sources(${target} PRIVATE "${CMAKE_SOURCE_DIR}/bozo/app/utf8.rc")
     endif()
 endfunction()
 
@@ -190,6 +198,12 @@ if(SC3_WINDOW)
     target_link_libraries(sc3 PRIVATE sc3_port sc3_generated bozo_host bozo_app)
     target_compile_definitions(sc3 PRIVATE ${sc3_main_defines})
     sc3_static_link(sc3)
+    if(WIN32)
+        option(SC3_GUI_SUBSYSTEM "sc3.exe without a console window (a player's build)" OFF)
+        if(SC3_GUI_SUBSYSTEM)
+            set_target_properties(sc3 PROPERTIES WIN32_EXECUTABLE ON)
+        endif()
+    endif()
 endif()
 
 include("${CMAKE_SOURCE_DIR}/cmake/sc3_audio.cmake")
