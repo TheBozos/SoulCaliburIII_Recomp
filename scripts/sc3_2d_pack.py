@@ -38,7 +38,7 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(HERE, '..', 'BozoEngine', 'tools'), os.path.join(HERE, '..', 'PS2Recomp', 'tools')):
+for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(HERE, '..', 'BozoEngine', 'tools')):
     if _tools and os.path.isdir(os.path.join(_tools, 'native_pack')):
         sys.path.insert(0, _tools)
         break

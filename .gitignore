@@ -19,8 +19,6 @@ disc/
 iso/
 mc0/
 mc1/
-recomp/output/
-recomp/ghidra/
 *.sfd
 *.rgba
 *.gstrace

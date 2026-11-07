@@ -26,7 +26,7 @@ import struct
 import sys
 import zlib
 
-for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'BozoEngine', 'tools'), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'PS2Recomp', 'tools')):
+for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'BozoEngine', 'tools')):
     if _tools and os.path.isdir(os.path.join(_tools, 'native_pack')):
         sys.path.insert(0, _tools)
         break
