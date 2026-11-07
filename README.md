@@ -326,7 +326,8 @@ executable, and the symbol map from `SC3_SYMBOL_MAP`, else `sc3_symbols.txt` bes
 
 Windows from Linux: a mingw-w64 GCC that targets the UCRT (the compiler of MSYS2 UCRT64 and TMB's kit) builds it with
 `cmake/mingw-cross.cmake`. `SC3_HOST_TOOLS` names a native build's `bozo-externals` and `bozo-recomp`, and
-`scripts/build_win_ffmpeg.sh` builds the static FFmpeg it links. Clang targets (zig c++, llvm-mingw) build a binary that
+`scripts/build_win_ffmpeg.sh` builds the static FFmpeg it links. `sc3-check.exe` needs `-DBOZO_BUILD_TOOLS=ON` and a
+static zlib built with the same compiler (`-DZLIB_ROOT=<prefix>`). Clang targets (zig c++, llvm-mingw) build a binary that
 crashes, so they are not supported: on Win64 their `__builtin_longjmp` restores rbp from the frame address instead of the
 frame pointer, which breaks BozoEngine's stops. `scripts/make_win_package.sh` lays out a portable folder from that build:
 the programs, the symbol map and `packs/`. That folder holds code and packs made from the disc, so it never leaves the
