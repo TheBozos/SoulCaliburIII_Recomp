@@ -3,8 +3,8 @@
 // linked or sent, and the frame ends in the main loop's Timer 3 wait.
 #include "sc3_port.h"
 
-#include <cstdio>
-#include <cstdlib>
+#include "bozo/app/frame_pacer.h"
+
 #include <cstring>
 #include <stdexcept>
 
@@ -36,7 +36,6 @@ namespace sc3::frame
                                                0x0010CD88u, 0x0010CDB8u, 0x0010CE30u, 0x0010CE98u, 0x0010CED0u};
 
         constexpr uint32_t kInitSys = 0x00440860u;
-        constexpr uint32_t kCdRead = 0x00424E28u;
 
         constexpr uint32_t kRenderer = 0x005BE700u;
         constexpr uint32_t kFrameLists = 0x004674C0u;
@@ -49,6 +48,17 @@ namespace sc3::frame
         constexpr uint32_t kKickedFrameNumber = 0x0047100Cu;
 
         bool g_frameOpen = false;
+        bozo::app::FramePacer g_pacer;
+
+        void endOfFrame(R5900Context *ctx, PS2Runtime *runtime)
+        {
+            movies::tick(runtime);
+            g_pacer.setCap(60u);
+            g_pacer.setPaced(bozo::port::realTime(runtime));
+            g_pacer.frameEnd();
+            ot::holdStill();
+            bozo::port::frameEnd(runtime, ctx);
+        }
 
         template <typename T>
         T get(const uint8_t *rdram, uint32_t address)
@@ -78,24 +88,12 @@ namespace sc3::frame
             const uint32_t caller = *reinterpret_cast<uint32_t *>(rdram + (getRegU32(ctx, 29) & 0x1FFFFFFu));
             if (getRegU32(ctx, 31) == kAdxmVsyncSleepReturn && caller == kMovieFrameWaitReturn)
             {
-                movies::tick(runtime);
                 ot::presentAlone();
-                ot::holdStill();
-                bozo::port::frameEnd(runtime, ctx);
+                endOfFrame(ctx, runtime);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;
             }
             func_0x3f0f10(rdram, ctx, runtime);
-        }
-
-        // SC3_TRACE_CD: what the game reads, by the game's frame counter, for the comparison with the reference's call log.
-        void cdRead(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            static const bool trace = std::getenv("SC3_TRACE_CD") != nullptr;
-            if (trace)
-                std::fprintf(stderr, "[sc3:cd] f%u %x %x %x\n", get<uint32_t>(rdram, kFrameNumber), getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6));
-            bozo::port::host(runtime).callLibrary(runtime, ctx, kCdRead);
-            ctx->pc = getRegU32(ctx, 31);
         }
 
         void gsDrainWait(uint8_t *, R5900Context *ctx, PS2Runtime *)
@@ -177,9 +175,7 @@ namespace sc3::frame
             if (g_frameOpen && getRegU32(ctx, 31) == kFrameEndReturn)
             {
                 g_frameOpen = false;
-                movies::tick(runtime);
-                ot::holdStill();
-                bozo::port::frameEnd(runtime, ctx);
+                endOfFrame(ctx, runtime);
             }
             func_0x148098(rdram, ctx, runtime);
         }
@@ -188,7 +184,6 @@ namespace sc3::frame
     void install(Registry &runtime)
     {
         runtime.registerFunction(kInitSys, &initSys);
-        runtime.registerFunction(kCdRead, &cdRead);
         runtime.registerFunction(kGsDrainWait, &gsDrainWait);
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
         runtime.registerFunction(kGsExecStoreImage, &gsDrainWait);
