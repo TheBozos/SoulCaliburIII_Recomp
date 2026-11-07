@@ -117,6 +117,23 @@ namespace sc3
         ctx->checkpoints = checkpoints;
     }
 
+    // The same for a draw the packs cannot give the native path (a page, list or texture not in them): no EE time charged and no
+    // event taken, as the native draw takes none, so the game's clock does not depend on the packs' contents.
+    inline void runUncharged(RecompiledFunction function, uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
+    {
+        auto own = std::make_unique<R5900Context>(*ctx);
+        own->leaving = 0;
+        own->cycleLimit = ~0ull;
+        function(rdram, own.get(), runtime);
+        const uint64_t cycles = ctx->cycles, checkpoints = ctx->checkpoints, limit = ctx->cycleLimit;
+        const uint32_t leaving = ctx->leaving;
+        *ctx = *own;
+        ctx->cycleLimit = limit;
+        ctx->leaving = leaving;
+        ctx->cycles = cycles;
+        ctx->checkpoints = checkpoints;
+    }
+
     // A game function by its address, as generated (its override, if any, not taken).
     RecompiledFunction guestFunction(uint32_t address);
 

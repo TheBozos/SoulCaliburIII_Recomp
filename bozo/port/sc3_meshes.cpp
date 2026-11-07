@@ -162,6 +162,8 @@ namespace sc3
         std::optional<State> g_owner{std::in_place};
         State &g_state = *g_owner;
 
+        uint64_t packMisses(const Stats &t) { return t.notInPack + t.chainNotInPack + t.noTexture; }
+
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (address == kRawPart)
@@ -176,6 +178,16 @@ namespace sc3
                 func_0x10b970(rdram, ctx, runtime);
             else
                 func_0x10b7e0(rdram, ctx, runtime);
+        }
+
+        // A part the native path refused, as the game draws it: uncharged when refused for a pack miss (a list or texture the
+        // packs lack: `misses` the count before the native try), so the game's clock does not depend on the packs' contents.
+        void fallBack(uint32_t address, uint64_t misses, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (packMisses(g_state.stats) == misses)
+                callOriginal(address, rdram, ctx, runtime);
+            else
+                runUncharged(address == kRawPart ? func_0x10a178 : func_0x10a4e8, rdram, ctx, runtime);
         }
 
         void packetFlush(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
@@ -1272,10 +1284,11 @@ namespace sc3
 
         void rawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            const uint64_t misses = packMisses(g_state.stats);
             if (drawRawPart(rdram, ctx, runtime))
                 return;
             ++g_state.stats.leftToVu1;
-            callOriginal(kRawPart, rdram, ctx, runtime);
+            fallBack(kRawPart, misses, rdram, ctx, runtime);
         }
 
         // 0x1088A0 drains the parts deferred for clipping against the near plane: each one's raw data goes to the scratchpad,
@@ -1484,11 +1497,12 @@ namespace sc3
             const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, (flags & 0xFFFFu) >> 3);
             noteBones();
+            const uint64_t misses = packMisses(s.stats);
             if (drawChainPart(rdram, ctx, runtime, list, flags, header, materialSent))
                 return;
             ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | (flags & 0xFFFFu)];
             ++s.stats.leftToVu1;
-            callOriginal(kChainPart, rdram, ctx, runtime);
+            fallBack(kChainPart, misses, rdram, ctx, runtime);
         }
 
         // ZBUF_1's ZMSK where the game's list writes it (0x1276E8, in the VIF1 list), for the draws played after it.

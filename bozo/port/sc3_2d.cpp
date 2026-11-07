@@ -191,6 +191,18 @@ namespace sc3
 
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { originalOf(address)(rdram, ctx, runtime); }
 
+        // The game's function for a draw the native path refused: uncharged when it was for a pack miss (a block or texture the
+        // packs lack: `misses` the stats' count before the native try), else as the game runs it.
+        uint64_t packMisses(const BuilderStats &stats) { return stats.noBlock + stats.noTexture; }
+
+        void fallBack(uint32_t address, const BuilderStats &stats, uint64_t misses, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            if (packMisses(stats) != misses)
+                runUncharged(originalOf(address), rdram, ctx, runtime);
+            else
+                callOriginal(address, rdram, ctx, runtime);
+        }
+
         // EE memory or the scratchpad (the game keeps stacks and packets there), aligned to the access.
         uint8_t *guest(uint32_t address, uint32_t size)
         {
@@ -728,11 +740,12 @@ namespace sc3
                 if (pass == 0 || pass == 1)
                     used[pass] = true;
             }
+            const uint64_t misses = packMisses(stats);
             for (uint32_t pass = 0; pass < 2u; ++pass)
                 if (used[pass] && !page(file, pass, pages[pass], stats))
                 {
                     ++stats.toGs;
-                    callOriginal(kLabels, rdram, ctx, runtime);
+                    fallBack(kLabels, stats, misses, rdram, ctx, runtime);
                     return;
                 }
             float m[16];
@@ -1492,10 +1505,11 @@ namespace sc3
             const int32_t mode = static_cast<int32_t>(getRegU32(ctx, 4));
             const uint32_t string = getRegU32(ctx, 5), argument = getRegU32(ctx, 6);
             Page font;
+            const uint64_t misses = packMisses(stats);
             if (mode != 0 && (!page(kFontFile, 0u, font, stats)))
             {
                 ++stats.toGs;
-                callOriginal(kText, rdram, ctx, runtime);
+                fallBack(kText, stats, misses, rdram, ctx, runtime);
                 return;
             }
             TextCall call;
@@ -1750,12 +1764,13 @@ namespace sc3
             const int32_t asked = static_cast<int32_t>(getRegU32(ctx, 4));
             const uint32_t index = static_cast<uint32_t>(std::min(std::max(asked, 0), 0x39));
             Page pageRegs;
+            const uint64_t misses = packMisses(stats);
             if (peek8(kNoGsPackets) != 0u || index >= 0x12u || peek32(kIconReady) == 0u ||
                 !page(kIconFile, 0u, pageRegs, stats))
             {
                 if (peek8(kNoGsPackets) == 0u)
                     ++stats.toGs;
-                callOriginal(kIcon, rdram, ctx, runtime);
+                fallBack(kIcon, stats, misses, rdram, ctx, runtime);
                 return;
             }
             const uint32_t colourVec = getRegU32(ctx, 5);
@@ -1831,7 +1846,7 @@ namespace sc3
             BuilderStats unused;
             if (!page(file, 0u, p, unused))
             {
-                callOriginal(at, rdram, ctx, runtime);
+                fallBack(at, unused, 0u, rdram, ctx, runtime);
                 return;
             }
             ++s.uploadsDropped;
@@ -1853,16 +1868,16 @@ namespace sc3
             bool packed = fileAddress(file) && seen + 2u <= s.frames;
             const uint32_t pages = packed ? peek8(file + 5u) + peek8(file + 7u) * 256u : 0u;
             packed = packed && pages != 0u;
+            BuilderStats unused;
             for (uint32_t i = 0; packed && i < pages; ++i)
             {
                 Page p;
-                BuilderStats unused;
                 packed = page(file, i, p, unused);
             }
             if (!packed)
             {
                 ++s.uploadsKept[file];
-                callOriginal(kUploadItem, rdram, ctx, runtime);
+                fallBack(kUploadItem, unused, 0u, rdram, ctx, runtime);
                 return;
             }
             ++s.uploadsDropped;
@@ -2458,13 +2473,14 @@ namespace sc3
                 return;
             }
             Page pageRegs;
+            const uint64_t misses = packMisses(stats);
             if (peek8(item + 0x1Eu) != 0u && fileAddress(file) &&
                 !(head == 2u   ? copiedPage(file, pageRegs, stats)
                   : head == 1u ? blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha
                                : page(file, peek8(item + 0x18u), pageRegs, stats)))
             {
                 ++stats.toGs;
-                callOriginal(address, rdram, ctx, runtime);
+                fallBack(address, stats, misses, rdram, ctx, runtime);
                 return;
             }
             Vu0 vu;
@@ -3323,13 +3339,14 @@ namespace sc3
                 callOriginal(kObjects, rdram, ctx, runtime);
                 return;
             }
+            const uint64_t misses = packMisses(stats);
             const bool found = head == 0u   ? page(file, peek8(item + 0x18u), pageRegs, stats)
                                : head == 2u ? copiedPage(file, pageRegs, stats)
                                             : blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha;
             if (!found)
             {
                 ++stats.toGs;
-                callOriginal(kObjects, rdram, ctx, runtime);
+                fallBack(kObjects, stats, misses, rdram, ctx, runtime);
                 return;
             }
             if (peek16(item + 8u) == 0u || peek32(item + 0xCu) == 0u)
@@ -3921,7 +3938,7 @@ namespace sc3
                 return;
             }
             Page pageRegs;
-            const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture;
+            const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture, misses = packMisses(stats);
             const bool pageless = !sprites && peek32(item + 0x14u) == 0u && peek32(item + 0x10u) == 0u;
             if ((sprites && peek8(item + 0xBu) != 0u) || (!pageless && !screenPage(item, pageRegs, stats)))
             {
@@ -3930,7 +3947,7 @@ namespace sc3
                     std::fprintf(stderr, "[sc3:2d] %s to the GS: item %#x count %u insertion %u prim %#x file %#x page %u head %u uploads %u, block %#x\n", name, item,
                                  peek16(item + 8u), peek8(item + 0xAu), peek8(item + 0xBu), peek32(item + 0x14u), peek8(item + 0x18u), peek8(item + 0x1Cu),
                                  peek8(item + 0x1Au), peek32(item + 0x10u));
-                callOriginal(address, rdram, ctx, runtime);
+                fallBack(address, stats, misses, rdram, ctx, runtime);
                 return;
             }
             Vu0 vu;
