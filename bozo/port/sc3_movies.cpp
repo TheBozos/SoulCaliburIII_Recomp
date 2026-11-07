@@ -1,4 +1,4 @@
-// Sofdec answered at mwPly's level. Movies of MOVIE.AFS (partition 1) are decoded here with FFmpeg, on the host's clock, and
+// Sofdec answered at mwPly's level. Movies of MOVIE.AFS (partition 1) are decoded here with FFmpeg, on the game's frames, and
 // Sofdec's own player is never started: full-screen ones are the renderer's held backdrop, smaller ones (menu previews) a
 // picture the 2D builders ask for by handle, their ADX soundtracks go to the mixer through the port's PCM stream. Any other
 // start reports its end straight away.
@@ -16,7 +16,6 @@
 #ifdef SC3_HAVE_FFMPEG
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -157,15 +156,13 @@ namespace sc3::movies
             }
 
             // At the frame ends: the clock moves on, the picture of that time is the current one.
-            void update(bool realTime)
+            void update()
             {
-                const double now = realTime ? std::chrono::duration<double>(std::chrono::steady_clock::now() - m_started).count()
-                                            : static_cast<double>(++m_ticks) * kGameFrameTime;
+                const double now = static_cast<double>(++m_ticks) * kGameFrameTime;
                 std::unique_lock<std::mutex> lock(m_mutex);
                 if (!m_active)
                     return;
-                if (!realTime)
-                    m_wake.wait(lock, [&] { return m_quit || m_decoderDone || fullLocked(); });
+                m_wake.wait(lock, [&] { return m_quit || m_decoderDone || fullLocked(); });
                 m_now = now;
                 advanceLocked();
                 if (m_fullScreen)
@@ -482,7 +479,6 @@ namespace sc3::movies
             std::mutex m_mutex;
             std::condition_variable m_wake;
             uint64_t m_base = 0, m_size = 0, m_position = 0, m_decoded = 0, m_ticks = 0, m_backdropVersion = 0;
-            std::chrono::steady_clock::time_point m_started = std::chrono::steady_clock::now();
             double m_now = 0.0;
             std::deque<Picture> m_frames;
             std::deque<int16_t> m_audio;
@@ -493,7 +489,6 @@ namespace sc3::movies
         };
 
         std::map<uint32_t, std::shared_ptr<SfdPlayer>> g_players;
-        std::chrono::steady_clock::time_point g_audioStart;
         uint64_t g_audioTicks = 0, g_audioPushed = 0;
 
         std::shared_ptr<SfdPlayer> find(uint32_t handle)
@@ -506,11 +501,8 @@ namespace sc3::movies
         // mixer's block in a deterministic run. Silence is not pushed: the stream adds nothing when it has none.
         void pushAudio(PS2Runtime *runtime, bool realTime)
         {
-            if (g_audioPushed == 0u && g_audioTicks == 0u)
-                g_audioStart = std::chrono::steady_clock::now();
             ++g_audioTicks;
-            const double now = realTime ? std::chrono::duration<double>(std::chrono::steady_clock::now() - g_audioStart).count()
-                                        : static_cast<double>(g_audioTicks) * kGameFrameTime;
+            const double now = static_cast<double>(g_audioTicks) * kGameFrameTime;
             const uint64_t target = static_cast<uint64_t>(now * kRate) + (realTime ? kRate / 5u : kRate / 60u);
             if (target <= g_audioPushed)
                 return;
@@ -700,7 +692,7 @@ namespace sc3::movies
         g_runtime = runtime;
         const bool realTime = bozo::port::host(runtime).realTime();
         for (const auto &entry : g_players)
-            entry.second->update(realTime);
+            entry.second->update();
         pushAudio(runtime, realTime);
 #else
         (void)runtime;
