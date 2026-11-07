@@ -80,6 +80,7 @@ namespace sc3::frame
             {
                 movies::tick(runtime);
                 ot::presentAlone();
+                ot::holdStill();
                 bozo::port::frameEnd(runtime, ctx);
                 ctx->pc = kAdxmVsyncSleepReturn;
                 return;
@@ -177,6 +178,7 @@ namespace sc3::frame
             {
                 g_frameOpen = false;
                 movies::tick(runtime);
+                ot::holdStill();
                 bozo::port::frameEnd(runtime, ctx);
             }
             func_0x148098(rdram, ctx, runtime);

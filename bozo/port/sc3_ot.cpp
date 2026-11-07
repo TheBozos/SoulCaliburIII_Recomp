@@ -4,6 +4,10 @@
 // points (0x10F9D0), so a segment of the GIF list and its VIF1 counterpart are drawn together, the uploads and 2D of the
 // GIF side first. No chain is built or read: the rewritten builders and hooks append here what the game would have linked.
 #include "sc3_draw.h"
+
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 #include "sc3_meshes.h"
 #include "sc3_textures.h"
 
@@ -211,6 +215,27 @@ namespace sc3::ot
             bucket.clear();
     }
 
+    // SC3_HOLD_FRAMES=n,n,..: the game stands at those frames' ends for a while, so that the window's capture by frame has that
+    // frame's picture and no later one (the game runs faster than the window presents).
+    void holdStill()
+    {
+        static const std::vector<uint64_t> holds = []
+        {
+            std::vector<uint64_t> list;
+            if (const char *text = std::getenv("SC3_HOLD_FRAMES"))
+                for (const char *p = text; *p;)
+                {
+                    char *end = nullptr;
+                    list.push_back(std::strtoull(p, &end, 10));
+                    p = *end ? end + 1 : end;
+                }
+            return list;
+        }();
+        static uint64_t frame = 0;
+        if (std::find(holds.begin(), holds.end(), frame++) != holds.end())
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+
     void presentAlone()
     {
         State &s = g_state;
@@ -255,6 +280,24 @@ namespace sc3::ot
                          static_cast<unsigned long long>(s.emptyKicks));
             s.drawsSinceReport = s.emptyKicks = 0;
         }
+    }
+
+    // SC3_HIDE_EE=a,b,..: a look at the picture without what those game functions draw (the ones with a hook that asks).
+    bool hidden(uint32_t address)
+    {
+        static const std::vector<uint32_t> list = []
+        {
+            std::vector<uint32_t> out;
+            if (const char *text = std::getenv("SC3_HIDE_EE"))
+                for (const char *p = text; *p;)
+                {
+                    char *end = nullptr;
+                    out.push_back(static_cast<uint32_t>(std::strtoul(p, &end, 16)));
+                    p = *end ? end + 1 : end;
+                }
+            return out;
+        }();
+        return std::find(list.begin(), list.end(), address) != list.end();
     }
 
     void install(Registry &runtime)
