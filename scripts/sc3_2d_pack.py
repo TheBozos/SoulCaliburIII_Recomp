@@ -75,6 +75,27 @@ def clut_uploads(data):
     return out
 
 
+def image_uploads(data):
+    """The (DBP, DBW, DPSM) of the stream's image transfers."""
+    regs, out, q = {}, set(), 0
+    while q + 16 <= len(data):
+        lo, hi = struct.unpack_from('<QQ', data, q)
+        nloop, flg = lo & 0x7FFF, (lo >> 58) & 3
+        q += 16
+        if flg == 0 and (hi & 0xF) == 0xE:
+            for _ in range(nloop):
+                value, reg = struct.unpack_from('<QQ', data, q)
+                regs[reg & 0xFF] = value
+                q += 16
+        elif flg == 2:
+            q += nloop * 16
+            bitbltbuf = regs.get(0x50, 0)
+            out.add(((bitbltbuf >> 32) & 0x3FFF, (bitbltbuf >> 48) & 0x3F, (bitbltbuf >> 56) & 0x3F))
+        else:
+            break
+    return out
+
+
 def page_textures(d, blocks):
     """{block offset: (psm, w, h, texels, palette)} for the blocks whose texture the leaf's own upload lists write."""
     starts = sorted({0} | {q for q in range(0, len(d) - 4, 16) if struct.unpack_from('<I', d, q)[0] == MODEL_MAGIC})
@@ -87,6 +108,7 @@ def page_textures(d, blocks):
             continue
         gs = GsMemory()
         cluts = set()
+        streams = []
         try:
             for k, entries in enumerate(call_lists(m, units)):
                 for _, target in entries:
@@ -97,6 +119,7 @@ def page_textures(d, blocks):
                     if data is not None:
                         play_gif(gs, data)
                         cluts |= clut_uploads(data)
+                        streams.append((k + 1, data, image_uploads(data)))
         except Unsupported:
             continue
         for q, writes in blocks:
@@ -115,6 +138,20 @@ def page_textures(d, blocks):
                 w = 1 << tw
             if not h or h > (1 << th):
                 h = 1 << th
+            # Lists of one model may upload to the same blocks, each for the draws after it (a map at TBP 0x2C40 of width 640,
+            # a marker at 0x2C40 of width 64): the page's texels and CLUT are its own lists' last.
+            tbp, tbw, tpsm, cbp = tex0 & 0x3FFF, (tex0 >> 14) & 0x3F, (tex0 >> 20) & 0x3F, (tex0 >> 37) & 0x3FFF
+            try:
+                for entry, data, uploads in streams:
+                    if (tbp, tbw, tpsm) in uploads:
+                        gs.entry = entry
+                        play_gif(gs, data)
+                for entry, data, uploads in streams:
+                    if any(u[0] == cbp and u[2] == PSM_CT32 for u in uploads) and (tbp, tbw, tpsm) not in uploads:
+                        gs.entry = entry
+                        play_gif(gs, data)
+            except Unsupported:
+                continue
             try:
                 psm, texels, palette, touched = decode(gs, tex0, w, h)
             except Unsupported:
