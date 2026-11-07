@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     opt.framePeriodCycles = sc3::kFramePeriodCycles;
     bool printSites = false;
     opt.elf = BOZO_RUN_DEFAULT_ELF;
-    sc3::useSymbolMap(opt);
+    sc3::useSymbolMap(opt, argv[0]);
     uint64_t report = 500;
     std::string wavPath, dumpDir;
     std::vector<uint32_t> dumpAt;

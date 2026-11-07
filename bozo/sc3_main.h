@@ -23,12 +23,20 @@
 
 namespace sc3
 {
-    // The build's symbol map for the free host, on an engine that reads them (a pin older than symbol maps has no field).
-    inline void useSymbolMap(bozo::host::FreeOptions &options)
+    // SC3_SYMBOL_MAP, else sc3_symbols.txt beside the program, else the build's own map.
+    inline void useSymbolMap(bozo::host::FreeOptions &options, const char *program)
     {
-        [](auto &o) {
+        namespace fs = std::filesystem;
+        std::string path = SC3_DEFAULT_SYMBOL_MAP;
+        std::error_code ec;
+        const fs::path beside = fs::path(program).parent_path() / "sc3_symbols.txt";
+        if (const char *env = std::getenv("SC3_SYMBOL_MAP"); env && *env)
+            path = env;
+        else if (fs::is_regular_file(beside, ec))
+            path = beside.string();
+        [&](auto &o) {
             if constexpr (requires { o.symbolMap; })
-                o.symbolMap = SC3_DEFAULT_SYMBOL_MAP;
+                o.symbolMap = path;
         }(options);
     }
 
