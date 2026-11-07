@@ -95,6 +95,7 @@ namespace sc3
         {
             uint64_t calls = 0, native = 0, sprites = 0, markers = 0, toGs = 0;
             uint64_t noFile = 0, noBlock = 0, noTexture = 0;
+            uint64_t blockNotPacked = 0; // among noBlock: the leaf is the pack's, the block is not in it
         };
 
 ;
@@ -191,9 +192,10 @@ namespace sc3
 
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { originalOf(address)(rdram, ctx, runtime); }
 
-        // The game's function for a draw the native path refused: uncharged when it was for a pack miss (a block or texture the
-        // packs lack: `misses` the stats' count before the native try), else as the game runs it.
-        uint64_t packMisses(const BuilderStats &stats) { return stats.noBlock + stats.noTexture; }
+        // The game's function for a draw the native path refused: uncharged when it was for a pack miss (a block of a packed leaf or
+        // a texture the packs lack: `misses` the stats' count before the native try), else as the game runs it (a file not
+        // loaded yet is the game's state, not the pack's).
+        uint64_t packMisses(const BuilderStats &stats) { return stats.blockNotPacked + stats.noTexture; }
 
         void fallBack(uint32_t address, const BuilderStats &stats, uint64_t misses, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -366,7 +368,10 @@ namespace sc3
             packs::LoadedImages::Image image;
             const packs::RegisterBlock *registers = nullptr;
             if (s.loaded.find(block, image) && image.file)
+            {
                 registers = image.file->block(block - image.base);
+                stats.blockNotPacked += registers ? 0u : 1u;
+            }
             if (!registers)
             {
                 ++stats.noBlock;
