@@ -118,11 +118,12 @@ def page_textures(d, blocks):
                     if target is None:
                         continue
                     gs.entry = k + 1
-                    data = walk_chain(m, target)
-                    if data is not None:
-                        play_gif(gs, data)
+                    chain = walk_chain(m, target)
+                    if chain is not None:
+                        data, qwords = chain
+                        play_gif(gs, data, qwords)
                         cluts |= clut_uploads(data)
-                        streams.append((k + 1, data, image_uploads(data)))
+                        streams.append((k + 1, chain, image_uploads(data)))
         except Unsupported:
             continue
         for q, writes in blocks:
@@ -145,18 +146,18 @@ def page_textures(d, blocks):
             # a marker at 0x2C40 of width 64): the page's texels and CLUT are its own lists' last.
             tbp, tbw, tpsm, cbp = tex0 & 0x3FFF, (tex0 >> 14) & 0x3F, (tex0 >> 20) & 0x3F, (tex0 >> 37) & 0x3FFF
             try:
-                for entry, data, uploads in streams:
+                for entry, chain, uploads in streams:
                     if (tbp, tbw, tpsm) in uploads:
                         gs.entry = entry
-                        play_gif(gs, data)
-                for entry, data, uploads in streams:
+                        play_gif(gs, *chain)
+                for entry, chain, uploads in streams:
                     if any(u[0] == cbp and u[2] == PSM_CT32 for u in uploads) and (tbp, tbw, tpsm) not in uploads:
                         gs.entry = entry
-                        play_gif(gs, data)
+                        play_gif(gs, *chain)
             except Unsupported:
                 continue
             try:
-                psm, texels, palette, touched = decode(gs, tex0, w, h)
+                psm, texels, palette, touched = decode(gs, tex0, w, h)[:4]
             except Unsupported:
                 continue
             if not touched or 0 in touched:
@@ -165,7 +166,7 @@ def page_textures(d, blocks):
             if palette is not None:
                 for cbp in sorted(cluts - {(tex0 >> 37) & 0x3FFF}):
                     seen = set()
-                    other = clut_ct32(gs, (tex0 & ~(0x3FFF << 37)) | (cbp << 37), len(palette), seen)
+                    other = clut_ct32(gs, (tex0 & ~(0x3FFF << 37)) | (cbp << 37), len(palette), seen, [])
                     if seen and 0 not in seen:
                         others.append((cbp, other))
             out[q] = (psm, w, h, texels, palette, others)
