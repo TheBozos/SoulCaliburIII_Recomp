@@ -3068,8 +3068,38 @@ namespace sc3
             std::vector<ObjectSprite> sprites;
         };
 
-        // The sprites 0x110E50 builds for `item` (false: none), VU0 on a copy that ends as the game's; 0x118020's page sizes
-        // (the page's used size over its TEX0 size) from the pack's page.
+        // 0x118020
+        void pageSizes(uint32_t file, uint32_t index, int32_t &width, int32_t &height, int32_t &tw, int32_t &th)
+        {
+            const int32_t count = static_cast<int32_t>(peek8(file + 7u) * 256u + peek8(file + 5u));
+            if (static_cast<int32_t>(index) >= count)
+            {
+                width = height = 0;
+                tw = th = 2;
+                return;
+            }
+            const uint32_t block = peek32(peek32(file + 0xCu) + index * 4u) & ~0xFu;
+            const uint32_t size = peek32(block + 0xCu);
+            const uint64_t tex0 = peek64(block + 0x20u);
+            width = static_cast<int32_t>(size & 0xFFFFu);
+            height = static_cast<int32_t>(size >> 16);
+            tw = 1 << ((tex0 >> 26) & 0xFu);
+            th = 1 << ((tex0 >> 30) & 0xFu);
+        }
+
+        void scalePageSt(uint32_t file, uint32_t index)
+        {
+            int32_t width = 0, height = 0, tw = 0, th = 0;
+            pageSizes(file, index, width, height, tw, th);
+            const float sw = FPU_DIV_S(FPU_CVT_S_W(static_cast<uint32_t>(width)), FPU_CVT_S_W(static_cast<uint32_t>(tw)));
+            const float sh = FPU_DIV_S(FPU_CVT_S_W(static_cast<uint32_t>(height)), FPU_CVT_S_W(static_cast<uint32_t>(th)));
+            pokeFloat(kObjectSt + 0x10u, sw);
+            pokeFloat(kObjectSt + 0x30u, sw);
+            pokeFloat(kObjectSt + 0x24u, sh);
+            pokeFloat(kObjectSt + 0x34u, sh);
+        }
+
+        // The sprites 0x110E50 builds for `item` (false: none), VU0 on a copy that ends as the game's.
         bool objectBuild(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t item, Vu0 &vu, ObjectCall &call, const Page &pageRegs)
         {
             const uint32_t count = peek16(item + 8u);
@@ -3144,14 +3174,7 @@ namespace sc3
                     continue;
                 }
                 if (peek32(item + 0x10u) == 0u)
-                {
-                    const float sw = FPU_DIV_S(FPU_CVT_S_W(pageRegs.width), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 26) & 0xFu)));
-                    const float sh = FPU_DIV_S(FPU_CVT_S_W(pageRegs.height), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 30) & 0xFu)));
-                    pokeFloat(kObjectSt + 0x10u, sw);
-                    pokeFloat(kObjectSt + 0x30u, sw);
-                    pokeFloat(kObjectSt + 0x24u, sh);
-                    pokeFloat(kObjectSt + 0x34u, sh);
-                }
+                    scalePageSt(call.file, call.page);
                 if (projected)
                     pokeFloat(e + 0x1Cu, w);
                 const float inverse = FPU_DIV_S(1.0f, w);
@@ -3438,12 +3461,7 @@ namespace sc3
             const uint32_t table = peek32(item + 0x10u);
             if (table != 0u || peek32(item + 0x14u) == 0u)
                 return table;
-            const float sw = FPU_DIV_S(FPU_CVT_S_W(pageRegs.width), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 26) & 0xFu)));
-            const float sh = FPU_DIV_S(FPU_CVT_S_W(pageRegs.height), FPU_CVT_S_W(1u << ((pageRegs.tex0 >> 30) & 0xFu)));
-            pokeFloat(kObjectSt + 0x10u, sw);
-            pokeFloat(kObjectSt + 0x30u, sw);
-            pokeFloat(kObjectSt + 0x24u, sh);
-            pokeFloat(kObjectSt + 0x34u, sh);
+            scalePageSt(peek32(item + 0x14u), peek8(item + 0x18u));
             return kObjectSt;
         }
 
