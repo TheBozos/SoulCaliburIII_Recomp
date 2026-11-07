@@ -51,7 +51,6 @@ namespace sc3::draw
         struct Mapping
         {
             float scaleU = 1.0f, scaleV = 1.0f, offsetU = 0.0f, offsetV = 0.0f;
-            bool decal = false;
         };
 
         Vertex toVertex(const GsVertex &g, const Mapping &map, uint32_t rgba, uint32_t z)
@@ -64,7 +63,7 @@ namespace sc3::draw
             v.u = g.s / q * map.scaleU - map.offsetU;
             v.v = g.t / q * map.scaleV - map.offsetV;
             v.q = q > 0.0f ? q : 1.0f;
-            v.rgba = map.decal ? 0x80808080u : rgba;
+            v.rgba = rgba;
             v.fog = g.fog;
             return v;
         }
@@ -223,7 +222,8 @@ namespace sc3::draw
             const uint64_t clamp = gs.clamp;
             const Window u = windowOf(static_cast<uint32_t>(clamp & 3u), static_cast<uint32_t>((clamp >> 4) & 0x3FFu), static_cast<uint32_t>((clamp >> 14) & 0x3FFu), width);
             const Window v = windowOf(static_cast<uint32_t>((clamp >> 2) & 3u), static_cast<uint32_t>((clamp >> 24) & 0x3FFu), static_cast<uint32_t>((clamp >> 34) & 0x3FFu), height);
-            map.decal = gs.tex0.tfx == 1u;
+            m.textureFunction = static_cast<Material::TextureFunction>(gs.tex0.tfx);
+            m.textureAlpha = gs.tex0.tcc != 0u;
             if (u.size != width || v.size != height)
                 gs.texture = windowImage(image, u, v, clamp);
             m.tex0 = gs.texture->key;
@@ -268,6 +268,11 @@ namespace sc3::draw
                 triangle(in[i], in[i + 1u], in[i + 2u], shaded, map, out);
             break;
         }
+        // Without a texture the GS's colour is the vertex's, 0xFF being 1.0; the Renderer's is 0x80.
+        if (!m.textured)
+            for (Vertex &v : out)
+                v.rgba = (v.rgba & 0xFF000000u) | ((((v.rgba & 0xFFu) + 1u) >> 1) & 0xFFu) | ((((((v.rgba >> 8) & 0xFFu) + 1u) >> 1) & 0xFFu) << 8) |
+                         ((((((v.rgba >> 16) & 0xFFu) + 1u) >> 1) & 0xFFu) << 16);
     }
 
     namespace
