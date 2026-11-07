@@ -72,11 +72,12 @@ namespace sc3
     // threads, the mixer and a deterministic movie clock run on.
     constexpr uint64_t kFramePeriodCycles = bozo::port::kEeClockHz * 1001u / 60000u;
 
-    // PLAN's exit criterion: no guest code on a normal route reaches a register answered with no device behind it. The
-    // count is 0 at release; the sites come with --profile-io.
+    // PLAN's exit criterion: no guest code on a normal route reaches a hardware register, whatever answers it. The count
+    // is 0 at release; the sites come with --profile-io.
     inline void reportAcknowledged(const bozo::host::FreeStats &stats)
     {
         uint64_t gifVif = 0, imr = 0, sigLblId = 0, condition = 0, scratchpad = 0, channels = 0;
+        uint64_t timers[4] = {}, ipu = 0, enable = 0, other = 0;
         for (const auto &[site, counts] : stats.ioSites)
         {
             const uint64_t hits = counts[0] + counts[1];
@@ -93,12 +94,20 @@ namespace sc3
                 scratchpad += hits;
             else if (a >= 0x10008000u && a < 0x1000A040u)
                 channels += hits;
+            else if (a >= 0x10000000u && a < 0x10002000u)
+                timers[(a - 0x10000000u) >> 11] += hits;
+            else if ((a >= 0x10002000u && a < 0x10002040u) || (a >= 0x1000B000u && a < 0x1000B440u))
+                ipu += hits;
+            else if (a == 0x1000F520u || a == 0x1000F590u)
+                enable += hits;
+            else
+                other += hits;
         }
-        std::fprintf(stderr, "[sc3:acknowledged] %llu hits: GIF/VIF status %llu, GS IMR %llu, SIGLBLID %llu, BC0F/BC0T %llu, scratchpad CHCR %llu; VIF0/VIF1/GIF channels %llu\n",
-                     static_cast<unsigned long long>(gifVif + imr + sigLblId + condition + scratchpad),
-                     static_cast<unsigned long long>(gifVif), static_cast<unsigned long long>(imr),
-                     static_cast<unsigned long long>(sigLblId), static_cast<unsigned long long>(condition),
-                     static_cast<unsigned long long>(scratchpad), static_cast<unsigned long long>(channels));
+        const auto count = [](uint64_t v) { return static_cast<unsigned long long>(v); };
+        const uint64_t total = gifVif + imr + sigLblId + condition + scratchpad + channels + timers[0] + timers[1] + timers[2] + timers[3] + ipu + enable + other;
+        std::fprintf(stderr, "[sc3:acknowledged] %llu hits: GIF/VIF status %llu, GS IMR %llu, SIGLBLID %llu, BC0F/BC0T %llu, scratchpad CHCR %llu; VIF0/VIF1/GIF channels %llu; timers T0 %llu, T1 %llu, T2 %llu, T3 %llu; IPU %llu, D_ENABLE %llu; other %llu\n",
+                     count(total), count(gifVif), count(imr), count(sigLblId), count(condition), count(scratchpad), count(channels),
+                     count(timers[0]), count(timers[1]), count(timers[2]), count(timers[3]), count(ipu), count(enable), count(other));
     }
 
     // A run's end, said plainly: the first call nothing answers yet is where the port stands.

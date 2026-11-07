@@ -5,6 +5,7 @@ namespace
     void applySc3(sc3::Registry &runtime)
     {
         sc3::frame::install(runtime);
+        sc3::clock::install(runtime);
         sc3::packet::install(runtime);
         sc3::ot::install(runtime);
         sc3::twoD::install(runtime);
