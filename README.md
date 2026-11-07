@@ -320,6 +320,18 @@ generates with `bozo-calllog-tool externals`' list, which `sc3-check --pinned` n
 recompiler's inputs in `recomp/` (`sc3_stubs.txt`, `sc3_entries.txt`, `sc3_symbols.txt`), and what it is compared with in
 [`reference/`](reference/README.md).
 
+The packs (`cmake --build <build> --target sc3_packs`) are built from the disc's files into `<build>/packs/`. The programs
+read them from the `SC3_2D_PACK`, `SC3_TEXTURE_PACK` and `SC3_MESH_PACK` variables, else from `packs/` beside the
+executable, and the symbol map from `SC3_SYMBOL_MAP`, else `sc3_symbols.txt` beside it.
+
+Windows from Linux: a mingw-w64 GCC that targets the UCRT (the compiler of MSYS2 UCRT64 and TMB's kit) builds it with
+`cmake/mingw-cross.cmake`. `SC3_HOST_TOOLS` names a native build's `bozo-externals` and `bozo-recomp`, and
+`scripts/build_win_ffmpeg.sh` builds the static FFmpeg it links. Clang targets (zig c++, llvm-mingw) build a binary that
+crashes, so they are not supported: on Win64 their `__builtin_longjmp` restores rbp from the frame address instead of the
+frame pointer, which breaks BozoEngine's stops. `scripts/make_win_package.sh` lays out a portable folder from that build:
+the programs, the symbol map and `packs/`. That folder holds code and packs made from the disc, so it never leaves the
+machine that built it.
+
 ## Disc facts
 
 | | |

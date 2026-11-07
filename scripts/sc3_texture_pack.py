@@ -19,12 +19,17 @@ The output lives in the build tree and is never committed: it is the user's game
 """
 
 import argparse
+import array
 import multiprocessing
 import os
 import struct
 import sys
+import zlib
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'PS2Recomp', 'tools'))
+for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'BozoEngine', 'tools'), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'PS2Recomp', 'tools')):
+    if _tools and os.path.isdir(os.path.join(_tools, 'native_pack')):
+        sys.path.insert(0, _tools)
+        break
 from native_pack import texture  # noqa: E402
 
 TEX0_KEY_MASK = (0x3FFF | (0x3F << 14) | (0x3F << 20) | (0xF << 26) | (0xF << 30) | (0x3FFF << 37) | (0xF << 51) |
@@ -97,17 +102,21 @@ def addr4(bp, bw, x, y):
     return ((page << 14) + ((block >> 5) << 14) + (block & 0x1F) * 512 + COLUMN4[y & 15][x & 31]) % (GS_BYTES * 2)
 
 
+NO_SOURCE = 0xFFFFFFFF
+
+
 class GsMemory:
-    """GS local memory as a CALL list's uploads leave it, with the list entry (1-based) that last wrote each byte
-    (offline model only)."""
+    """GS local memory as a CALL list's uploads leave it, with the list entry (1-based) that last wrote each byte and
+    the model offset of the upload data each 4-byte word came from (offline model only)."""
 
     def __init__(self):
         self.mem = bytearray(GS_BYTES)
         self.written = bytearray(GS_BYTES)
+        self.src = array.array('I', [NO_SOURCE]) * (GS_BYTES // 4)
         self.entry = 1
 
-    def write_ct32(self, bp, bw, sx, sy, w, h, data):
-        mem, written = self.mem, self.written
+    def write_ct32(self, bp, bw, sx, sy, w, h, data, sources):
+        mem, written, src = self.mem, self.written, self.src
         mark = bytes([self.entry]) * 4
         i = 0
         for y in range(sy, sy + h):
@@ -115,42 +124,50 @@ class GsMemory:
                 a = addr32(bp, bw, x, y)
                 mem[a:a + 4] = data[i:i + 4]
                 written[a:a + 4] = mark
+                src[a >> 2] = sources[i >> 4] + (i & 15)
                 i += 4
 
-    def write_high(self, psm, bp, bw, sx, sy, w, h, data):
-        mem, written = self.mem, self.written
+    def write_high(self, psm, bp, bw, sx, sy, w, h, data, sources):
+        mem, written, src = self.mem, self.written, self.src
         i = 0
         for y in range(sy, sy + h):
             for x in range(sx, sx + w):
                 a = addr32(bp, bw, x, y) + 3
+                b = i if psm == PSM_T8H else i >> 1
                 if psm == PSM_T8H:
                     mem[a] = data[i]
                 else:
                     v = (data[i >> 1] >> ((i & 1) * 4)) & 0xF
                     mem[a] = (mem[a] & 0xF0) | v if psm == PSM_T4HL else (mem[a] & 0x0F) | (v << 4)
                 written[a] = self.entry
+                src[a >> 2] = sources[b >> 4] + (b & 12)
                 i += 1
 
-    def write_indexed(self, psm, bp, bw, sx, sy, w, h, data):
-        mem, written = self.mem, self.written
+    def write_indexed(self, psm, bp, bw, sx, sy, w, h, data, sources):
+        mem, written, src = self.mem, self.written, self.src
         i = 0
         for y in range(sy, sy + h):
             for x in range(sx, sx + w):
                 if psm == PSM_T8:
                     a = addr8(bp, bw, x, y)
                     mem[a] = data[i]
+                    b = i
                 else:
                     n = addr4(bp, bw, x, y)
                     a = n >> 1
                     v = (data[i >> 1] >> ((i & 1) * 4)) & 0xF
-                    mem[a] = (mem[a] & 0x0F) | (v << 4) if n & 1 else (mem[a] & 0xF0) | v
+                    mem[a] = (mem[a] & 0xF0) | v if not n & 1 else (mem[a] & 0x0F) | (v << 4)
+                    b = i >> 1
                 written[a] = self.entry
+                src[a >> 2] = sources[b >> 4] + (b & 12)
                 i += 1
 
-    def ct32(self, bp, bw, x, y, touched):
+    def ct32(self, bp, bw, x, y, touched, words=None):
         a = addr32(bp, bw, x, y)
         e = self.written[a]
         touched.add(e)
+        if words is not None:
+            words.append(self.src[a >> 2])
         return struct.unpack_from('<I', self.mem, a)[0]
 
 
@@ -158,7 +175,7 @@ class Unsupported(Exception):
     pass
 
 
-def clut_ct32(gs, tex0, entries, touched):
+def clut_ct32(gs, tex0, entries, touched, words):
     cbp = (tex0 >> 37) & 0x3FFF
     csm = (tex0 >> 55) & 1
     if csm:
@@ -166,15 +183,17 @@ def clut_ct32(gs, tex0, entries, touched):
     out = []
     for e in range(entries):
         s = (e & ~0x18) | ((e & 0x08) << 1) | ((e & 0x10) >> 1)
-        out.append(gs.ct32(cbp, 1, s & 15, s >> 4, touched))
+        out.append(gs.ct32(cbp, 1, s & 15, s >> 4, touched, words))
     return out
 
 
 def decode(gs, tex0, w, h):
     """The w x h top-left part of the texture TEX0 selects, as a pack record (PSM, texels: an index a byte for the
     indexed formats, CT32 four bytes) with its palette for an indexed one (its CT32 colours in index order, as the GS
-    looks them up: CSM1 order, 16 entries from CBP for T4 whatever CSA, alpha 0x80 = 1.0), and the list entries
-    (1-based, 0 for bytes no entry wrote) its texels and CLUT were read from."""
+    looks them up: CSM1 order, 16 entries from CBP for T4 whatever CSA, alpha 0x80 = 1.0), the list entries
+    (1-based, 0 for bytes no entry wrote) its texels and CLUT were read from, the model offset of the upload data each
+    palette entry came from (NO_SOURCE: none) and the set of model offsets of the 4-byte upload words its texels came
+    from."""
     tbp = tex0 & 0x3FFF
     tbw = (tex0 >> 14) & 0x3F
     psm = (tex0 >> 20) & 0x3F
@@ -183,13 +202,15 @@ def decode(gs, tex0, w, h):
     cpsm = (tex0 >> 51) & 0xF
     if tw > 10 or th > 10:
         raise Unsupported('size %d x %d' % (tw, th))
-    mem, written = gs.mem, gs.written
+    mem, written, src = gs.mem, gs.written, gs.src
     touched = set()
+    texel_words = set()
     if psm in (PSM_T8, PSM_T4, PSM_T8H, PSM_T4HL, PSM_T4HH):
         if cpsm != PSM_CT32:
             raise Unsupported('CLUT psm %#x' % cpsm)
         four = psm in (PSM_T4, PSM_T4HL, PSM_T4HH)
-        palette = clut_ct32(gs, tex0, 16 if four else 256, touched)
+        palette_src = []
+        palette = clut_ct32(gs, tex0, 16 if four else 256, touched, palette_src)
         out = bytearray(w * h)
         i = 0
         for y in range(h):
@@ -200,23 +221,27 @@ def decode(gs, tex0, w, h):
                     out[i] = mem[a]
                 elif psm == PSM_T4:
                     n = addr4(tbp, tbw, x, y)
-                    touched.add(written[n >> 1])
-                    out[i] = (mem[n >> 1] >> ((n & 1) * 4)) & 0xF
+                    a = n >> 1
+                    touched.add(written[a])
+                    out[i] = (mem[a] >> ((n & 1) * 4)) & 0xF
                 else:
-                    a = addr32(tbp, tbw, x, y)
-                    touched.add(written[a + 3])
-                    v = mem[a + 3]
+                    a = addr32(tbp, tbw, x, y) + 3
+                    touched.add(written[a])
+                    v = mem[a]
                     out[i] = v if psm == PSM_T8H else (v & 0xF if psm == PSM_T4HL else v >> 4)
+                texel_words.add(src[a >> 2])
                 i += 1
-        return psm, bytes(out), palette, touched
+        return psm, bytes(out), palette, touched, palette_src, texel_words
     if psm == PSM_CT32:
         out = bytearray(w * h * 4)
+        words = []
         i = 0
         for y in range(h):
             for x in range(w):
-                struct.pack_into('<I', out, i, gs.ct32(tbp, tbw, x, y, touched))
+                struct.pack_into('<I', out, i, gs.ct32(tbp, tbw, x, y, touched, words))
                 i += 4
-        return psm, bytes(out), None, touched
+        texel_words.update(words)
+        return psm, bytes(out), None, touched, [], texel_words
     raise Unsupported('texture psm %#x' % psm)
 
 
@@ -246,47 +271,60 @@ def dma_tag(d, q):
 
 
 def walk_chain(d, start, limit=1 << 16):
-    """GIF data of the DMA chain from `start` (file-relative addresses), and whether it is a whole chain."""
+    """GIF data of the DMA chain from `start` (file-relative addresses) and the file offset of each of its qwords, or
+    None when it is not a whole chain."""
     out = []
+    sources = []
     stack = []
     q = start
+
+    def take(at, qwc):
+        out.append(d[at:at + qwc * 16])
+        sources.extend(range(at, at + qwc * 16, 16))
+
+    def done():
+        return b''.join(out), sources
+
     for _ in range(limit):
         if q < 0 or q + 16 > len(d):
             return None
         qwc, tid, addr = dma_tag(d, q)
         if tid == 1:  # CNT
-            out.append(d[q + 16:q + 16 + qwc * 16])
+            take(q + 16, qwc)
             q += 16 + qwc * 16
         elif tid == 3 or tid == 4:  # REF, REFS
             if addr + qwc * 16 > len(d):
                 return None
-            out.append(d[addr:addr + qwc * 16])
+            take(addr, qwc)
             q += 16
         elif tid == 0:  # REFE
-            out.append(d[addr:addr + qwc * 16])
-            return b''.join(out)
+            take(addr, qwc)
+            return done()
         elif tid == 2:  # NEXT
-            out.append(d[q + 16:q + 16 + qwc * 16])
+            take(q + 16, qwc)
             q = addr
         elif tid == 5:  # CALL
-            out.append(d[q + 16:q + 16 + qwc * 16])
+            take(q + 16, qwc)
             if len(stack) == 2:
                 return None
             stack.append(q + 16 + qwc * 16)
             q = addr
         elif tid == 6:  # RET
-            out.append(d[q + 16:q + 16 + qwc * 16])
+            take(q + 16, qwc)
             if not stack:
-                return b''.join(out)
+                return done()
             q = stack.pop()
         elif tid == 7:  # END
-            out.append(d[q + 16:q + 16 + qwc * 16])
-            return b''.join(out)
+            take(q + 16, qwc)
+            return done()
     return None
 
 
-def play_gif(gs, data):
-    """Plays the GIF stream's image transfers into gs. Returns the number of transfers, or raises Unsupported."""
+def play_gif(gs, data, qwords=None):
+    """Plays the GIF stream's image transfers into gs (`qwords`: the file offset of each qword of `data`, none: 0).
+    Returns the number of transfers, or raises Unsupported."""
+    if qwords is None:
+        qwords = [0] * (len(data) // 16)
     regs = {}
     q = 0
     transfers = 0
@@ -317,12 +355,13 @@ def play_gif(gs, data):
             bits = 32 if dpsm == PSM_CT32 else 8 if dpsm in (PSM_T8, PSM_T8H) else 4
             if len(payload) * 8 < w * h * bits:
                 raise Unsupported('short IMAGE')
+            sources = qwords[q // 16 - nloop:q // 16]
             if dpsm == PSM_CT32:
-                gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload)
+                gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload, sources)
             elif dpsm in (PSM_T8, PSM_T4):
-                gs.write_indexed(dpsm, dbp, dbw, dsx, dsy, w, h, payload)
+                gs.write_indexed(dpsm, dbp, dbw, dsx, dsy, w, h, payload, sources)
             else:
-                gs.write_high(dpsm, dbp, dbw, dsx, dsy, w, h, payload)
+                gs.write_high(dpsm, dbp, dbw, dsx, dsy, w, h, payload, sources)
             transfers += 1
         else:
             raise Unsupported('GIF format %d' % flg)
@@ -418,17 +457,17 @@ def convert_model(d, report):
                 if target is None:
                     continue
                 gs.entry = k + 1
-                data = walk_chain(d, target)
-                if data is None:
+                chain = walk_chain(d, target)
+                if chain is None:
                     raise Unsupported('entry %d: chain does not end' % k)
-                play_gif(gs, data)
+                play_gif(gs, *chain)
         except Unsupported as e:
             report.append('list %#x: %s' % (entries[0][0], e))
             continue
         textures, reads = [], []
         for tex0, w, h in materials:
             try:
-                psm, texels, palette, touched = decode(gs, tex0, w, h)
+                psm, texels, palette, touched, palette_src, texel_words = decode(gs, tex0, w, h)
             except Unsupported as e:
                 report.append('list %#x tex0 %#x: %s' % (entries[0][0], tex0, e))
                 continue
@@ -437,11 +476,22 @@ def convert_model(d, report):
                 continue
             reads.append((0 in touched, written[0] - 1, written[-1] - 1))
             if 0 not in touched:
-                textures.append((tex0, w, h, psm, texels, palette, written[0] - 1))
+                textures.append((tex0, w, h, psm, texels, palette, written[0] - 1, palette_src, word_runs(texel_words)))
         complete = [all(not (last >= k) or (not unwritten and first >= k) for unwritten, first, last in reads)
                     for k in range(len(entries))]
         out.append(([q for q, _ in entries], textures, complete))
     return out
+
+
+def word_runs(words):
+    """Sorted (offset, bytes) runs of a set of 4-byte word offsets."""
+    runs = []
+    for w in sorted(words):
+        if runs and runs[-1][0] + runs[-1][1] == w:
+            runs[-1][1] += 4
+        else:
+            runs.append([w, 4])
+    return [tuple(r) for r in runs]
 
 
 MODEL_MAGIC = 0x00040403
@@ -449,29 +499,41 @@ MODEL_MAGIC = 0x00040403
 
 def convert_leaf(d, report):
     """The leaf's models (a 03 04 04 00 header, at the leaf's start or inside a container) converted one by one; a
-    model's DMA addresses are relative to its own start. CALL tag offsets come back relative to the leaf."""
+    model's DMA addresses are relative to its own start. CALL tag offsets and upload data sources come back relative to
+    the leaf, each texture with the CRC-32 of its texels' upload data as the disc has it."""
     starts = sorted({0} | {q for q in range(0, len(d) - 4, 16) if struct.unpack_from('<I', d, q)[0] == MODEL_MAGIC})
     out = []
     for i, start in enumerate(starts):
         end = starts[i + 1] if i + 1 < len(starts) else len(d)
         model_report = []
         for calls, textures, complete in convert_model(d[start:end], model_report):
-            out.append(([start + q for q in calls], textures, complete))
+            moved = []
+            for tex0, w, h, psm, texels, palette, first, palette_src, runs in textures:
+                palette_src = [NO_SOURCE if s == NO_SOURCE else start + s for s in palette_src]
+                runs = [(start + o, n) for o, n in runs if o != NO_SOURCE]
+                crc = 0
+                for o, n in runs:
+                    crc = zlib.crc32(d[o:o + n], crc)
+                moved.append((tex0, w, h, psm, texels, palette, first, palette_src, runs, crc))
+            out.append(([start + q for q in calls], moved, complete))
         report += ['model %#x %s' % (start, line) for line in model_report]
     return out
 
 
-KEYS_MAGIC = b'SC3KEYS1'
+KEYS_MAGIC = b'SC3KEYS2'
 
 
 def write_keys(path, olk_size, leaves):
     """The SC3 key index beside the texture pack: per pack file (one per CALL list, named '<leaf>@<list offset>'), the
     leaf's offset and size in ROOT.OLK, its list's entries (CALL offset in the leaf, complete) and its textures (TEX0
-    bits that select texels, used size, first entry, record number of the texels and of the palette or 0xffffffff).
+    bits that select texels, used size, first entry, record number of the texels and of the palette or 0xffffffff),
+    each with where in the leaf its upload data sits: the offset of each palette entry's word (0xffffffff: none) and the
+    runs of its texels' words with their CRC-32 as on the disc (the game may change either at run time).
 
-    "SC3KEYS1", u64 ROOT.OLK size, u32 list count, then per list: u16 name length, name, u64 leaf offset, u32 leaf
+    "SC3KEYS2", u64 ROOT.OLK size, u32 list count, then per list: u16 name length, name, u64 leaf offset, u32 leaf
     size, u32 entry count, u32 texture count, entries (u32 offset, u32 complete), textures (u64 tex0, u16 width,
-    u16 height, u32 first entry, u32 texel record, u32 palette record)."""
+    u16 height, u32 first entry, u32 texel record, u32 palette record, u16 palette entries, u32 texel runs, u32 CRC-32,
+    the palette entries' u32 offsets, the runs' u32 offset and u32 bytes)."""
     with open(path + '.tmp', 'wb') as out:
         lists = [(name, offset, size, calls, keys, complete) for name, offset, size, calls, keys, complete in leaves]
         out.write(KEYS_MAGIC + struct.pack('<QI', olk_size, len(lists)))
@@ -480,8 +542,11 @@ def write_keys(path, olk_size, leaves):
             out.write(struct.pack('<H', len(encoded)) + encoded + struct.pack('<QIII', offset, size, len(calls), len(keys)))
             for q, done in zip(calls, complete):
                 out.write(struct.pack('<II', q, 1 if done else 0))
-            for tex0, w, h, first, texel_record, palette_record in keys:
-                out.write(struct.pack('<QHHIII', tex0, w, h, first, texel_record, palette_record))
+            for tex0, w, h, first, texel_record, palette_record, palette_src, runs, crc in keys:
+                out.write(struct.pack('<QHHIIIHII', tex0, w, h, first, texel_record, palette_record, len(palette_src), len(runs), crc))
+                out.write(struct.pack('<%dI' % len(palette_src), *palette_src))
+                for o, n in runs:
+                    out.write(struct.pack('<II', o, n))
     os.replace(path + '.tmp', path)
 
 
@@ -522,14 +587,14 @@ def main():
                 name = '%s@%x' % (path, calls[0])
                 records = pack.add_file(name)
                 keys = []
-                for tex0, w, h, psm, texels, palette, first in textures:
+                for tex0, w, h, psm, texels, palette, first, palette_src, runs, crc in textures:
                     records.append((psm, w, h, texels))
                     texel_record = len(records) - 1
                     palette_record = 0xFFFFFFFF
                     if palette is not None:
                         records.append((texture.PSMCT32, len(palette), 1, struct.pack('<%dI' % len(palette), *palette)))
                         palette_record = len(records) - 1
-                    keys.append((tex0, w, h, first, texel_record, palette_record))
+                    keys.append((tex0, w, h, first, texel_record, palette_record, palette_src, runs, crc))
                 lists.append((name, offset, size, calls, keys, complete))
             if n % 200 == 0:
                 print('%d/%d leaves, %d upload lists' % (n, len(jobs), len(lists)), file=sys.stderr)
