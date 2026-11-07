@@ -116,7 +116,7 @@ namespace sc3
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t mipOwn = 0, mipMade = 0;
             uint64_t packDropped = 0;
-            std::map<uint32_t, uint64_t> routinesLeft;
+            std::map<uint32_t, uint64_t> routinesLeft, routinesDrawn;
             std::map<std::string, uint64_t> refused; // "<routine> <reason>"
             std::map<uint64_t, uint64_t> textureMisses;
         };
@@ -1277,6 +1277,7 @@ namespace sc3
             if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
                 return false;
             ++s.stats.native;
+            ++s.stats.routinesDrawn[routine];
             std::vector<Sc3Draw> draws;
             draws.push_back(std::move(draw));
             place(rdram, ctx, runtime, std::move(draws), true);
@@ -1427,6 +1428,7 @@ namespace sc3
                     return false;
             }
             ++s.stats.chainNative;
+            ++s.stats.routinesDrawn[0x10000u | routine];
             s.stats.chainBatches += n;
             place(rdram, ctx, runtime, std::move(draws), true);
             return true;
@@ -1489,6 +1491,7 @@ namespace sc3
                 if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
                     return false;
             ++s.stats.chainNative;
+            ++s.stats.routinesDrawn[routine];
             s.stats.chainBatches += parts.size();
             place(rdram, ctx, runtime, std::move(draws), true);
             return true;
@@ -1624,6 +1627,14 @@ namespace sc3
                          static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.packDropped), static_cast<unsigned long long>(t.clipped),
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedDropped), static_cast<unsigned long long>(t.drawsSubmitted),
                          static_cast<unsigned long long>(t.bound), static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), left.c_str(), miss.c_str());
+            std::string drawn;
+            for (const auto &[routine, n] : t.routinesDrawn)
+            {
+                std::snprintf(item, sizeof(item), " %c:%#x x%llu", routine >= 0x10000u ? 'B' : 'A', routine & 0xFFFFu, static_cast<unsigned long long>(n));
+                drawn += item;
+            }
+            if (!drawn.empty())
+                std::fprintf(stderr, "[sc3:mesh] 250 frames: parts drawn by routine%s\n", drawn.c_str());
             if (t.mipOwn + t.mipMade != 0u)
                 std::fprintf(stderr, "[sc3:mesh] 250 frames: mipmapped parts %llu, the game's own levels %llu, made from level 0 %llu\n",
                              static_cast<unsigned long long>(t.mipOwn + t.mipMade), static_cast<unsigned long long>(t.mipOwn), static_cast<unsigned long long>(t.mipMade));
