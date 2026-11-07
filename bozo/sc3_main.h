@@ -40,6 +40,29 @@ namespace sc3
         }(options);
     }
 
+    // The packs' variables a run did not set, from the packs/ folder beside the program. Before installPort, which reads them.
+    inline void useDefaultPacks(const char *program)
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::path(program).parent_path() / "packs";
+        const struct
+        {
+            const char *variable, *file;
+        } packs[] = {{"SC3_2D_PACK", "sc3_2d.pack"}, {"SC3_TEXTURE_PACK", "sc3_textures.pack"}, {"SC3_MESH_PACK", "sc3_meshes.pack"}};
+        for (const auto &pack : packs)
+        {
+            std::error_code ec;
+            const fs::path path = dir / pack.file;
+            if (std::getenv(pack.variable) || !fs::is_regular_file(path, ec))
+                continue;
+#ifdef _WIN32
+            _putenv_s(pack.variable, path.string().c_str());
+#else
+            setenv(pack.variable, path.c_str(), 0);
+#endif
+        }
+    }
+
     // The port's overrides, false (with the addresses listed) when one is not an external of the generated code.
     inline bool installPort(const char *program, bozo::port::Registry &registry)
     {

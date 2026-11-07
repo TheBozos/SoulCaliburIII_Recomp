@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     }
     bozo::det::setEnabled(true);
 
+    sc3::useDefaultPacks(argv[0]);
     bozo::port::Registry registry;
     if (!sc3::installPort("sc3-headless", registry))
         return 2;

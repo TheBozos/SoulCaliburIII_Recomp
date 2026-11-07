@@ -149,6 +149,7 @@ int main(int argc, char **argv)
     }
     bozo::det::setEnabled(false);
 
+    sc3::useDefaultPacks(argv[0]);
     bozo::port::Registry registry;
     if (!sc3::installPort("sc3", registry))
         return 2;
