@@ -63,7 +63,7 @@ class BuildTests(unittest.TestCase):
             build.run = configure
             build.step_configure()
             self.assertEqual(stamp.read_text(encoding='utf-8').strip(), 'after')
-            self.assertIn('-DSC3_BOZO=ON', commands[0])
+            self.assertIn('-DSC3_WINDOW=ON', commands[0])
             self.assertIn('-DSC3_GUI_SUBSYSTEM=ON', commands[0])
             self.assertIn('-DBOZO_FFMPEG_ROOT=' + folder.replace('\\', '/'), commands[0])
 

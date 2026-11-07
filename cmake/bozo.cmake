@@ -1,6 +1,6 @@
-# SC3 on BozoEngine, next to the PS2Recomp runner until the switch (README.md, "On BozoEngine"). Selected by SC3_BOZO=ON:
+# SC3 on BozoEngine:
 #
-#   cmake -S . -B build/bozo -G Ninja -DSC3_BOZO=ON -DSC3_ELF=<SLUS_212.16> [-DSC3_ISO=<the disc image>]
+#   cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16> [-DSC3_ISO=<the disc image>]
 #         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>] [-DSC3_WINDOW=OFF]
 #
 # Targets:

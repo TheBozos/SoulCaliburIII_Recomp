@@ -14,7 +14,7 @@ again; within a step CMake and Ninja rebuild only what changed):
              modules IRX/CRI_ADXI.IRX, NUSOUND.IRX, SDRDRV.IRX (translated at build time), no outside tool (BozoEngine's tools/native_pack/ps2_disc.py); and the image itself as <game>/disc.iso (the
              game reads the disc from it): a hard link to the .iso on the same drive, else a copy (a .bin / .cue
              converted)
-  configure  cmake (Ninja) of SC3 on BozoEngine (cmake/bozo.cmake, SC3_BOZO=ON): SDL3 and Dear ImGui from the kit's
+  configure  cmake (Ninja) of SC3 on BozoEngine (cmake/bozo.cmake): SDL3 and Dear ImGui from the kit's
              deps/, FFmpeg (the movies) from the kit's ffmpeg/
   tools      BozoEngine's recompiler and externals writer (bozo-recomp, bozo-externals), built from its sources
   recompile  the externals list (the ELF's library symbols named by recomp/sc3_symbols.txt, SC3's overrides,
@@ -613,7 +613,7 @@ class Build:
         cmd = [self.tool('cmake'), '-S', ROOT, '-B', self.cmake_build, '-G', 'Ninja',
                '-DCMAKE_BUILD_TYPE=' + self.args.build_type,
                '-DBOZO_ENGINE_DIR=' + fwd(ENGINE),
-               '-DSC3_BOZO=ON', '-DSC3_WINDOW=ON', '-DSC3_NATIVE_SOUND=ON',
+               '-DSC3_WINDOW=ON', '-DSC3_NATIVE_SOUND=ON',
                '-DSC3_ELF=' + fwd(self.elf()), '-DSC3_DISC_DIR=' + fwd(self.disc_dir),
                '-DSC3_IRX_DIR=' + fwd(os.path.join(self.disc_dir, 'IRX')), '-DSC3_ISO=',
                '-DBOZO_BUILD_TOOLS=OFF', '-DBUILD_TESTING=OFF', '-DSC3_GUI_SUBSYSTEM=ON',

@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -f "$engine/CMakeLists.txt" ] || { echo "no BozoEngine at $engine (git submodule update --init BozoEngine, or --engine)" >&2; exit 1; }
-cmake -S "$ROOT" -B "$out" -G Ninja -DSC3_BOZO=ON -DCMAKE_BUILD_TYPE="$type" -DBOZO_ENGINE_DIR="$engine" \
+cmake -S "$ROOT" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE="$type" -DBOZO_ENGINE_DIR="$engine" \
     -DSC3_ELF="$(realpath "${SC3_ELF:-$ELF}")" -DSC3_WINDOW="$window" -DSC3_ISO="${SC3_ISO:+$(realpath "$SC3_ISO")}" \
     -DSC3_SYMBOL_MAP="${SC3_SYMBOL_MAP:+$(realpath "$SC3_SYMBOL_MAP")}" || exit 1
 exec cmake --build "$out" -j "$JOBS" "${targets[@]}"
