@@ -19,7 +19,7 @@ def main():
              '    std::vector<bozo::native::irx::Image> images()', '    {',
              '        std::vector<bozo::native::irx::Image> out;']
     for arg in sys.argv[3:]:
-        path, _, flag = arg.partition(':')
+        path, flag = (arg[:-len(':libsd')], 'libsd') if arg.endswith(':libsd') else (arg, '')
         m = Module(path)
         exports, imports = m.tables()
         data = ','.join(str(b) for b in m.image)
