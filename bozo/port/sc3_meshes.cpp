@@ -115,6 +115,7 @@ namespace sc3
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
             uint64_t clipped = 0, clippedNative = 0, clippedToVu1 = 0, clippedDropped = 0;
             uint64_t mipOwn = 0, mipMade = 0;
+            uint64_t packDropped = 0;
             std::map<uint32_t, uint64_t> routinesLeft;
             std::map<std::string, uint64_t> refused; // "<routine> <reason>"
             std::map<uint64_t, uint64_t> textureMisses;
@@ -162,8 +163,6 @@ namespace sc3
         std::optional<State> g_owner{std::in_place};
         State &g_state = *g_owner;
 
-        uint64_t packMisses(const Stats &t) { return t.notInPack + t.chainNotInPack + t.noTexture; }
-
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             if (address == kRawPart)
@@ -178,16 +177,6 @@ namespace sc3
                 func_0x10b970(rdram, ctx, runtime);
             else
                 func_0x10b7e0(rdram, ctx, runtime);
-        }
-
-        // A part the native path refused, as the game draws it: uncharged when refused for a pack miss (a list or texture the
-        // packs lack: `misses` the count before the native try), so the game's clock does not depend on the packs' contents.
-        void fallBack(uint32_t address, uint64_t misses, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            if (packMisses(g_state.stats) == misses)
-                callOriginal(address, rdram, ctx, runtime);
-            else
-                runUncharged(address == kRawPart ? func_0x10a178 : func_0x10a4e8, rdram, ctx, runtime);
         }
 
         void packetFlush(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
@@ -915,7 +904,9 @@ namespace sc3
                 {
                     ++s.stats.noTexture;
                     ++s.stats.textureMisses[s.material.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
-                    return false;
+                    ++s.stats.packDropped;
+                    draw = Sc3Draw{};
+                    return true;
                 }
                 if (mipmapsOn() && bozo::render::mipmapOf(s.material.tex1).levels != 0u)
                 {
@@ -1226,6 +1217,13 @@ namespace sc3
             return nullptr;
         }
 
+        bool dropPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, size_t draws)
+        {
+            g_state.stats.packDropped += draws;
+            place(rdram, ctx, runtime, std::vector<Sc3Draw>(draws), true);
+            return true;
+        }
+
         void noteRefusal(uint32_t flags, const char *why)
         {
             char key[64];
@@ -1255,7 +1253,8 @@ namespace sc3
             }
             packs::LoadedImages::Image image;
             const packs::MeshObject *object = nullptr;
-            if (findImage(address, image) && image.file)
+            const bool loaded = findImage(address, image);
+            if (loaded && image.file)
                 object = image.file->object(address - image.base);
             if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != qwc * 16u)
             {
@@ -1263,14 +1262,14 @@ namespace sc3
                 if (std::getenv("SC3_MESH_TRACE_LISTS") && s.tracedLists.insert(address).second)
                     std::fprintf(stderr, "[sc3:mesh] raw part not in the pack: %#x %s +%#x qwc %u flags %#x ra %#x object %s kind %u size %u\n", address, image.file ? image.file->name.c_str() : "(no leaf)", address - image.base, qwc, flags,
                                  getRegU32(ctx, 31), object ? "yes" : "no", object ? object->kind : 0u, object ? object->attribute<uint32_t>(0) : 0u);
-                return false;
+                return loaded ? dropPart(rdram, ctx, runtime, 1u) : false;
             }
             std::vector<In> in;
             uint32_t tag[4];
             if (!readVertices(*object, in, tag))
             {
                 ++s.stats.notInPack;
-                return false;
+                return dropPart(rdram, ctx, runtime, 1u);
             }
             Sc3Draw draw;
             if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
@@ -1284,11 +1283,10 @@ namespace sc3
 
         void rawPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            const uint64_t misses = packMisses(g_state.stats);
             if (drawRawPart(rdram, ctx, runtime))
                 return;
             ++g_state.stats.leftToVu1;
-            fallBack(kRawPart, misses, rdram, ctx, runtime);
+            callOriginal(kRawPart, rdram, ctx, runtime);
         }
 
         // 0x1088A0 drains the parts deferred for clipping against the near plane: each one's raw data goes to the scratchpad,
@@ -1397,11 +1395,15 @@ namespace sc3
             }
             packs::LoadedImages::Image image;
             const packs::MeshObject *chain = nullptr;
-            if (findImage(list, image) && image.file)
+            const bool loaded = findImage(list, image);
+            if (loaded && image.file)
                 chain = image.file->object(list - image.base);
             const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
             if (!batches || batches->size < 8u)
-                return false;
+            {
+                ++s.stats.chainNotInPack;
+                return loaded ? dropPart(rdram, ctx, runtime, 1u) : false;
+            }
             const size_t n = batches->size / 8u;
             std::vector<Sc3Draw> draws(n);
             for (size_t i = 0; i < n; ++i)
@@ -1411,7 +1413,10 @@ namespace sc3
                 const packs::MeshObject *object = image.file->object(entry[0]);
                 const packs::MeshSection *block = object && object->kind == kVuBlockKind ? object->section(packs::fourcc("SC3B")) : nullptr;
                 if (!block || object->attribute<uint32_t>(0) != entry[1] * 16u)
-                    return false;
+                {
+                    ++s.stats.chainNotInPack;
+                    return dropPart(rdram, ctx, runtime, n);
+                }
                 uint32_t tag[4];
                 std::vector<Out> out;
                 if (!skinBlock(s.header, block->data, block->size / 16u, tag, out, kind))
@@ -1442,7 +1447,8 @@ namespace sc3
             }
             packs::LoadedImages::Image image;
             const packs::MeshObject *chain = nullptr;
-            if (findImage(list, image) && image.file)
+            const bool loaded = findImage(list, image);
+            if (loaded && image.file)
                 chain = image.file->object(list - image.base);
             const packs::MeshSection *batches = chain && chain->kind == kChainPartKind ? chain->section(packs::fourcc("SC3C")) : nullptr;
             if (!batches || batches->size < 8u)
@@ -1454,7 +1460,7 @@ namespace sc3
                     std::fprintf(stderr, "[sc3:mesh] chain list not in the pack: %#x %s +%#x%s, model base %s%#x, chain object %s kind %u\n", list, image.file ? image.file->name.c_str() : "(no leaf)", list - image.base,
                                  chain ? " (object)" : "", base == s.listBases.end() ? "unknown " : "+", base == s.listBases.end() ? 0u : base->second - image.base, chain ? "yes" : "no", chain ? chain->kind : 0u);
                 }
-                return false;
+                return loaded ? dropPart(rdram, ctx, runtime, 1u) : false;
             }
             struct Batch
             {
@@ -1472,7 +1478,7 @@ namespace sc3
                     !readVertices(*object, parts[i].in, parts[i].tag))
                 {
                     ++s.stats.chainNotInPack;
-                    return false;
+                    return dropPart(rdram, ctx, runtime, parts.size());
                 }
                 parts[i].offset = entry[0];
             }
@@ -1497,12 +1503,11 @@ namespace sc3
             const bool header = sp32(0x368u) != 0u, materialSent = sp32(0x36Cu) != 0u;
             noteState(flags, (flags & 0xFFFFu) >> 3);
             noteBones();
-            const uint64_t misses = packMisses(s.stats);
             if (drawChainPart(rdram, ctx, runtime, list, flags, header, materialSent))
                 return;
             ++s.stats.routinesLeft[((flags & kFlagProgramA) ? 0u : 0x10000u) | (flags & 0xFFFFu)];
             ++s.stats.leftToVu1;
-            fallBack(kChainPart, misses, rdram, ctx, runtime);
+            callOriginal(kChainPart, rdram, ctx, runtime);
         }
 
         // ZBUF_1's ZMSK where the game's list writes it (0x1276E8, in the VIF1 list), for the draws played after it.
@@ -1610,11 +1615,11 @@ namespace sc3
                               static_cast<unsigned>((tex0 >> 37) & 0x3FFFu), static_cast<unsigned long long>(n));
                 miss += item;
             }
-            std::fprintf(stderr, "[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu); clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
+            std::fprintf(stderr, "[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu), dropped for the packs %llu; clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
                          static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
                          static_cast<unsigned long long>(t.chainParts), static_cast<unsigned long long>(t.chainNative), static_cast<unsigned long long>(t.leftToVu1),
                          static_cast<unsigned long long>(t.notInPack), static_cast<unsigned long long>(t.chainNotInPack), static_cast<unsigned long long>(t.noMaterial),
-                         static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.clipped),
+                         static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.packDropped), static_cast<unsigned long long>(t.clipped),
                          static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedDropped), static_cast<unsigned long long>(t.drawsSubmitted),
                          static_cast<unsigned long long>(t.bound), static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), left.c_str(), miss.c_str());
             if (t.mipOwn + t.mipMade != 0u)

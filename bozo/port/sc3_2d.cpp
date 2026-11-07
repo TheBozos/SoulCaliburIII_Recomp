@@ -89,6 +89,7 @@ namespace sc3
             std::shared_ptr<const bozo::render::Texture> texture;
             int8_t frameSource = -1;
             uint16_t sourceWidth = 0, sourceHeight = 0;
+            bool dropped = false;
         };
 
         struct BuilderStats
@@ -96,6 +97,7 @@ namespace sc3
             uint64_t calls = 0, native = 0, sprites = 0, markers = 0, toGs = 0;
             uint64_t noFile = 0, noBlock = 0, noTexture = 0;
             uint64_t blockNotPacked = 0; // among noBlock: the leaf is the pack's, the block is not in it
+            uint64_t dropped = 0;
         };
 
 ;
@@ -191,19 +193,6 @@ namespace sc3
         }
 
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { originalOf(address)(rdram, ctx, runtime); }
-
-        // The game's function for a draw the native path refused: uncharged when it was for a pack miss (a block of a packed leaf or
-        // a texture the packs lack: `misses` the stats' count before the native try), else as the game runs it (a file not
-        // loaded yet is the game's state, not the pack's).
-        uint64_t packMisses(const BuilderStats &stats) { return stats.blockNotPacked + stats.noTexture; }
-
-        void fallBack(uint32_t address, const BuilderStats &stats, uint64_t misses, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            if (packMisses(stats) != misses)
-                runUncharged(originalOf(address), rdram, ctx, runtime);
-            else
-                callOriginal(address, rdram, ctx, runtime);
-        }
 
         // EE memory or the scratchpad (the game keeps stacks and packets there), aligned to the access.
         uint8_t *guest(uint32_t address, uint32_t size)
@@ -361,16 +350,31 @@ namespace sc3
             return blockPage(block, out, stats, cbp);
         }
 
+        bool droppedPage(Page &out, BuilderStats &stats)
+        {
+            out.texture.reset();
+            out.frameSource = -1;
+            out.hasAlpha = true;
+            out.dropped = true;
+            ++stats.dropped;
+            return true;
+        }
+
         // A register block inside a loaded leaf, as the 2D pack has it (a page's TEX0 / TEX1 / CLAMP and its texture).
         bool blockPage(uint32_t block, Page &out, BuilderStats &stats, uint32_t cbp)
         {
             State &s = g_state;
             packs::LoadedImages::Image image;
             const packs::RegisterBlock *registers = nullptr;
-            if (s.loaded.find(block, image) && image.file)
+            if (s.loaded.find(block, image))
             {
-                registers = image.file->block(block - image.base);
-                stats.blockNotPacked += registers ? 0u : 1u;
+                registers = image.file ? image.file->block(block - image.base) : nullptr;
+                if (!registers)
+                {
+                    ++stats.blockNotPacked;
+                    ++stats.noBlock;
+                    return droppedPage(out, stats);
+                }
             }
             if (!registers)
             {
@@ -432,7 +436,7 @@ namespace sc3
                 {
                     ++stats.noTexture;
                     ++s.textureMisses[(out.tex0 & ~(0x3FFFull << 37)) | (static_cast<uint64_t>(cbp) << 37)];
-                    return false;
+                    return droppedPage(out, stats);
                 }
                 palette = other;
             }
@@ -462,7 +466,7 @@ namespace sc3
                 return true;
             ++stats.noTexture;
             ++s.textureMisses[out.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
-            return false;
+            return droppedPage(out, stats);
         }
 
         // ---- small movies: the host decoder's picture as the texture of the pages the movie task copies it into
@@ -713,6 +717,7 @@ namespace sc3
             m.frameSource = page.frameSource;
             m.sourceWidth = page.sourceWidth;
             m.sourceHeight = page.sourceHeight;
+            m.dropped = page.dropped;
             return m;
         }
 
@@ -745,12 +750,11 @@ namespace sc3
                 if (pass == 0 || pass == 1)
                     used[pass] = true;
             }
-            const uint64_t misses = packMisses(stats);
             for (uint32_t pass = 0; pass < 2u; ++pass)
                 if (used[pass] && !page(file, pass, pages[pass], stats))
                 {
                     ++stats.toGs;
-                    fallBack(kLabels, stats, misses, rdram, ctx, runtime);
+                    callOriginal(kLabels, rdram, ctx, runtime);
                     return;
                 }
             float m[16];
@@ -1510,11 +1514,10 @@ namespace sc3
             const int32_t mode = static_cast<int32_t>(getRegU32(ctx, 4));
             const uint32_t string = getRegU32(ctx, 5), argument = getRegU32(ctx, 6);
             Page font;
-            const uint64_t misses = packMisses(stats);
             if (mode != 0 && (!page(kFontFile, 0u, font, stats)))
             {
                 ++stats.toGs;
-                fallBack(kText, stats, misses, rdram, ctx, runtime);
+                callOriginal(kText, rdram, ctx, runtime);
                 return;
             }
             TextCall call;
@@ -1769,13 +1772,12 @@ namespace sc3
             const int32_t asked = static_cast<int32_t>(getRegU32(ctx, 4));
             const uint32_t index = static_cast<uint32_t>(std::min(std::max(asked, 0), 0x39));
             Page pageRegs;
-            const uint64_t misses = packMisses(stats);
             if (peek8(kNoGsPackets) != 0u || index >= 0x12u || peek32(kIconReady) == 0u ||
                 !page(kIconFile, 0u, pageRegs, stats))
             {
                 if (peek8(kNoGsPackets) == 0u)
                     ++stats.toGs;
-                fallBack(kIcon, stats, misses, rdram, ctx, runtime);
+                callOriginal(kIcon, rdram, ctx, runtime);
                 return;
             }
             const uint32_t colourVec = getRegU32(ctx, 5);
@@ -1851,7 +1853,7 @@ namespace sc3
             BuilderStats unused;
             if (!page(file, 0u, p, unused))
             {
-                fallBack(at, unused, 0u, rdram, ctx, runtime);
+                callOriginal(at, rdram, ctx, runtime);
                 return;
             }
             ++s.uploadsDropped;
@@ -1882,7 +1884,7 @@ namespace sc3
             if (!packed)
             {
                 ++s.uploadsKept[file];
-                fallBack(kUploadItem, unused, 0u, rdram, ctx, runtime);
+                callOriginal(kUploadItem, rdram, ctx, runtime);
                 return;
             }
             ++s.uploadsDropped;
@@ -2478,14 +2480,13 @@ namespace sc3
                 return;
             }
             Page pageRegs;
-            const uint64_t misses = packMisses(stats);
             if (peek8(item + 0x1Eu) != 0u && fileAddress(file) &&
                 !(head == 2u   ? copiedPage(file, pageRegs, stats)
                   : head == 1u ? blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha
                                : page(file, peek8(item + 0x18u), pageRegs, stats)))
             {
                 ++stats.toGs;
-                fallBack(address, stats, misses, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             Vu0 vu;
@@ -3367,14 +3368,13 @@ namespace sc3
                 callOriginal(kObjects, rdram, ctx, runtime);
                 return;
             }
-            const uint64_t misses = packMisses(stats);
             const bool found = head == 0u   ? page(file, peek8(item + 0x18u), pageRegs, stats)
                                : head == 2u ? copiedPage(file, pageRegs, stats)
                                             : blockPage(file, pageRegs, stats, ~0u) && pageRegs.hasAlpha;
             if (!found)
             {
                 ++stats.toGs;
-                fallBack(kObjects, stats, misses, rdram, ctx, runtime);
+                callOriginal(kObjects, rdram, ctx, runtime);
                 return;
             }
             if (peek16(item + 8u) == 0u || peek32(item + 0xCu) == 0u)
@@ -3961,7 +3961,7 @@ namespace sc3
                 return;
             }
             Page pageRegs;
-            const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture, misses = packMisses(stats);
+            const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture;
             const bool pageless = !sprites && peek32(item + 0x14u) == 0u && peek32(item + 0x10u) == 0u;
             if ((sprites && peek8(item + 0xBu) != 0u) || (!pageless && !screenPage(item, pageRegs, stats)))
             {
@@ -3970,7 +3970,7 @@ namespace sc3
                     std::fprintf(stderr, "[sc3:2d] %s to the GS: item %#x count %u insertion %u prim %#x file %#x page %u head %u uploads %u, block %#x\n", name, item,
                                  peek16(item + 8u), peek8(item + 0xAu), peek8(item + 0xBu), peek32(item + 0x14u), peek8(item + 0x18u), peek8(item + 0x1Cu),
                                  peek8(item + 0x1Au), peek32(item + 0x10u));
-                fallBack(address, stats, misses, rdram, ctx, runtime);
+                callOriginal(address, rdram, ctx, runtime);
                 return;
             }
             Vu0 vu;
@@ -4132,10 +4132,10 @@ namespace sc3
             const auto builder = [](const char *name, BuilderStats &b)
             {
                 if (b.calls != 0u)
-                    std::fprintf(stderr, "[sc3:2d]   %s: %llu calls, %llu native, %llu sprites, %llu lost (no file %llu, no block %llu, no texture %llu)\n", name,
+                    std::fprintf(stderr, "[sc3:2d]   %s: %llu calls, %llu native, %llu sprites, %llu lost (no file %llu, no block %llu, no texture %llu), %llu pages dropped\n", name,
                                  static_cast<unsigned long long>(b.calls), static_cast<unsigned long long>(b.native), static_cast<unsigned long long>(b.sprites),
                                  static_cast<unsigned long long>(b.toGs), static_cast<unsigned long long>(b.noFile), static_cast<unsigned long long>(b.noBlock),
-                                 static_cast<unsigned long long>(b.noTexture));
+                                 static_cast<unsigned long long>(b.noTexture), static_cast<unsigned long long>(b.dropped));
                 b = BuilderStats{};
             };
             builder("labels 0x1388E8", s.labels);

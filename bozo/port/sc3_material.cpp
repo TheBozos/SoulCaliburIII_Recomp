@@ -342,6 +342,11 @@ namespace sc3::draw
 
     void drawKeyed(uint64_t key, const GsMaterial &material, const GsVertex *vertices, uint32_t count)
     {
+        if (material.dropped)
+        {
+            g_keyed[key];
+            return;
+        }
         KeyedBatch batch;
         GsMaterial gs = material;
         toRenderer(gs, vertices, count, batch.material, batch.vertices);

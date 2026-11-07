@@ -85,6 +85,7 @@ namespace sc3
             // A page the game drew rather than uploaded: 0 the frame so far, else the Renderer's target of that number; its size in GS pixels.
             int8_t frameSource = -1;
             uint16_t sourceWidth = 0, sourceHeight = 0;
+            bool dropped = false; // its page is not in the packs: linked as built, nothing drawn
         };
 
         // A builder's batches, kept by a key until the game's link call says where they go (or discard).
