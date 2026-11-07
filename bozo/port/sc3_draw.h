@@ -87,6 +87,7 @@ namespace sc3
         // A builder's batches, kept by a key until the game's link call says where they go (or discard).
         void drawKeyed(uint64_t key, const GsMaterial &material, const GsVertex *vertices, uint32_t count);
         void discard(uint64_t key);
+        void releaseKeyed();
         // The key's batches as one draw of the ordering table (taken: the key is free again).
         ot::Draw takeKeyed(uint64_t key);
         // The Renderer's material and triangles of a GS draw: the sprites and lines as two triangles.

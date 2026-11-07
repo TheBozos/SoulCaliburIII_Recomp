@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,7 +37,8 @@ namespace sc3::textures
             uint64_t olk = 0;
         };
 
-        TextureKeys g_pack;
+        std::optional<TextureKeys> g_packOwner{std::in_place};
+        TextureKeys &g_pack = *g_packOwner;
         bool g_ready = false;
         uint8_t *g_rdram = nullptr;
         int64_t g_olkLbn = -1;
@@ -227,5 +229,12 @@ namespace sc3::textures
         std::fprintf(stderr, "[sc3:textures] %s, %zu upload lists, %zu entries, %zu records\n", path, g_pack.lists(), g_pack.entries(), g_pack.records());
         g_ready = true;
         runtime.registerFunction(kGifPacketClose, &gifPacketClose);
+    }
+
+    void shutdown()
+    {
+        g_ready = false;
+        g_building.clear();
+        g_packOwner.reset();
     }
 }

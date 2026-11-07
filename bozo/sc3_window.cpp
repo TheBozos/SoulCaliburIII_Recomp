@@ -195,6 +195,7 @@ int main(int argc, char **argv)
         wav.close();
         sc3::reportAcknowledged(host.stats());
         sc3::reportEnd("sc3", host, frames);
+        sc3::shutdown();
         return host.endReason().rfind("FAULT", 0) == 0 ? 1 : 0;
     };
     game.stop = [&] { host.requestStop(); };

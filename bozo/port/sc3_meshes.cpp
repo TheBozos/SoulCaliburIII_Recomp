@@ -15,6 +15,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -156,7 +157,8 @@ namespace sc3
             uint64_t frames = 0;
         };
 
-        State g_state;
+        std::optional<State> g_owner{std::in_place};
+        State &g_state = *g_owner;
 
         void callOriginal(uint32_t address, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
@@ -1616,6 +1618,12 @@ namespace sc3
             return;
         g_state.rdram = rdram;
         copy(ctx);
+    }
+
+    void meshes::shutdown()
+    {
+        g_ready = false;
+        g_owner.reset();
     }
 
     void meshes::install(Registry &runtime)

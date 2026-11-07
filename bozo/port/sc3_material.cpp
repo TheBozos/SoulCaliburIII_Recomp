@@ -316,6 +316,8 @@ namespace sc3::draw
 
     void discard(uint64_t key) { g_keyed.erase(key); }
 
+    void releaseKeyed() { g_keyed.clear(); }
+
     ot::Draw takeKeyed(uint64_t key)
     {
         const auto it = g_keyed.find(key);

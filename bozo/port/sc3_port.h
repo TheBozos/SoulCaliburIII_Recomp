@@ -42,10 +42,11 @@ namespace sc3
         void presentAlone();
         void holdStill();
         bool hidden(uint32_t address);
+        void shutdown();
     }
-    namespace twoD { void install(Registry &runtime); }
-    namespace meshes { void install(Registry &runtime); }
-    namespace textures { void install(Registry &runtime); }
+    namespace twoD { void install(Registry &runtime); void shutdown(); }
+    namespace meshes { void install(Registry &runtime); void shutdown(); }
+    namespace textures { void install(Registry &runtime); void shutdown(); }
     namespace vu0 { void install(Registry &runtime); }
     namespace movies
     {
@@ -55,6 +56,9 @@ namespace sc3
         // A smaller movie's current picture by Sofdec handle, for the 2D builders: RGBA rows (alpha 0x80 = 1.0), nothing copied while `known` is
         // its number.
         bool picture(PS2Runtime *runtime, uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number);
+        void shutdown();
     }
     namespace audio { void install(Registry &runtime); }
+    // After the game's last frame, while the renderer still exists: players stopped, every texture and draw the port keeps released.
+    void shutdown();
 }

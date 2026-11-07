@@ -1,3 +1,4 @@
+#include "sc3_draw.h"
 #include "sc3_port.h"
 
 namespace
@@ -15,6 +16,16 @@ namespace
         sc3::movies::install(runtime);
         sc3::audio::install(runtime);
     }
+}
+
+void sc3::shutdown()
+{
+    movies::shutdown();
+    ot::shutdown();
+    draw::releaseKeyed();
+    twoD::shutdown();
+    meshes::shutdown();
+    textures::shutdown();
 }
 
 BOZO_PORT("Soulcalibur III (USA)", "SLUS_212.16", sc3::kEntry, &applySc3)

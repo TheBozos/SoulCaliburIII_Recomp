@@ -190,5 +190,6 @@ int main(int argc, char **argv)
     std::fflush(stdout);
     sc3::reportAcknowledged(s);
     sc3::reportEnd("sc3-headless", host, frames);
+    sc3::shutdown();
     return host.endReason().rfind("FAULT", 0) == 0 ? 1 : 0;
 }

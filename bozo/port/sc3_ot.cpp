@@ -316,6 +316,16 @@ namespace sc3::ot
         return std::find(list.begin(), list.end(), address) != list.end();
     }
 
+    void shutdown()
+    {
+        for (FrameMirror &frame : g_state.frames)
+        {
+            for (std::vector<Draw> &bucket : frame.buckets)
+                bucket.clear();
+            frame.usedBuckets.clear();
+        }
+    }
+
     void install(Registry &runtime)
     {
         loads::install(runtime);

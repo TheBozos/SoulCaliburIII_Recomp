@@ -710,6 +710,16 @@ namespace sc3::movies
 #endif
     }
 
+    void shutdown()
+    {
+#ifdef SC3_HAVE_FFMPEG
+        for (const auto &entry : g_players)
+            entry.second->stop();
+        g_players.clear();
+        g_runtime = nullptr;
+#endif
+    }
+
     void install(Registry &runtime)
     {
         for (uint32_t address : kMwPlyStarts)

@@ -6,6 +6,7 @@
 #include "bozo/render/renderer.h"
 #include "bozo/render/texture_pack.h"
 
+#include <optional>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -171,7 +172,8 @@ namespace sc3
             uint64_t movieCopiesSkipped = 0, movieTextures = 0, movieChecks = 0, movieTexelsDiffering = 0;
         };
 
-        State g_state;
+        std::optional<State> g_owner{std::in_place};
+        State &g_state = *g_owner;
 
         RecompiledFunction originalOf(uint32_t address)
         {
@@ -4136,6 +4138,8 @@ namespace sc3
 
     }
     }
+
+    void twoD::shutdown() { g_owner.reset(); }
 
     void twoD::install(Registry &runtime)
     {
