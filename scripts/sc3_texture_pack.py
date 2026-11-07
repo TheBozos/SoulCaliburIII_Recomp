@@ -441,11 +441,12 @@ def material_textures(d):
     return out
 
 
-def convert_model(d, report):
+def convert_model(d, report, rest=None):
     """[(entries, textures, complete)] per CALL list of one model (its addresses are relative to its start), and per
     upload chain no list CALLs (the game CALLs those itself: animated textures), as a list of one entry at its start: entries are the CALL tags' offsets; textures (tex0, w, h, rgba,
     first entry) are those whose texels and CLUT the entries from `first entry` to the list's end all wrote; complete[k]
-    says every material texture reading what entries k.. wrote is among them (their uploads can be left out)."""
+    says every material texture reading what entries k.. wrote is among them (their uploads can be left out). `rest`: the
+    leaf from the model's start, where upload chains are followed (a REF may reach past a 03 04 04 00 in texel data)."""
     units = texture_units(d)
     if not units:
         return []
@@ -464,7 +465,7 @@ def convert_model(d, report):
                 if target is None:
                     continue
                 gs.entry = k + 1
-                chain = walk_chain(d, target)
+                chain = walk_chain(d if rest is None else rest, target)
                 if chain is None:
                     raise Unsupported('entry %d: chain does not end' % k)
                 play_gif(gs, *chain)
@@ -513,7 +514,7 @@ def convert_leaf(d, report):
     for i, start in enumerate(starts):
         end = starts[i + 1] if i + 1 < len(starts) else len(d)
         model_report = []
-        for calls, textures, complete in convert_model(d[start:end], model_report):
+        for calls, textures, complete in convert_model(d[start:end], model_report, d[start:]):
             moved = []
             for tex0, w, h, psm, texels, palette, first, palette_src, runs in textures:
                 palette_src = [NO_SOURCE if s == NO_SOURCE else start + s for s in palette_src]
