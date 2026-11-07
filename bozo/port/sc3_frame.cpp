@@ -6,7 +6,6 @@
 #include "bozo/app/frame_pacer.h"
 
 #include <cstring>
-#include <stdexcept>
 
 namespace sc3::frame
 {
@@ -109,27 +108,15 @@ namespace sc3::frame
             ctx->pc = getRegU32(ctx, 31);
         }
 
-        void copyScratchpad(PS2Runtime *runtime, uint32_t ram, uint32_t scratchpad, uint32_t quadwords, bool toScratchpad)
-        {
-            for (uint32_t i = 0; i < quadwords; ++i, ram += 16u, scratchpad += 16u)
-            {
-                uint8_t *r = runtime->memory.hostPointer(ram, 16);
-                uint8_t *s = runtime->memory.hostPointer(0x70000000u | (scratchpad & 0x3FF0u), 16);
-                if (!r || !s)
-                    throw std::runtime_error("sc3: scratchpad copy outside memory");
-                std::memcpy(toScratchpad ? s : r, toScratchpad ? r : s, 16);
-            }
-        }
-
         void fromScratchpad(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
         {
-            copyScratchpad(runtime, getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6) & 0xFFFFu, false);
+            packet::copyScratchpad(runtime, getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6) & 0xFFFFu, false);
             ctx->pc = getRegU32(ctx, 31);
         }
 
         void toScratchpad(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
         {
-            copyScratchpad(runtime, getRegU32(ctx, 5), getRegU32(ctx, 4), getRegU32(ctx, 6) & 0xFFFFu, true);
+            packet::copyScratchpad(runtime, getRegU32(ctx, 5), getRegU32(ctx, 4), getRegU32(ctx, 6) & 0xFFFFu, true);
             ctx->pc = getRegU32(ctx, 31);
         }
 
