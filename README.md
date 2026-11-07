@@ -311,11 +311,11 @@ commit), next to the PS2Recomp build until the switch. Headless, it boots to the
 
 ```bash
 git submodule update --init BozoEngine
-scripts/bozo_build.sh                 # build/bozo: sc3, sc3-headless, sc3-check (SC3_ELF, SC3_ISO; on Windows: scripts/sc3_build.py)
+scripts/bozo_build.sh                 # build/bozo: sc3, sc3-headless, sc3-check (SC3_ELF, SC3_ISO)
 scripts/bozo_headless.sh first --frames 300
 ```
 
-`-DBOZO_ENGINE_DIR=<tree>` (`sc3_build.py --engine`) builds against another engine tree. `-DSC3_EXTERNALS=<file>`
+`-DBOZO_ENGINE_DIR=<tree>` (`bozo_build.sh --engine`) builds against another engine tree. `-DSC3_EXTERNALS=<file>`
 generates with `bozo-calllog-tool externals`' list, which `sc3-check --pinned` needs. The program sources are in `bozo/`, the
 recompiler's inputs in `recomp/` (`sc3_stubs.txt`, `sc3_entries.txt`, `sc3_symbols.txt`), and what it is compared with in
 [`reference/`](reference/README.md).
@@ -326,11 +326,31 @@ executable, and the symbol map from `SC3_SYMBOL_MAP`, else `sc3_symbols.txt` bes
 
 Windows from Linux: a mingw-w64 GCC that targets the UCRT (the compiler of MSYS2 UCRT64 and TMB's kit) builds it with
 `cmake/mingw-cross.cmake`. `SC3_HOST_TOOLS` names a native build's `bozo-externals` and `bozo-recomp`, and
-`scripts/build_win_ffmpeg.sh` builds the static FFmpeg it links. Clang targets (zig c++, llvm-mingw) build a binary that
+`scripts/build_win_ffmpeg.sh` builds the static FFmpeg it links. `sc3-check.exe` needs `-DBOZO_BUILD_TOOLS=ON` and a
+static zlib built with the same compiler (`-DZLIB_ROOT=<prefix>`). Clang targets (zig c++, llvm-mingw) build a binary that
 crashes, so they are not supported: on Win64 their `__builtin_longjmp` restores rbp from the frame address instead of the
 frame pointer, which breaks BozoEngine's stops. `scripts/make_win_package.sh` lays out a portable folder from that build:
 the programs, the symbol map and `packs/`. That folder holds code and packs made from the disc, so it never leaves the
 machine that built it.
+
+### A player's build: sc3_build.py, the build kit and the launcher
+
+A player builds the game on their own PC from their own disc; nothing made from the disc is ever distributed. This is
+TMB_Recomp's pattern:
+
+- `scripts/sc3_build.py --disc <image or extracted folder> --out <work folder>` checks the disc (SLUS_212.16's SHA-1),
+  extracts what the build reads (the ELF, `ROOT.OLK`, the three sound modules), configures, builds the recompiler,
+  generates the code, makes the packs, compiles `sc3` and stages a game folder: `sc3.exe`, `SLUS_212.16`,
+  `sc3_symbols.txt`, `packs/`, `disc.iso` (a hard link to the image when it can) and `Play SC3.cmd` (`play_sc3.sh` on
+  Linux). Each step is skipped when its inputs did not change; `--check` checks a disc only. Without a kit it uses
+  the PATH's GCC, CMake and Ninja (or `--toolchain C:/msys64/ucrt64`) and FFmpeg through pkg-config.
+- `scripts/make_build_kit.py` (on Windows, with MSYS2 and the network) assembles the kit a player needs with nothing
+  installed: MSYS2 UCRT64's GCC, CMake and Ninja at the versions `scripts/build_kit_packages.json` pins, a static LGPL
+  FFmpeg with only what the movies need, SDL3 and Dear ImGui sources, and an embeddable Python.
+- `launcher/` is SC3 Launcher.exe: pick the disc image, Prepare (sc3_build.py on the kit's Python), Play, Update.
+- `scripts/make_release.py` makes the player's zip from a commit: the source (and BozoEngine's), the kit, the launcher,
+  the licences and the corresponding sources; `.github/workflows/release.yml` runs it on a version tag and makes a
+  draft release. A release needs a `LICENSE` at the repository's top and a `CHANGELOG.md` section for its version.
 
 ## Disc facts
 

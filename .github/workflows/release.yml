@@ -1,0 +1,235 @@
+# The release of the BozoEngine build: built only when the owner asks for one, never on an ordinary push or a pull
+# request.
+#
+#   git tag v0.1.0 && git push origin v0.1.0          (or Actions > Release > Run workflow, with the tag)
+#
+# On a version tag it makes the build kit from the pinned MSYS2 packages (scripts/build_kit_packages.json) and the
+# release zip SoulCaliburIII_Recomp-<version>.zip (folder SoulCaliburIII_Recomp). It adds hashes and corresponding
+# sources, checks without game data, and creates a DRAFT
+# GitHub release with CHANGELOG.md's section for the version as its body. Nothing is ever published by this workflow:
+# the owner runs docs/RELEASE_CHECKLIST.md on a clean PC, then publishes the draft by hand.
+#
+# Run by hand without a tag (Actions > Release > Run workflow on a branch, or gh workflow run release.yml --ref
+# <branch>): a test build of that branch (version 0.0.0-test.<run number> unless given), the same kit, zip and checks,
+# no sources zip and no draft release; the zips are the run's artifacts.
+#
+# Every step is a thin call into scripts/make_build_kit.py or scripts/make_release.py, so the same commands run on a
+# developer's PC (README, "Making a release").
+#
+# When the owner publishes a release, the notify job tells RecompWatcher (if the WATCHER_DISPATCH_TOKEN secret exists).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The version tag to release (already pushed), e.g. v0.1.0; empty: a test build of the branch'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'A test build only: its version (default 0.0.0-test.<run number>)'
+        required: false
+        default: ''
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'release'
+    runs-on: windows-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write # the draft release and its files
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (github.event_name == 'push' && github.ref_name || '') }}
+      TEST_VERSION: ${{ inputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Version from the tag (or a test build's)
+        run: |
+          set -eu
+          if [ -n "$TAG" ]; then
+            if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::$TAG is not a version tag (vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-pre)"
+              exit 1
+            fi
+            echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+            echo "TEST_BUILD=" >> "$GITHUB_ENV"
+          else
+            v="${TEST_VERSION:-0.0.0-test.$GITHUB_RUN_NUMBER}"
+            if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::$v is not a version (MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-pre)"
+              exit 1
+            fi
+            echo "VERSION=$v" >> "$GITHUB_ENV"
+            echo "TEST_BUILD=1" >> "$GITHUB_ENV"
+          fi
+          echo "WORK=$(cygpath -m "$RUNNER_TEMP")/sc3" >> "$GITHUB_ENV"
+
+      - name: Check out the tag or the branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || '' }}
+          persist-credentials: false
+
+      - name: The BozoEngine submodule at its recorded commit
+        run: git submodule update --init BozoEngine
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: The changelog has this version
+        if: env.TEST_BUILD == ''
+        run: python scripts/make_release.py --check-changelog --version "$VERSION"
+
+      - name: MSYS2 (pacman, and sh for FFmpeg's configure; the toolchain itself comes from the pins)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: diffutils
+
+      - name: Cache the downloads (pinned MSYS2 packages, FFmpeg, Python, SDL3, ImGui, MSYS2 sources, the font)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sc3/downloads
+          key: sc3-downloads-${{ hashFiles('scripts/build_kit_packages.json', 'scripts/make_build_kit.py') }}
+          restore-keys: sc3-downloads-
+
+      - name: Cache the kit's FFmpeg (by the pins and make_build_kit.py)
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/sc3/kit/ffmpeg
+            ${{ runner.temp }}/sc3/kit/sources
+            ${{ runner.temp }}/sc3/kit/licenses/ffmpeg
+            ${{ runner.temp }}/sc3/kit/.parts/ffmpeg.json
+          key: sc3-ffmpeg-${{ hashFiles('scripts/build_kit_packages.json', 'scripts/make_build_kit.py') }}
+
+      - name: Install the pinned MSYS2 packages (exact files, SHA-256 checked)
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: python scripts/make_build_kit.py --install-packages --msys "$MSYS2_ROOT" --downloads "$WORK/downloads"
+
+      - name: Build kit (toolchain, Python, SDL3 and ImGui sources, FFmpeg)
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+          FFMPEG_CACHED: ${{ steps.ffmpeg.outputs.cache-hit }}
+        run: |
+          set -eu
+          steps="--only toolchain --only python --only deps"
+          if [ "$FFMPEG_CACHED" != true ]; then steps="$steps --only ffmpeg"; fi
+          python scripts/make_build_kit.py --out "$WORK/kit" --msys "$MSYS2_ROOT" --downloads "$WORK/downloads" \
+            --work "$WORK/kit-work" $steps --only manifest
+
+      - name: Make the release (zip, .sha256, sources zip, notes from CHANGELOG.md)
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          set -eu
+          if [ -n "$TEST_BUILD" ]; then extra="--allow-missing-changelog"; else extra="--with-sources"; fi
+          python scripts/make_release.py --version "$VERSION" --kit "$WORK/kit" --msys "$MSYS2_ROOT" \
+            --out "$WORK/release" --downloads "$WORK/downloads" $extra
+
+      - name: Smoke checks (no game data anywhere)
+        run: |
+          set -eu
+          rel="$WORK/release"
+          name="SoulCaliburIII_Recomp-$VERSION"
+          # The zip: no game file, the files a release needs; the hashes.
+          python scripts/make_release.py --verify-zip "$rel/$name.zip"
+          (cd "$rel" && sha256sum -c "$name.zip.sha256")
+          if [ -z "$TEST_BUILD" ]; then (cd "$rel" && sha256sum -c "$name-sources.zip.sha256"); fi
+          # Unzipped as a player would.
+          t="$WORK/smoke/Jérôme Games"
+          rm -rf "$t" && mkdir -p "$t/user"
+          python -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$rel/$name.zip" "$t"
+          app="$t/SoulCaliburIII_Recomp"
+          # A real static C++ link through an accented kit path, without any game data or installed developer tools.
+          "$app/kit/python/python.exe" -I "$app/source/scripts/check_toolchain.py" --toolchain "$app/kit/ucrt64" --out "$WORK/compiler-check"
+          head -c 1048576 /dev/zero > "$t/not_a_disc.iso"
+          # sc3_build with the kit's own Python refuses a file that is not a disc.
+          if "$app/kit/python/python.exe" -I -X utf8 "$app/source/scripts/sc3_build.py" --check \
+              --disc "$t/not_a_disc.iso" > "$t/check.txt" 2>&1; then
+            cat "$t/check.txt"; echo "::error::sc3_build --check accepted a file of zeros"; exit 1
+          fi
+          cat "$t/check.txt"
+          grep -q "is not an ISO9660 disc image" "$t/check.txt"
+          # The launcher, without a window: its version, the release folder, the changelog, the same disc check.
+          "$app/SC3 Launcher.exe" --version
+          if ! PS2X_USER_DIR="$t/user" "$app/SC3 Launcher.exe" --self-check "$t/not_a_disc.iso" \
+              --report "$t/self-check.txt"; then
+            cat "$t/self-check.txt"; echo "::error::the launcher's self-check failed"; exit 1
+          fi
+          cat "$t/self-check.txt"
+          grep -q "^version $VERSION$" "$t/self-check.txt"
+
+      - name: Keep the zips (the run's artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoulCaliburIII_Recomp-${{ env.VERSION }}
+          path: |
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}.zip
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}.zip.sha256
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-sources.zip
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-sources.zip.sha256
+            ${{ runner.temp }}/sc3/release/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Draft GitHub release (never published here; tags only)
+        if: env.TEST_BUILD == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/make_release.py --version "$VERSION" --out "$WORK/release" --publish-only
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## SoulCaliburIII_Recomp $VERSION (BozoEngine)"
+            echo
+            if [ -f "$WORK/release/RELEASE_NOTES.md" ]; then
+              if [ -n "$TEST_BUILD" ]; then
+                echo "A test build: the zip is this run's artifact; no release was made."
+              else
+                echo "A **draft** release was created if every step passed: run docs/RELEASE_CHECKLIST.md on a clean PC, then publish it."
+              fi
+              echo
+              cat "$WORK/release/RELEASE_NOTES.md"
+            else
+              echo "No release was made (see the failed step)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    # The owner published a release: RecompWatcher refreshes its page now instead of at its daily run.
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    env:
+      WATCHER_TOKEN: ${{ secrets.WATCHER_DISPATCH_TOKEN }}
+    steps:
+      - name: Tell RecompWatcher (skipped without the WATCHER_DISPATCH_TOKEN secret)
+        if: env.WATCHER_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.WATCHER_TOKEN }}
+        run: gh api repos/TheBozos/RecompWatcher/dispatches -f event_type=project-updated
