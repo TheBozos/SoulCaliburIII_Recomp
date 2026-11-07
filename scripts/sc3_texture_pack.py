@@ -425,9 +425,10 @@ def material_textures(d):
         nloop = lo & 0x7FFF
         if (lo >> 58) & 3 or ((lo >> 60) & 0xF) != 1 or (hi & 0xF) != 0xE or not 1 <= nloop <= 8 or q + 16 * (nloop + 1) > len(d):
             continue
-        for i in range(nloop):
-            value, reg = struct.unpack_from('<QQ', d, q + 16 * (i + 1))
-            if (reg & 0xFF) not in (0x06, 0x07):
+        writes = [(reg & 0xFF, value) for value, reg in (struct.unpack_from('<QQ', d, q + 16 * (i + 1)) for i in range(nloop))]
+        regs = dict(writes)
+        for reg, value in writes:
+            if reg not in (0x06, 0x07):
                 continue
             psm, tw, th = (value >> 20) & 0x3F, (value >> 26) & 0xF, (value >> 30) & 0xF
             if psm not in (PSM_CT32, PSM_T8, PSM_T4, PSM_T8H, PSM_T4HL, PSM_T4HH) or tw > 10 or th > 10:
@@ -438,6 +439,24 @@ def material_textures(d):
             if not h or h > (1 << th):
                 h = 1 << th
             out.add((value & TEX0_KEY_MASK, w, h))
+            out.update(mip_levels(value, regs.get(reg + 0x0E), regs.get(reg + 0x2E), w, h))
+    return out
+
+
+def mip_levels(tex0, tex1, miptbp1, w, h):
+    """(TEX0, width, height) of mip levels 1..MXL (at most 3) as TEX1 and MIPTBP1 place them: level n's TBP and TBW
+    from MIPTBP1, TW and TH n less, the used size halved n times."""
+    if tex1 is None or miptbp1 is None or (tex1 >> 9) & 1 or not 2 <= (tex1 >> 6) & 7 <= 5:
+        return []
+    out = []
+    tw, th = (tex0 >> 26) & 0xF, (tex0 >> 30) & 0xF
+    for n in range(1, min((tex1 >> 2) & 7, 3) + 1):
+        if n > tw and n > th:
+            break
+        field = miptbp1 >> (20 * (n - 1))
+        level = tex0 & ~(0x3FFF | (0x3F << 14) | (0xF << 26) | (0xF << 30))
+        level |= (field & 0x3FFF) | (((field >> 14) & 0x3F) << 14) | (max(tw - n, 0) << 26) | (max(th - n, 0) << 30)
+        out.append((level & TEX0_KEY_MASK, max(w >> n, 1), max(h >> n, 1)))
     return out
 
 
