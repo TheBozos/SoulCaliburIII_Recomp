@@ -2,6 +2,8 @@
 // triangles.
 #include "sc3_draw.h"
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -267,6 +269,18 @@ namespace sc3::draw
             for (uint32_t i = 0; i + 2u < count; i += 3u)
                 triangle(in[i], in[i + 1u], in[i + 2u], shaded, map, out);
             break;
+        }
+        if (m.textured)
+        {
+            static const char *const hide = std::getenv("SC3_HIDE_TBP");
+            if (hide)
+                for (const char *p = hide; *p;)
+                {
+                    char *end = nullptr;
+                    if (std::strtoul(p, &end, 16) == gs.tex0.tbp)
+                        out.clear();
+                    p = *end ? end + 1 : end;
+                }
         }
         // Without a texture the GS's colour is the vertex's, 0xFF being 1.0; the Renderer's is 0x80.
         if (!m.textured)
