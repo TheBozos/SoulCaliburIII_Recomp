@@ -149,17 +149,16 @@ namespace sc3
             std::map<uint32_t, PageCopy> pageCopies; // 0x119318's copies of page blocks, by where they went
             uint64_t pageCopyChecks = 0, pageCopyMisses = 0; // check mode: head-2 strips whose copy is the recorded page's / not
             uint64_t uploadsDropped = 0;
-            std::map<std::pair<uint32_t, bool>, uint64_t> uploadsKept; // native on: (file, an item of it went to the GS) -> uploads sent
+            std::map<uint32_t, uint64_t> uploadsKept; // file -> uploads the game still built
             std::map<uint64_t, uint64_t> textureMisses; // TEX0 -> draws left to the GS without a pack texture
             // Packets the game still builds for 2D, by the return address of their insertion (ra: the builder) and the
             // insertion function: calls and quadwords.
             uint64_t frames = 0, bound = 0, boundBad = 0;
             // Texture files of draw items: the last frame an item of theirs linked a game packet, the first frame their upload
             // item (0x115600) was seen, and the file of the item type still the game's that runs now.
-            std::map<uint32_t, uint64_t> itemFilesGs, uploadFilesSeen;
+            std::map<uint32_t, uint64_t> uploadFilesSeen;
             uint32_t screenItemsGsLogged = 0;
             uint64_t filesRelocated = 0;
-            uint32_t gsItemFile = 0;
             std::shared_ptr<ot::Draw> effectSlot;
             // Small movies the native 2D draws from the host decoder's pictures: by player handle, the pixels the movie task
             // copies them to (0x217E28's destination), and the page blocks of the texture files pointing there.
@@ -323,12 +322,6 @@ namespace sc3
             runGuest(func_0x118e18, rdram, ctx, runtime);
             *ctx = saved;
             ++g_state.filesRelocated;
-        }
-
-        uint32_t loadedImageBase(uint32_t address)
-        {
-            packs::LoadedImages::Image image;
-            return g_state.loaded.find(address, image) && image.file ? image.base : address;
         }
 
         // The page `index` of a texture file (0x1177E0's choice: the last one past its count) from the 2D pack, its texture
@@ -1847,23 +1840,17 @@ namespace sc3
 
         // 0x115600 (a0 -> item, type 13 of the draw items): CALLs of the upload lists of the texture file +0x14 (0x117920 /
         // 0x118430) or of the block +0x10 (0x117B80 / 0x118700), then TEXFLUSH, for later draws. Dropped while the native 2D
-        // is on, every page of the file +0x14 is in the pack with its texture and no item of it linked a game packet for a
-        // while (the item types still the game's draw from these uploads on the GS); never in the first two frames the
-        // upload is seen, so such an item is found before.
+        // is on and every page of the file +0x14 is in the pack with its texture; never in the first two frames the upload is
+        // seen.
 
         constexpr uint32_t kUploadItem = 0x00115600u;
-        constexpr uint64_t kGsItemFrames = 120u;
 
         void uploadItem(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             State &s = g_state;
             const uint32_t item = getRegU32(ctx, 4), file = peek32(item + 0x14u);
-            auto gs = s.itemFilesGs.find(file);
-            if (gs == s.itemFilesGs.end())
-                gs = s.itemFilesGs.find(loadedImageBase(file));
             const uint64_t seen = s.uploadFilesSeen.try_emplace(file, s.frames).first->second;
-            bool packed = fileAddress(file) && seen + 2u <= s.frames &&
-                          (gs == s.itemFilesGs.end() || gs->second + kGsItemFrames < s.frames);
+            bool packed = fileAddress(file) && seen + 2u <= s.frames;
             const uint32_t pages = packed ? peek8(file + 5u) + peek8(file + 7u) * 256u : 0u;
             packed = packed && pages != 0u;
             for (uint32_t i = 0; packed && i < pages; ++i)
@@ -1874,7 +1861,7 @@ namespace sc3
             }
             if (!packed)
             {
-                ++s.uploadsKept[{file, gs != s.itemFilesGs.end() && gs->second + kGsItemFrames >= s.frames}];
+                ++s.uploadsKept[file];
                 callOriginal(kUploadItem, rdram, ctx, runtime);
                 return;
             }
@@ -2434,47 +2421,16 @@ namespace sc3
             return resolveCopy(copy->second, out, stats);
         }
 
-        // The texture file a draw item's head names: +0x14, or for a head-2 item the file its page copy came from.
-        uint32_t itemTextureFile(uint32_t item)
-        {
-            const uint32_t file = peek32(item + 0x14u);
-            if (peek8(item + 0x1Cu) == 1u)
-                return loadedImageBase(file);
-            if (peek8(item + 0x1Cu) != 2u)
-                return file;
-            const auto copy = g_state.pageCopies.find(file);
-            return copy != g_state.pageCopies.end() ? copy->second.file : file;
-        }
-
         void stripsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
         void objectsDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
 
         void trackItem(void (*draw)(uint8_t *, R5900Context *, PS2Runtime *), BuilderStats &stats, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
-            State &s = g_state;
-            const uint32_t file = itemTextureFile(getRegU32(ctx, 4));
-            const uint64_t toGs = stats.toGs;
             draw(rdram, ctx, runtime);
-            if (stats.toGs != toGs)
-                s.itemFilesGs[file] = s.frames;
         }
 
         void strips(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(stripsDraw, g_state.strips, rdram, ctx, runtime); }
         void objects(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime) { trackItem(objectsDraw, g_state.objects, rdram, ctx, runtime); }
-
-        // The draw item types still the game's (the table at 0x4676A8 bar 0x110E50, 0x1134A0 and the upload 0x115600), each
-        // with its end: a packet linked from inside one marks the file of the item that runs.
-        constexpr std::pair<uint32_t, uint32_t> kGsItems[] = {
-            {0x001117D8u, 0x00112148u}, {0x001124B8u, 0x00113250u}, {0x00113AF8u, 0x00113F50u}, {0x00115018u, 0x00115600u},
-            {0x00115BE0u, 0x00115E48u}, {0x00115E48u, 0x00116128u}, {0x00116128u, 0x00116490u}};
-
-        void gsItem(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            State &s = g_state;
-            const uint32_t at = ctx->pc;
-            s.gsItemFile = itemTextureFile(getRegU32(ctx, 4));
-            callOriginal(at, rdram, ctx, runtime);
-        }
 
         using StripBuild = bool (*)(uint32_t, Vu0 &, StripCall &);
 
