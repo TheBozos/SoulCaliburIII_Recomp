@@ -4,6 +4,9 @@
 #include "sc3_meshes.h"
 #include "sc3_textures.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace sc3::loads
 {
     namespace
@@ -22,6 +25,9 @@ namespace sc3::loads
 
         void cdRead(uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
         {
+            static const bool trace = std::getenv("SC3_TRACE_CD") != nullptr;
+            if (trace)
+                std::fprintf(stderr, "[sc3:cd] f%u %x %x %x\n", *reinterpret_cast<const uint32_t *>(rdram + 0x46E608u), getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6));
             const R5900Context arguments = *ctx;
             textures::noteReadBefore(rdram, ctx);
             meshes::noteReadBefore(rdram, ctx);

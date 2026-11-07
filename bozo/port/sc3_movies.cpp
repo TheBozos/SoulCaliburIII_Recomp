@@ -2,7 +2,7 @@
 // Sofdec's own player is never started: full-screen ones are the renderer's held backdrop, smaller ones (menu previews) a
 // picture the 2D builders ask for by handle, their ADX soundtracks go to the mixer through the port's PCM stream. Any other
 // start reports its end straight away.
-#include "sc3_port.h"
+#include "sc3_draw.h"
 
 #include "bozo/audio/port_stream.h"
 #include "bozo/libs/cd.h"
@@ -68,6 +68,8 @@ namespace sc3::movies
         }
 
 #ifdef SC3_HAVE_FFMPEG
+        PS2Runtime *g_runtime = nullptr;
+
         constexpr uint32_t kMwPlyStartAfs = 0x003ADA20u;
         constexpr uint32_t kMwPlyStartAfsLp = 0x003B1698u;
         constexpr uint32_t kMwPlyGetCurFrm = 0x003AB630u;
@@ -194,7 +196,7 @@ namespace sc3::movies
                 return true;
             }
 
-            // RGBA rows, alpha 0xFF or a mask movie's luma from the picture's bottom half. Nothing is copied while `known` is
+            // RGBA rows, alpha 0x80 = 1.0 or a mask movie's luma from the picture's bottom half. Nothing is copied while `known` is
             // still the current picture's number.
             bool picture(bool alphaMovie, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number)
             {
@@ -213,7 +215,8 @@ namespace sc3::movies
                     {
                         const uint8_t *src = m_current.data() + (static_cast<size_t>(y) * m_width + x) * 4u;
                         const uint8_t *mask = src + static_cast<size_t>(rows) * m_width * 4u;
-                        const uint32_t alpha = alphaMovie ? (mask[0] * 77u + mask[1] * 150u + mask[2] * 29u) >> 8 : 0xFFu;
+                        const uint32_t luma = (mask[0] * 77u + mask[1] * 150u + mask[2] * 29u) >> 8;
+                        const uint32_t alpha = alphaMovie ? (luma * 0x80u + 127u) / 255u : 0x80u;
                         rgba[static_cast<size_t>(y) * m_width + x] = src[0] | (src[1] << 8) | (src[2] << 16) | (alpha << 24);
                     }
                 return true;
@@ -668,6 +671,7 @@ namespace sc3::movies
             g_audioTicks = g_audioPushed = 0;
             return;
         }
+        g_runtime = runtime;
         const bool realTime = bozo::port::host(runtime).realTime();
         for (const auto &entry : g_players)
             entry.second->update(realTime);
@@ -696,6 +700,8 @@ namespace sc3::movies
         runtime.registerFunction(kMoviePlayStat, &playStat);
         runtime.registerFunction(kMovieTaskEnd, &taskEndReleasesJob);
 #ifdef SC3_HAVE_FFMPEG
+        twoD::setMoviePictures([](uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number)
+                               { return g_runtime && picture(g_runtime, handle, known, rgba, width, height, number); });
         runtime.registerFunction(kMwPlyStartAfs, &startAfs);
         runtime.registerFunction(kMwPlyStartAfsLp, &startAfsLp);
         runtime.registerFunction(kMwPlyGetCurFrm, &getCurFrm);

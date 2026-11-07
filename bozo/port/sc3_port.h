@@ -36,7 +36,7 @@ namespace sc3
         void install(Registry &runtime);
         // At every frame end: the movies' clocks, pictures and soundtracks.
         void tick(PS2Runtime *runtime);
-        // A smaller movie's current picture by Sofdec handle, for the 2D builders: RGBA rows, nothing copied while `known` is
+        // A smaller movie's current picture by Sofdec handle, for the 2D builders: RGBA rows (alpha 0x80 = 1.0), nothing copied while `known` is
         // its number.
         bool picture(PS2Runtime *runtime, uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number);
     }

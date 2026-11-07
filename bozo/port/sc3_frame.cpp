@@ -5,8 +5,6 @@
 
 #include "bozo/app/frame_pacer.h"
 
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -38,7 +36,6 @@ namespace sc3::frame
                                                0x0010CD88u, 0x0010CDB8u, 0x0010CE30u, 0x0010CE98u, 0x0010CED0u};
 
         constexpr uint32_t kInitSys = 0x00440860u;
-        constexpr uint32_t kCdRead = 0x00424E28u;
 
         constexpr uint32_t kRenderer = 0x005BE700u;
         constexpr uint32_t kFrameLists = 0x004674C0u;
@@ -96,16 +93,6 @@ namespace sc3::frame
                 return;
             }
             func_0x3f0f10(rdram, ctx, runtime);
-        }
-
-        // SC3_TRACE_CD: what the game reads, by the game's frame counter, for the comparison with the reference's call log.
-        void cdRead(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
-        {
-            static const bool trace = std::getenv("SC3_TRACE_CD") != nullptr;
-            if (trace)
-                std::fprintf(stderr, "[sc3:cd] f%u %x %x %x\n", get<uint32_t>(rdram, kFrameNumber), getRegU32(ctx, 4), getRegU32(ctx, 5), getRegU32(ctx, 6));
-            bozo::port::host(runtime).callLibrary(runtime, ctx, kCdRead);
-            ctx->pc = getRegU32(ctx, 31);
         }
 
         void gsDrainWait(uint8_t *, R5900Context *ctx, PS2Runtime *)
@@ -196,7 +183,6 @@ namespace sc3::frame
     void install(Registry &runtime)
     {
         runtime.registerFunction(kInitSys, &initSys);
-        runtime.registerFunction(kCdRead, &cdRead);
         runtime.registerFunction(kGsDrainWait, &gsDrainWait);
         runtime.registerFunction(kPadSetCallback, &padSetCallback);
         runtime.registerFunction(kGsExecStoreImage, &gsDrainWait);
