@@ -24,7 +24,10 @@ import os
 import struct
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'PS2Recomp', 'tools'))
+for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'BozoEngine', 'tools'), os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'PS2Recomp', 'tools')):
+    if _tools and os.path.isdir(os.path.join(_tools, 'native_pack')):
+        sys.path.insert(0, _tools)
+        break
 from native_pack import texture  # noqa: E402
 
 TEX0_KEY_MASK = (0x3FFF | (0x3F << 14) | (0x3F << 20) | (0xF << 26) | (0xF << 30) | (0x3FFF << 37) | (0xF << 51) |

@@ -206,4 +206,31 @@ if(SC3_WINDOW)
     endif()
 endif()
 
+# The packs: from the disc's files, into packs/ beside the programs, where they look for them. Not part of the default build.
+set(SC3_DISC_DIR "" CACHE PATH "The disc's files for sc3_packs (default: SC3_ELF's folder)")
+if(NOT SC3_DISC_DIR)
+    get_filename_component(SC3_DISC_DIR "${SC3_ELF}" DIRECTORY)
+endif()
+set(pack_dir "${CMAKE_BINARY_DIR}/packs")
+set(pack_env ${CMAKE_COMMAND} -E env "BOZO_ENGINE_TOOLS=${BOZO_ENGINE_DIR}/tools")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_textures.pack ${pack_dir}/sc3_textures.keys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} Python3::Interpreter -I "${CMAKE_SOURCE_DIR}/scripts/sc3_texture_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_textures.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_texture_pack.py"
+    COMMENT "Building the texture pack from the disc")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_meshes.pack
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} Python3::Interpreter -I "${CMAKE_SOURCE_DIR}/scripts/sc3_mesh_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_meshes.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_mesh_pack.py"
+    COMMENT "Building the mesh pack from the disc")
+add_custom_command(
+    OUTPUT ${pack_dir}/sc3_2d.pack
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
+    COMMAND ${pack_env} Python3::Interpreter -I "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_2d.pack
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py"
+    COMMENT "Building the 2D pack from the disc")
+add_custom_target(sc3_packs DEPENDS ${pack_dir}/sc3_textures.pack ${pack_dir}/sc3_meshes.pack ${pack_dir}/sc3_2d.pack)
+
 include("${CMAKE_SOURCE_DIR}/cmake/sc3_audio.cmake")
