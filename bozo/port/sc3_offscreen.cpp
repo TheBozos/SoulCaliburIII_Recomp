@@ -518,6 +518,13 @@ namespace sc3::offscreen
             v[i].fog = static_cast<float>(load32(rdram, display + 0x68u) & 0xFFu) / 255.0f;
         }
         renderer.draw(copy, draw::kIdentity, v, 6u);
+        // 1, 2, 1 over three lines: the copy samples half a line up (v 0 on bilinear), PMODE 0x8063 averages DISPFB1 (DBY 1) and DISPFB2.
+        bozo::render::Material line = targetCopy(0u, 0u);
+        line.nearest = true;
+        line.gsBlend = true;
+        line.blendA = 0u, line.blendB = 1u, line.blendC = 2u, line.blendD = 1u, line.blendFix = 0x40u;
+        wholeTarget(renderer, line, 0x80808080u, 0.0f, 1.0f / 448.0f);
+        wholeTarget(renderer, line, 0x80808080u, 0.0f, -1.0f / 448.0f);
     }
 
     void frameDone()
