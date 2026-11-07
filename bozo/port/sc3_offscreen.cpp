@@ -17,7 +17,7 @@ namespace sc3::offscreen
     namespace
     {
         constexpr uint32_t kStoreImage = 0x0013BDF0u;
-        constexpr float kOffsetX = 2048.0f - 320.0f, kOffsetY = 2048.0f - 224.0f;
+        constexpr float kOffsetX = 2048.0f - 320.0f - 0.5f, kOffsetY = 2048.0f - 224.0f - 0.5f;
         constexpr uint32_t kGlowLayerEnd = 0x001725C0u, kGlowBufferBuild = 0x001705B0u, kGlowBufferDraw = 0x00172E90u;
         constexpr uint8_t kHalf = 1u, kQuarter = 2u, kBlur = 3u;
 

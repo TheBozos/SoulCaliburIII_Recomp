@@ -76,8 +76,9 @@ namespace sc3::ot
         bozo::render::Screen screen()
         {
             bozo::render::Screen s;
-            s.originX = 2048.0f - 320.0f;
-            s.originY = 2048.0f - 224.0f;
+            // The GS lights a pixel by its top left corner, GL by its centre.
+            s.originX = 2048.0f - 320.0f - 0.5f;
+            s.originY = 2048.0f - 224.0f - 0.5f;
             s.width = 640.0f;
             s.height = 448.0f;
             return s;
@@ -233,7 +234,7 @@ namespace sc3::ot
         }();
         static uint64_t frame = 0;
         if (std::find(holds.begin(), holds.end(), frame++) != holds.end())
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
     void presentAlone()
