@@ -3922,7 +3922,8 @@ namespace sc3
             }
             Page pageRegs;
             const uint64_t reasons = stats.noFile + stats.noBlock + stats.noTexture;
-            if ((sprites && peek8(item + 0xBu) != 0u) || !screenPage(item, pageRegs, stats))
+            const bool pageless = !sprites && peek32(item + 0x14u) == 0u && peek32(item + 0x10u) == 0u;
+            if ((sprites && peek8(item + 0xBu) != 0u) || (!pageless && !screenPage(item, pageRegs, stats)))
             {
                 ++stats.toGs;
                 if (stats.noFile + stats.noBlock + stats.noTexture == reasons && ++s.screenItemsGsLogged <= 8u)
