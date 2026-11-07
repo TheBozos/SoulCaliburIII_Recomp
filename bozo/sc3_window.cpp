@@ -6,7 +6,7 @@
 //       [--render-scale s] [--capture-dir dir] [--capture-frames n,n,...] [--quit-after n] [--pad-script [n=]file]...
 //       [--print] [--no-sound] [--audio-latency ms] [--wav file]
 //
-// The user folder is the PS2Recomp runner's (SoulCaliburIII_Recomp; PS2X_USER_DIR overrides it): input.ini, video.ini,
+// The user folder is SoulCaliburIII_Recomp (PS2X_USER_DIR overrides it): input.ini, video.ini,
 // the memory cards (mc0, mc1) and the logs.
 #include "sc3_main.h"
 

@@ -1,6 +1,6 @@
 # SC3 reference records
 
-What SC3 on BozoEngine is compared with: runs of the current SC3 main build (the PS2Recomp path), recorded with BozoEngine's
+What SC3 on BozoEngine is compared with: runs of SC3's PS2Recomp build (main da8a761, a checkout of its own), recorded with BozoEngine's
 formats, `PS2XREF1` (`docs/specs/harness.md`, 80 bytes per game frame) and `PS2XCLG1` (`docs/specs/calllog.md`). `records/`
 holds hashes and counts only. The call logs hold game memory: they stay local, at `~/recomp/sc3/bozo-b1/runs/` on the
 recording machine, and are identified below by SHA-256.
@@ -13,12 +13,12 @@ Recorded 2026-11-06, each from a fresh user folder with blank memory cards.
 | `menus.ref` | `ref_menus.env` | 7740 | `route_frames.txt` up to the fight's start | 60,955,107 | 52,675,792 | 2,488,938,677 | `585c7af293a684df79e8bbcc127eea383a598acc9d9c1be50e68b74deef701d5` |
 | `fight.ref` | `ref_fight.env` | 11700 | The route: title, Mode Select, Single Player, Practice, Free Training, 60 s of attacks, pause | 107,871,653 | 93,940,652 | 5,121,637,383 | `8799bcb60e3ff55142747e060f080bf62ea922436fdb1d088ca0169037e5fa72` |
 
-The ELF's XXH64 in every record is `60984b458cf23f17`. `route_frames.txt` is `scripts/regress.sh`'s route with each of its
+The ELF's XXH64 in every record is `60984b458cf23f17`. `route_frames.txt` is main's `scripts/regress.sh` route with each of its
 waits taken as 60 game frames.
 
 ## The build
 
-- SC3: this branch's `runtime/`, `CMakeLists.txt` and `recomp/sc3.toml` (main da8a761 plus `PS2X_DETERMINISTIC` and
+- SC3: main da8a761's `runtime/`, `CMakeLists.txt` and `recomp/sc3.toml` (plus `PS2X_DETERMINISTIC` and
   `SC3_CALL_NAMES` in `runtime/sc3_overrides.cpp`, both inert without their variables).
 - PS2Recomp: main's pin 27ebdbc4 plus branch `sc3/harness` (bc47c970, local to the recording machine so far): the fork's
   `harness/calllog` commits picked onto the pin, and Linux write tracking for the capture.
@@ -56,11 +56,11 @@ What these records do not cover:
   the first place to look.
 - **Native audio.** `PS2X_NATIVE_AUDIO=1` is not used. The `sound` field is the emulated SPU2's mix on the IOP clock.
 - **The fork's self-checks.** `calllog.md` section 9's strict, substitution and replay checks were not run on these logs.
-- **Other builds.** The hashes assume this build: another fork commit or changed overrides in `runtime/` can change them.
+- **Other builds.** The hashes assume this build: another fork commit or changed overrides in main's `runtime/` can change them.
 
 ## Recording
 
-    python3 scripts/sc3_call_names.py recomp/sc3.toml recomp/sc3_symbols.txt <names.txt>
+    python3 scripts/sc3_call_names.py <main checkout>/recomp/sc3.toml recomp/sc3_symbols.txt <names.txt>
     SC3_REF_RUNNER=<ps2EntryRunner> SC3_ELF=<SLUS_212.16> SC3_REF_PACKS=<packs> SC3_REF_OUT=<out> SC3_REF_CALL_NAMES=<names.txt> \
       reference/scripts/run.sh boot 2400 ref_boot.env
 

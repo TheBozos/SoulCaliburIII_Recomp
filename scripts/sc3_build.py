@@ -860,7 +860,7 @@ def main():
 
 def remove_stale_sources():
     """A release's source folder lists its files (release_files.txt, scripts/make_release.py). A newer release unzipped
-    over an older one leaves the files it no longer has; CMake globs some folders (runtime/*.cpp, BozoEngine's
+    over an older one leaves the files it no longer has; CMake globs some folders (bozo/port/*.cpp, BozoEngine's
     sources), so they are removed here: regular files under the source folder only, never through a link, never
     Python's caches; then the folders left empty."""
     listing = os.path.join(ROOT, 'release_files.txt')

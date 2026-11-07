@@ -10,7 +10,7 @@ TRXDIR and an IMAGE tag, then a REF to the texels) and upload chains it CALLs it
 is played into a model of GS memory (offline only), and every texture a material of the model selects (its TEX0, at
 the used size the material's GIF tag keeps) whose texels and CLUT the list wrote becomes a record.
 
-Writes <out.pack>, PS2Recomp's generic texture pack (PS2XTEX1, tools/native_pack/texture.py): one file per CALL list,
+Writes <out.pack>, BozoEngine's texture pack (PS2XTEX1, tools/native_pack/texture.py): one file per CALL list,
 named '<leaf>@<list offset in the leaf>', its records the textures (indexed: an index a byte; CT32) each followed by
 its palette for an indexed one (CT32, index order, alpha 0x80 = 1.0). Beside it, <out>.keys, SC3's key scheme
 (write_keys): where each list sits in ROOT.OLK, its entries, and which records a TEX0 and used size select.

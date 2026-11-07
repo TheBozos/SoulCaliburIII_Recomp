@@ -7,7 +7,7 @@ Walks ROOT.OLK to its leaf files (scripts/sc3_texture_pack.py's walk). A leaf is
 and relocated in place, so the pack's image of a leaf is its bytes on the disc, and every object is keyed by its offset
 in the leaf.
 
-Objects (PS2Recomp's generic mesh pack, PS2XMSH1, tools/native_pack/mesh.py), one per model part the game hands its
+Objects (BozoEngine's mesh pack, PS2XMSH1, tools/native_pack/mesh.py), one per model part the game hands its
 part builder 0x10A178 (a REF to raw VIF data): STCYCL 1,1 and an UNPACK of its GIF tag to VU TOP + 0, then STCYCL 4,1 and
 one UNPACK a vertex field (V2-32 ST at TOP + 1, V4-32 or S-32 colour at + 2, V4-32 position at + 3, V3-32 normal at + 4,
 four quadwords a vertex). kind 1; positions x, y, z and the vertex flags (the position's w word: bit 15 ADC, bits 4-11

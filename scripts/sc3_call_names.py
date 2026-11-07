@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""The reference runner's named calls (SC3_CALL_NAMES, reference/README.md): each address the PS2Recomp build answers as a
-stub, named from recomp/sc3_symbols.txt, sub_<address> when the map has no name. Only the addresses are read from
-sc3.toml, never its names.
+"""The reference runner's named calls (SC3_CALL_NAMES, reference/README.md): each address the PS2Recomp build (main
+da8a761) answers as a stub, named from recomp/sc3_symbols.txt, sub_<address> when the map has no name. Only the
+addresses are read from main's sc3.toml, never its names.
 
-    python scripts/sc3_call_names.py recomp/sc3.toml recomp/sc3_symbols.txt <out.txt>
+    python scripts/sc3_call_names.py <main checkout>/recomp/sc3.toml recomp/sc3_symbols.txt <out.txt>
 """
 import re
 import sys

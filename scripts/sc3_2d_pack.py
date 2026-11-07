@@ -3,9 +3,9 @@
 
 usage: scripts/sc3_2d_pack.py <disc dir> <out.pack> [--only /2/17,...] [--jobs N]
 
-The 2D builders (runtime/sc3_2d.cpp) draw sprites whose texture registers the game REFs from a block inside a loaded
+The 2D builders (bozo/port/sc3_2d.cpp) draw sprites whose texture registers the game REFs from a block inside a loaded
 ROOT.OLK leaf (a texture file: a GIF A+D block with TEX1, TEX0 and CLAMP per texture page). Those blocks are converted
-here into PS2Recomp's generic mesh pack (PS2XMSH1), one file per leaf with register blocks only, each at its offset in
+here into BozoEngine's mesh pack (PS2XMSH1), one file per leaf with register blocks only, each at its offset in
 the leaf with its writes and, as register 0x100, the tag's REGS word (the game keeps the texture's used size there: bits
 32-47 width, 48-63 height), as scripts/sc3_mesh_pack.py records them for the 3D. Leaves without such blocks are left out.
 

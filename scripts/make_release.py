@@ -407,7 +407,7 @@ class Release:
         for skip in ENGINE_SKIP:
             rmtree(os.path.join(engine_dst, skip))
         # The list of the source's files: sc3_build removes the ones a newer release unzipped over this one no longer
-        # has (CMake globs runtime/*.cpp: a deleted file left behind would still be compiled).
+        # has (CMake globs bozo/port/*.cpp: a deleted file left behind would still be compiled).
         files = sorted(os.path.relpath(os.path.join(d, n), self.source).replace('\\', '/')
                        for d, _s, names in os.walk(self.source) for n in names)
         files += ['release.ini', 'release_files.txt']
