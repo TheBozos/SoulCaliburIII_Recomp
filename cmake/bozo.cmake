@@ -229,7 +229,7 @@ add_custom_command(
     OUTPUT ${pack_dir}/sc3_2d.pack
     COMMAND ${CMAKE_COMMAND} -E make_directory ${pack_dir}
     COMMAND ${pack_env} ${Python3_EXECUTABLE} -I "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py" "${SC3_DISC_DIR}" ${pack_dir}/sc3_2d.pack
-    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py"
+    DEPENDS "${CMAKE_SOURCE_DIR}/scripts/sc3_2d_pack.py" "${CMAKE_SOURCE_DIR}/scripts/sc3_texture_pack.py" "${CMAKE_SOURCE_DIR}/scripts/sc3_mesh_pack.py"
     COMMENT "Building the 2D pack from the disc")
 add_custom_target(sc3_packs DEPENDS ${pack_dir}/sc3_textures.pack ${pack_dir}/sc3_meshes.pack ${pack_dir}/sc3_2d.pack)
 
