@@ -307,7 +307,7 @@ player 2:
 
 The port is moving to [BozoEngine](https://github.com/TheBozos/BozoEngine) (the `BozoEngine` submodule, at a merged engine
 commit), next to the PS2Recomp build until the switch. Headless, it boots to the title and runs the reference route's
-11700 frames with no fault. Movies play with sound (FFmpeg from the disc image, pictures on the renderer's backdrop, the soundtrack in the mixer), and frames are held to 60 a second in a window. `[sc3:acknowledged]` at a run's end counts the guest's hits on registers that have no device behind them.
+11700 frames with no fault. Movies play with sound (FFmpeg from the disc image, pictures on the renderer's backdrop, the soundtrack in the mixer), and frames are held to 60 a second in a window. `[sc3:acknowledged]` at a run's end counts the guest's hits on registers that have no device behind them. It reads 0 on the route and on the boot with movies: the renderer's packet API (bozo/port/sc3_packet.cpp) copies as plain memory work, the remaining sites are patched (recomp/sc3_patches.txt) or answered at their functions.
 
 ```bash
 git submodule update --init BozoEngine
