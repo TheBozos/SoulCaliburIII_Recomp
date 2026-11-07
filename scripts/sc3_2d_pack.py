@@ -109,6 +109,7 @@ def page_textures(d, blocks):
         units = texture_units(m)
         if not units:
             continue
+        rest = d[start:]
         gs = GsMemory()
         cluts = set()
         streams = []
@@ -118,7 +119,7 @@ def page_textures(d, blocks):
                     if target is None:
                         continue
                     gs.entry = k + 1
-                    chain = walk_chain(m, target)
+                    chain = walk_chain(rest, target)
                     if chain is not None:
                         data, qwords = chain
                         play_gif(gs, data, qwords)

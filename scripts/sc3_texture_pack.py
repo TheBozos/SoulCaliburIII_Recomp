@@ -105,6 +105,11 @@ def addr4(bp, bw, x, y):
 NO_SOURCE = 0xFFFFFFFF
 
 
+def source(sources, byte, mask):
+    s = sources[byte >> 4]
+    return NO_SOURCE if s == NO_SOURCE else s + (byte & mask)
+
+
 class GsMemory:
     """GS local memory as a CALL list's uploads leave it, with the list entry (1-based) that last wrote each byte and
     the model offset of the upload data each 4-byte word came from (offline model only)."""
@@ -124,7 +129,7 @@ class GsMemory:
                 a = addr32(bp, bw, x, y)
                 mem[a:a + 4] = data[i:i + 4]
                 written[a:a + 4] = mark
-                src[a >> 2] = sources[i >> 4] + (i & 15)
+                src[a >> 2] = source(sources, i, 15)
                 i += 4
 
     def write_high(self, psm, bp, bw, sx, sy, w, h, data, sources):
@@ -140,7 +145,7 @@ class GsMemory:
                     v = (data[i >> 1] >> ((i & 1) * 4)) & 0xF
                     mem[a] = (mem[a] & 0xF0) | v if psm == PSM_T4HL else (mem[a] & 0x0F) | (v << 4)
                 written[a] = self.entry
-                src[a >> 2] = sources[b >> 4] + (b & 12)
+                src[a >> 2] = source(sources, b, 12)
                 i += 1
 
     def write_indexed(self, psm, bp, bw, sx, sy, w, h, data, sources):
@@ -159,7 +164,7 @@ class GsMemory:
                     mem[a] = (mem[a] & 0xF0) | v if not n & 1 else (mem[a] & 0x0F) | (v << 4)
                     b = i >> 1
                 written[a] = self.entry
-                src[a >> 2] = sources[b >> 4] + (b & 12)
+                src[a >> 2] = source(sources, b, 12)
                 i += 1
 
     def ct32(self, bp, bw, x, y, touched, words=None):
@@ -353,9 +358,11 @@ def play_gif(gs, data, qwords=None):
             if dpsm not in (PSM_CT32, PSM_T8, PSM_T4, PSM_T8H, PSM_T4HL, PSM_T4HH) or ((trxpos >> 59) & 3):
                 raise Unsupported('upload psm %#x dir %d' % (dpsm, (trxpos >> 59) & 3))
             bits = 32 if dpsm == PSM_CT32 else 8 if dpsm in (PSM_T8, PSM_T8H) else 4
-            if len(payload) * 8 < w * h * bits:
-                raise Unsupported('short IMAGE')
             sources = qwords[q // 16 - nloop:q // 16]
+            need = (w * h * bits + 127) // 128
+            if nloop < need:
+                payload += bytes((need - nloop) * 16)
+                sources = sources + [NO_SOURCE] * (need - nloop)
             if dpsm == PSM_CT32:
                 gs.write_ct32(dbp, dbw, dsx, dsy, w, h, payload, sources)
             elif dpsm in (PSM_T8, PSM_T4):
@@ -434,11 +441,12 @@ def material_textures(d):
     return out
 
 
-def convert_model(d, report):
+def convert_model(d, report, rest=None):
     """[(entries, textures, complete)] per CALL list of one model (its addresses are relative to its start), and per
     upload chain no list CALLs (the game CALLs those itself: animated textures), as a list of one entry at its start: entries are the CALL tags' offsets; textures (tex0, w, h, rgba,
     first entry) are those whose texels and CLUT the entries from `first entry` to the list's end all wrote; complete[k]
-    says every material texture reading what entries k.. wrote is among them (their uploads can be left out)."""
+    says every material texture reading what entries k.. wrote is among them (their uploads can be left out). `rest`: the
+    leaf from the model's start, where upload chains are followed (a REF may reach past a 03 04 04 00 in texel data)."""
     units = texture_units(d)
     if not units:
         return []
@@ -457,7 +465,7 @@ def convert_model(d, report):
                 if target is None:
                     continue
                 gs.entry = k + 1
-                chain = walk_chain(d, target)
+                chain = walk_chain(d if rest is None else rest, target)
                 if chain is None:
                     raise Unsupported('entry %d: chain does not end' % k)
                 play_gif(gs, *chain)
@@ -506,7 +514,7 @@ def convert_leaf(d, report):
     for i, start in enumerate(starts):
         end = starts[i + 1] if i + 1 < len(starts) else len(d)
         model_report = []
-        for calls, textures, complete in convert_model(d[start:end], model_report):
+        for calls, textures, complete in convert_model(d[start:end], model_report, d[start:]):
             moved = []
             for tex0, w, h, psm, texels, palette, first, palette_src, runs in textures:
                 palette_src = [NO_SOURCE if s == NO_SOURCE else start + s for s in palette_src]
