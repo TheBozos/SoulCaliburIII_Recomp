@@ -1,0 +1,2 @@
+# Functions of SLUS_212.16 the BozoEngine build answers as stubs beyond the libraries BozoEngine implements
+# (bozo-externals --stubs), one name per line. The names come from SC3's symbol map (SC3_SYMBOL_MAP).

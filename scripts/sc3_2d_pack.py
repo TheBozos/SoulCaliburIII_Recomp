@@ -3,9 +3,9 @@
 
 usage: scripts/sc3_2d_pack.py <disc dir> <out.pack> [--only /2/17,...] [--jobs N]
 
-The 2D builders (runtime/sc3_2d.cpp) draw sprites whose texture registers the game REFs from a block inside a loaded
+The 2D builders (bozo/port/sc3_2d.cpp) draw sprites whose texture registers the game REFs from a block inside a loaded
 ROOT.OLK leaf (a texture file: a GIF A+D block with TEX1, TEX0 and CLAMP per texture page). Those blocks are converted
-here into PS2Recomp's generic mesh pack (PS2XMSH1), one file per leaf with register blocks only, each at its offset in
+here into BozoEngine's mesh pack (PS2XMSH1), one file per leaf with register blocks only, each at its offset in
 the leaf with its writes and, as register 0x100, the tag's REGS word (the game keeps the texture's used size there: bits
 32-47 width, 48-63 height), as scripts/sc3_mesh_pack.py records them for the 3D. Leaves without such blocks are left out.
 
@@ -38,7 +38,10 @@ import sys
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, '..', 'PS2Recomp', 'tools'))
+for _tools in (os.environ.get('BOZO_ENGINE_TOOLS', ''), os.path.join(HERE, '..', 'BozoEngine', 'tools')):
+    if _tools and os.path.isdir(os.path.join(_tools, 'native_pack')):
+        sys.path.insert(0, _tools)
+        break
 sys.path.insert(0, HERE)
 from native_pack import mesh, texture  # noqa: E402
 from sc3_mesh_pack import register_blocks  # noqa: E402
@@ -75,6 +78,27 @@ def clut_uploads(data):
     return out
 
 
+def image_uploads(data):
+    """The (DBP, DBW, DPSM) of the stream's image transfers."""
+    regs, out, q = {}, set(), 0
+    while q + 16 <= len(data):
+        lo, hi = struct.unpack_from('<QQ', data, q)
+        nloop, flg = lo & 0x7FFF, (lo >> 58) & 3
+        q += 16
+        if flg == 0 and (hi & 0xF) == 0xE:
+            for _ in range(nloop):
+                value, reg = struct.unpack_from('<QQ', data, q)
+                regs[reg & 0xFF] = value
+                q += 16
+        elif flg == 2:
+            q += nloop * 16
+            bitbltbuf = regs.get(0x50, 0)
+            out.add(((bitbltbuf >> 32) & 0x3FFF, (bitbltbuf >> 48) & 0x3F, (bitbltbuf >> 56) & 0x3F))
+        else:
+            break
+    return out
+
+
 def page_textures(d, blocks):
     """{block offset: (psm, w, h, texels, palette)} for the blocks whose texture the leaf's own upload lists write."""
     starts = sorted({0} | {q for q in range(0, len(d) - 4, 16) if struct.unpack_from('<I', d, q)[0] == MODEL_MAGIC})
@@ -85,18 +109,22 @@ def page_textures(d, blocks):
         units = texture_units(m)
         if not units:
             continue
+        rest = d[start:]
         gs = GsMemory()
         cluts = set()
+        streams = []
         try:
             for k, entries in enumerate(call_lists(m, units)):
                 for _, target in entries:
                     if target is None:
                         continue
                     gs.entry = k + 1
-                    data = walk_chain(m, target)
-                    if data is not None:
-                        play_gif(gs, data)
+                    chain = walk_chain(rest, target)
+                    if chain is not None:
+                        data, qwords = chain
+                        play_gif(gs, data, qwords)
                         cluts |= clut_uploads(data)
+                        streams.append((k + 1, chain, image_uploads(data)))
         except Unsupported:
             continue
         for q, writes in blocks:
@@ -115,8 +143,22 @@ def page_textures(d, blocks):
                 w = 1 << tw
             if not h or h > (1 << th):
                 h = 1 << th
+            # Lists of one model may upload to the same blocks, each for the draws after it (a map at TBP 0x2C40 of width 640,
+            # a marker at 0x2C40 of width 64): the page's texels and CLUT are its own lists' last.
+            tbp, tbw, tpsm, cbp = tex0 & 0x3FFF, (tex0 >> 14) & 0x3F, (tex0 >> 20) & 0x3F, (tex0 >> 37) & 0x3FFF
             try:
-                psm, texels, palette, touched = decode(gs, tex0, w, h)
+                for entry, chain, uploads in streams:
+                    if (tbp, tbw, tpsm) in uploads:
+                        gs.entry = entry
+                        play_gif(gs, *chain)
+                for entry, chain, uploads in streams:
+                    if any(u[0] == cbp and u[2] == PSM_CT32 for u in uploads) and (tbp, tbw, tpsm) not in uploads:
+                        gs.entry = entry
+                        play_gif(gs, *chain)
+            except Unsupported:
+                continue
+            try:
+                psm, texels, palette, touched = decode(gs, tex0, w, h)[:4]
             except Unsupported:
                 continue
             if not touched or 0 in touched:
@@ -125,7 +167,7 @@ def page_textures(d, blocks):
             if palette is not None:
                 for cbp in sorted(cluts - {(tex0 >> 37) & 0x3FFF}):
                     seen = set()
-                    other = clut_ct32(gs, (tex0 & ~(0x3FFF << 37)) | (cbp << 37), len(palette), seen)
+                    other = clut_ct32(gs, (tex0 & ~(0x3FFF << 37)) | (cbp << 37), len(palette), seen, [])
                     if seen and 0 not in seen:
                         others.append((cbp, other))
             out[q] = (psm, w, h, texels, palette, others)

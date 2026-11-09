@@ -1,0 +1,24 @@
+name: CI
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  release-tools:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: BozoEngine (the disc reader the build driver's check uses)
+        run: git submodule update --init --depth 1 BozoEngine
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Build driver, release and update tools
+        run: python -m unittest discover -s tests -v
+      - name: Python syntax
+        run: python -m compileall -q scripts reference/scripts
+      - name: Shell syntax
+        shell: bash
+        run: for file in scripts/*.sh; do bash -n "$file" || exit; done

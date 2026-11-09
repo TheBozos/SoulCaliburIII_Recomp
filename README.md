@@ -2,18 +2,18 @@
 
 # SoulCaliburIII_Recomp
 
-**A native Linux and Windows port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++.**<br>
-Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on a reimplementation of the PS2 hardware.
+**A native Linux and Windows port of *Soulcalibur III* (NTSC-U, `SLUS-21216`), made by statically recompiling the game's PlayStation 2 code to C++ on BozoEngine.**<br>
+The game's own MIPS R5900 code runs as a PC program. Its 2D, meshes, textures, effects, sound and movies go through
+native PC services. There is no GS, VIF, VU, DMAC, IOP or SPU2 model in the build, and no interpreter.
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-1b8cff)
-![Compiler](https://img.shields.io/badge/compiler-Clang-1b8cff)
-![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-17a35b)
-![Status](https://img.shields.io/badge/status-playable%2C%20in%20testing-e8a33c)
+![Compiler](https://img.shields.io/badge/compiler-GCC-1b8cff)
+![Based on](https://img.shields.io/badge/based%20on-BozoEngine-17a35b)
+![Status](https://img.shields.io/badge/status-in%20testing-e8a33c)
 
 <img src="docs/screenshots/title_screen.jpg" width="70%" alt="Soulcalibur III's title screen">
 
-<sub>Captured from the running port: native OpenGL renderer at twice the internal resolution
-(<code>PS2X_GS_SCALE=2</code>, 1280x896).</sub>
+<sub>Captured from the earlier PS2Recomp build of the port.</sub>
 
 </div>
 
@@ -27,196 +27,100 @@ Not an emulator: the game's own MIPS R5900 code, rebuilt as a native program on 
 
 ## Status
 
-**Playable, at 60 frames per second.** A human played long sessions on 2026-11-01 ("it's playable"). The port runs
-on PS2Recomp's native target: the GS stream drawn with OpenGL, the VU1 and VU0 microprograms as C++, the IOP modules
-recompiled, the IOP and the SPU2 on the wall clock, the frame loop and the movies on real time. Fights run at about
-60 frames per second on a Ryzen 7 7800X3D, with music and voices. Every mode has been played through with scripted input: Tales
-of Souls to the credits, Chronicles of the Sword battles on the field map, World Competition, Soul Arena, Museum,
-Character Creation, Shop and Options, with saves loaded back after a restart. The game runs its own `rand`: the
-15-bit stub it used to be bound to made every random pick 0.
+**In testing on BozoEngine, not released yet.** Every check below was made with scripted input; no human play session
+has been run on the BozoEngine build yet. The earlier PS2Recomp build (main up to `da8a761`) was played by a human
+and through every mode; its history is in [RECOMP_NOTES.md](RECOMP_NOTES.md#the-ps2recomp-build).
 
-Known issues from that play session, being worked on: the analog sticks feel oversensitive (no deadzone yet), some
-menu animations blink faster than on a PS2 (main menu, Single Player Modes; the main menu's water may be fast too,
-to be measured against PCSX2 at the same frame rate), and a purple overlay shows on some frames at the end of a
-loading screen or a screen change.
+What has been run, on Linux unless said:
 
-**Now: removing the last of the emulation.** The goal, set by the project's owner for every PS2Recomp port, is no
-emulated PS2 hardware at all, not even a small part, and never kept because it is faster: no GS front end or GS
-memory, no GIF or VIF packet read, no VU or SPU2 model, frames on the PC's clock. Twisted Metal: Black's port reached
-it first and SC3 follows its route (see the layers below and the [function map](#function-map)).
+| | Result |
+|---|---|
+| Boot: logos, opening movie, title, attract | 7200 frames with movies in a window: no fault, exit 0 |
+| The regression route: title, Mode Select, Single Player, Practice, Free Training, 60 s of attacks, pause | 11700 frames headless and in a window: no fault, 0 mesh parts lost |
+| Every mode entered from Mode Select: Tales of Souls, Chronicles of the Sword, World Competition, Soul Arena, Museum, Character Creation, Versus, Shop, Options | 7000 frames each: no fault, 0 mesh parts lost, 0 2D pages dropped |
+| Full-screen movies (CRI Sofdec) | The boot's MOVIE.AFS file 4: 1051 pictures in 35.10 s (29.95/s), then file 0 at 29.98/s; menu preview loops play |
+| Music, voices and effects (CRI ADX through the game's own sound modules) | Route against the PS2Recomp build, per 10 s window: level median 0.64 dB, max 4.21 dB apart; spectrum cosine min 0.885, median 0.984 |
+| Device registers touched by the game's code (`[sc3:acknowledged]`) | 0 on the route, the boot and the nine modes |
+| Frame rate in a window, development PC (Ryzen 7 7800X3D) | 59.5 to 60.0 game frames a second, held by the frame pacer |
+| Windows 11 (VM, 4 cores, Mesa llvmpipe, no GPU) | Built natively with the kit and cross-built from Linux; route, boot and stills agree with Linux (headless game state equal on every frame); 53-56 frames/s in menus, 28-51 in fights on the software renderer |
+| Memory cards | BozoEngine's libmc on host card folders (`mc0/`, `mc1/`); a save and reload has not been checked on this build |
 
-| Milestone | |
-|---|:---:|
-| Map and recompile the main ELF (12,900 functions) | ✅ |
-| Boot: EE kernel, the game's own IOP modules, CD reads from the disc files | ✅ |
-| Logos and movies (CRI Sofdec, decoded on the host) | ✅ |
-| Title screen, menus, character and stage select | ✅ |
-| Music and voices (CRI ADX on the game's own `CRI_ADXI.IRX`, SPU2) | ✅ |
-| Fights at 58-60 fps (VU1 on its own thread) | ✅ |
-| Tales of Souls, World Competition, Soul Arena, Museum, Shop | ✅ |
-| Chronicles of the Sword: story, field map, battles | ✅ |
-| Memory card: save and load | ✅ |
-| Random picks (the game's own `rand`) | ✅ |
-| Long play sessions by a human | ✅ |
-| Native GS renderer (OpenGL), recompiled IOP modules, IOP and SPU2 on the wall clock | ✅ |
-| Higher internal resolution (`PS2X_GS_SCALE`) | ✅ |
-| Frame loop on the native FramePacer | ✅ |
-| VU1 microprograms on the native sandbox, no emulated VU1 | ✅ |
-| VU1 and VU0 microprograms in C++, no VU emulation left | ✅ |
-| VU1 programs drawn from their computation: no GIF packets, no GS register replay | ✅ |
-| Analog deadzone, menu animation speed, transition overlay (play-session reports) | 🔧 |
-| Sound mixed natively at libsd's API, no SPU2 emulation | 🔧 |
-| Textures and meshes from offline packs of your disc, 2D drawn in C++ | 🔧 |
-| No GS front end, GS DMA and VIF left unread | ⏳ |
-| Windows build (MSYS2 UCRT64 or llvm-mingw): boots, movies, menus and fights in a Windows 11 VM; sound and a real GPU still to check | 🔧 |
-| Widescreen | ⏳ |
-
-✅ works · 🔧 in progress · ⏳ not reached yet
-
-**Native port** (no PS2 hardware emulation left, not even a small part: the shared goal of PS2Recomp's ports, and
-never kept because it is faster). Native means the game's draws built straight from its own data, its sound mixed
-at its sound library's API, and its frames on the PC's clock, with no PS2 hardware model in between. SC3 pins
-PS2Recomp's `sc3/windows` branch (`sc3/native-vu1`, i.e. `native/renderer` plus SC3's fixes, with the Windows fixes); the details of each layer are in
-[RECOMP_NOTES.md](RECOMP_NOTES.md#native-target-as-of-2026-11-01).
+How each layer of the game is answered:
 
 | Layer | |
 |---|:---:|
-| IOP modules (CRI_ADXI, LIBSD, SDRDRV, NUSOUND, MCMAN, MCSERV, PADMAN, SIO2MAN) recompiled to C++, none interpreted (`scripts/iop_recomp.sh`) | ✅ |
-| Sound and IOP on the PC's clock (`PS2X_SPU2_WALLCLOCK=1`, `PS2X_IOP_WALLCLOCK=1`) | ✅ |
-| No paraLLEl-GS: OpenGL on the GPU (the GS native back end), higher internal resolution (`PS2X_GS_SCALE`) | ✅ |
-| Frame loop and one-shot movies on the PC's clock (`FramePacer`; `SC3_NATIVE_FRAMES=0`: the vblanks) | ✅ |
-| Every VU1 and VU0 microprogram translated to C++ (`tools/vu1_lift.py`), no VU interpreter and no sandbox | ✅ |
-| VU1 programs draw from their computation: no GIF packet, no GS register replay (`runtime/sc3_draw_sink.cpp`) | ✅ |
-| No SPU2 emulation: libsd's calls played by PS2Recomp's native mixer, the SPU2 absent | 🔧 |
-| Textures from an offline native pack of your disc, looked up by the game's own keys | 🔧 |
-| Materials and 3D meshes from offline packs, drawn at the game's per-object hooks; no VIF stream read | ⏳ |
-| 2D (menus, fonts, the fight HUD) built in C++ from the game's variables by default, from an offline 2D pack of your disc (`SC3_NATIVE_2D=0`: the game's own packets); left to the game: the passes that read the frame (glow, display copy) and the frame's context writes | 🔧 |
-| Shadow volumes, glow and the sun's depth probe as native passes | ⏳ |
-| Movies as native pictures: full-screen ones the native renderer's backdrop, no libmpeg or IPU; menu previews drawn by the native 2D from the host decoder's picture | 🔧 |
-| The frame's end written to the game natively (SC3 waits on the GS's FINISH), GS DMA and VIF0 left unread | ⏳ |
-| No GS front end, no copy of GS memory: the native renderer draws and presents the whole frame | ⏳ |
-| IOP kernel layer (interrupts, timers, SIF) under the recompiled IOP modules: still PS2Recomp's model | ⏳ |
+| The whole EE executable recompiled by `bozo-recomp` (16,656 functions, 578 jump tables, 0 untranslated) | ✅ |
+| Libraries (kernel, libpad, libmc, libcdvd, libgraph, SIF) answered natively by BozoEngine | ✅ |
+| Sound modules CRI_ADXI, NUSOUND, SDRDRV translated from your disc at build time; libsd and the mixer native | ✅ |
+| The frame's kick, ordering table and packet API in C++: no DMA chain, GIF or VIF packet is built for a device or read | ✅ |
+| 2D (menus, text, the fight HUD) built in C++ from the game's variables, textured from a 2D pack of your disc | ✅ |
+| Meshes and textures from packs converted from your disc, drawn at the game's own hooks; skinning in C++ | ✅ |
+| Glow, shadow volumes, the sun flare's depth probe, the display copy, mip levels: native passes | ✅ |
+| Movies decoded with FFmpeg from your disc image, pictures on the renderer, soundtracks in the mixer | ✅ |
+| Frame timing from the EE clock (no timer registers); frames paced by the PC's clock | ✅ |
+| Windows and Linux builds, the build kit and the launcher | ✅ |
+| A human play session, a real sound device, a real GPU on Windows | ⏳ |
+| Widescreen | ⏳ |
 
-✅ works · 🔧 in progress · ⏳ not reached yet
+✅ works · ⏳ not checked or not done
 
-The order of the remaining work, each step leaving the game playable and checked
-picture by picture against the current path: textures, then materials, from offline packs converted from your own
-disc (the game stores both only as ready-made GS and VIF data; the packs stay in the build tree, never in the
-repository); meshes from a pack at the game's per-object hooks, with the vertex programs as plain C++; the 2D
-builders rewritten in C++ from their MIPS; shadow volumes as a stencil pass, the glow chain as a native post effect,
-the sun's depth probe read from the native depth buffer; movies as native pictures; then the frame's end written to
-the game natively (SC3 waits on the GS's FINISH every frame, unlike TMB), so the GS DMA and VIF0 can be left unread;
-then no GS front end at all.
+### Known limits
 
-### Function map
+- **Pictures against the PS2Recomp build.** Eleven fight stills at fixed frames compare at 20.42 to 27.71 dB PSNR
+  against main's, where main against itself (animation timing) gives 22.63 to 35.54 dB. The remaining contributors
+  found: animation phase, the water's scroll phase, sub-pixel edges, texture aliasing.
+- **Frame-read sprites** (2D drawn from the frame so far or the glow's half picture) are drawn natively but not
+  checked against PCSX2: none were found in three GS dumps.
+- **Mesh routines.** Two routines of the game's vertex programs (B:0xD8, A:0x1268) are written from their microcode
+  but not yet run on a model part. Ten entries (A:0xDA8, A:0x2098, A:0x2140, A:0x2330, B:0xDD0, B:0x10F0, B:0x21E0,
+  B:0x2290, B:0x24F8, B:0x2740) are not written: none was reached in 302 million program calls recorded over every
+  mode. A part that needs one is counted in the log (`[sc3:mesh] ... routine`) and not drawn.
+- **Sound device.** Every test run used SDL's dummy audio driver; sound was measured from the mixer's output (`--wav`).
+  Playback on a real device has not been checked.
+- **A fault at 0x117808** (`unhandled device read at 0xfffffffc`, frame 2680 of the route) was seen in 4 of 15 runs
+  early in the migration and in none of the more than 100 runs logged since. Not explained; a run that meets it prints
+  `[sc3:frame] 0x1177E0 file ... has no entries`.
+- **Timing on the EE clock.** The pause menu can show a fading "HIGH" label that main has already hidden (the game
+  pauses one step earlier); the silence between the boot's two movie files is 4.6 s here against 4.7-5.0 s on main.
+- **`mwPlyPause`** does not freeze a movie's picture.
+- **Windows**: not run on a real GPU or with a gamepad; on llvmpipe the fight is below 60 frames a second.
 
-<p align="center"><img src="docs/native-map.svg" width="100%" alt="Function map: 1056 of 12910 functions still touch emulation"></p>
+## For players
 
-<sub>2026-11-01: 1,056 of 12,910 EE functions still touch emulation (122 directly, 934 through calls), 91.5%
-emulation-free by this count. The count misses most of the remaining work: the builders that only fill packet
-buffers look clean, since what reads those buffers is the emulated DMA and GS. It drops as the milestones above turn
-them into native code.</sub>
+You build the game yourself, on your PC, from **your own disc**: nothing of the game is in the download. No
+release has been published yet.
 
+**Windows.** A release zip (`scripts/make_release.py`) holds `SC3 Launcher.exe`, our code with BozoEngine's, and the
+build kit (compiler, CMake, Ninja, a static FFmpeg, Python). Unzip it outside `Program Files` with about 15 GB free,
+start the launcher, pick your USA disc image (`.iso`, or `.bin` with its `.cue`), click **Prepare the game** (about
+20 minutes on 4 cores, most of it the packs), then **Play**. Requires Windows 10 1903 or newer, a 64-bit CPU and
+OpenGL 3.3.
 
-`scripts/func_map.py` draws every EE function of the ELF as one square, in address order, coloured by how far it
-is from running without emulation: native C++ (game overrides, VU program ports), recompiled and clean, touching
-emulated hardware itself (DMA, VIF, GIF, GS privileged registers, VU memory and control, timers, INTC), calling such a
-function one or two levels down, or answered by a runtime stub (native or emulation-backed). The eight recompiled IRX
-modules get a smaller map of their own. It is static analysis of the MIPS plus the overrides and PS2Recomp's stub
-sources; the page lists its rules and blind spots.
-
-```sh
-python3 scripts/func_map.py --out build/funcmap          # after scripts/recomp.sh; PS2Recomp submodule checked out
-python3 scripts/func_map.py --elf <SLUS_212.16> --generated <generated/> --ps2recomp <PS2Recomp/> --out <dir>
-```
-
-Python 3 with the standard library only, on Linux and Windows. It writes `map.html` (interactive, one
-self-contained page), `map.svg`, `map.json` and appends the counts to `history.json` in `--out` (`--history` puts
-the trend elsewhere), so each run adds a point to the "functions still touching emulation" line. `--coverage <file>`
-overlays a list of function addresses that ran. The outputs name game addresses: keep them out of the repository.
-
-[RECOMP_NOTES.md](RECOMP_NOTES.md) records how the port was brought up, every fix and how it was found.
-
-## Goal
-
-A fully playable *Soulcalibur III* as a native executable, every mode from the opening movie to the endings, at the
-original 60 frames per second. Accuracy first; once it is solid, widescreen and higher internal resolution.
-
-## How it works
-
-```
-disc files ──► Ghidra (headless, EE) + ps2_analyzer + recomp/*_hints.txt ──► recomp/sc3.toml
-                                           │
-                                ps2_recomp ──► C++ (one file per function)
-                                           │
-             VU1/VU0 microcode in the ELF ──► ps2_vu_aot ──► C++ (generated/vu1/) ──► vu1_lift.py ──► C++ (generated/vu1port/)
-                                           │
-   PS2Recomp runtime: EE kernel HLE · DMAC · GIF/GS · VIF/VU0/VU1 ─┼─► ps2EntryRunner
-   PS2Recomp IOP:     the game's own IRX, recompiled (generated/iop/) or interpreted · SPU2 · SIO2
-```
-
-- The ELF has no symbols. Ghidra maps the functions; `scripts/find_code_pointers.py` adds those reached only through
-  pointers, jump tables or tail calls (the hint lists in `recomp/`).
-- PS2Recomp turns every function into C++. `ps2_vu_aot` finds the VU1 and VU0 microprograms in the ELF and compiles
-  them ahead of time; PS2Recomp's `tools/vu1_lift.py` (the programs listed in `recomp/vu1_lift_spec.json`) turns the
-  two VU1 programs and the VU0 program into C++ without a
-  pipeline to run: VU1's runs on the VIF1 thread and draws through the GS back end, VU0's on the EE's VCALLMS.
-- The GS stream is translated into OpenGL draws by PS2Recomp's native GS back end, the CPU rasterizer stays as the
-  validation reference.
-- `runtime/sc3_overrides.cpp` holds the game-specific bindings: reserved memory, a host Sofdec movie player and
-  mixer, the renderer and timing choices, and diagnostic tracers.
-
-The runtime is the `PS2Recomp/` git submodule: [TheBozos/PS2Recomp](https://github.com/TheBozos/PS2Recomp), branch
-`sc3/windows` (`native/renderer` plus SC3's fixes, the VU program hooks and the Windows build fix), the fork shared with the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The
-Third Age* and *Drakengard* recompilations; the port builds on the same runtime as the others.
-The top-level `CMakeLists.txt` builds its runtime, swaps its placeholder function table for the generated one and
-links the generated code, `runtime/` and the compiled VU1 microcode into `ps2EntryRunner`. Every fix made for this
-port is generic and shared, for example the IOP interrupt suspension that kept CRI ADX streams alive, the VU0
-VCLIP flags and VU1 run-ahead on its own clock.
-
-## Requirements
-
-- Linux (developed on Arch) or Windows 10/11 with [MSYS2](https://www.msys2.org/) (UCRT64, see [Windows](#windows))
-- CMake 3.21+, Ninja, Clang with C++20 (or MSYS2's GCC on Windows), rsync, and bsdtar (libarchive) to extract the disc
-- FFmpeg development libraries (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`)
-- X11/Wayland and OpenGL development headers (raylib is fetched and built by the runtime)
-- An OpenGL 4.5 driver (any recent NVIDIA, AMD or Intel driver)
-- Ghidra with the Emotion Engine extension, only to regenerate the function map
-- Your own copy of `SLUS-21216` as a disc image (the extracted ELF is checked against the hash above)
-
-## Build and run
+**Linux.** With GCC, CMake 3.21+, Ninja, Python 3, pkg-config and FFmpeg's development libraries (`libavcodec`,
+`libavformat`, `libavutil`, `libswresample`, `libswscale`):
 
 ```bash
 git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
 cd SoulCaliburIII_Recomp
-scripts/extract_iso.sh "/path/to/Soulcalibur III (USA).iso"   # disc files -> game/
-scripts/build_tools.sh                                         # ps2_recomp, ps2_analyzer, ps2_vu_aot -> build/tools
-scripts/recomp.sh                                              # SLUS_212.16 + recomp/sc3.toml -> generated/, VU microcode -> generated/vu1/, VU programs in C++ -> generated/vu1port/
-scripts/build_runtime.sh                                       # runtime + generated code -> build/game (RelWithDebInfo)
-scripts/iop_recomp.sh && scripts/build_runtime.sh             # the IRX modules as native code -> generated/iop/
-scripts/run.sh                                                 # ps2EntryRunner game/SLUS_212.16
+python3 scripts/sc3_build.py --disc "/path/to/Soulcalibur III (USA).iso" --out ~/sc3-build
+~/sc3-build/SC3/play_sc3.sh
 ```
 
-The extracted disc folder is the game's `cdrom0:`; the memory cards and settings live in a per-user folder (see
-[Saves, settings and logs](#saves-settings-and-logs)). Started with no argument, the runner boots `game/SLUS_212.16`
-next to it, then the same under the user folder.
+`sc3_build.py` checks the disc (`SLUS_212.16`'s SHA-1), extracts what the build reads (the ELF, `ROOT.OLK`, three sound
+modules), builds BozoEngine's recompiler, generates the code, converts the packs, compiles `sc3` and stages a game
+folder: `sc3`, `SLUS_212.16`, `sc3_symbols.txt`, `packs/`, `disc.iso` (a hard link to your image when it can) and
+`play_sc3.sh` (`Play SC3.cmd` on Windows). Each step is skipped when its inputs did not change; `--check` only checks a
+disc. On 8 threads (Ryzen 7 7800X3D) a build from nothing took 649 s, 550 of them the packs; the work folder takes
+8.9 GB.
 
-`JOBS=<n>` sets the build parallelism of every script (default: all cores). The generated code is about 12,900 C++
-files; a clean build of the tools and the game (recompile included) takes about 13 minutes with `JOBS=8` on a Ryzen 7
-7800X3D, most of it the runner. `scripts/build_runtime.sh Release` or `Debug` picks another build type, and `CXX`
-another compiler (Clang is used when it is installed).
+| Key | |
+|---|---|
+| F2 | Settings: controls, video |
+| F3 | Frame rate overlay |
+| F11, Alt+Enter | Full screen |
 
-`scripts/remote_build.sh` builds the runner on another x86-64 Linux machine over ssh (`REMOTE_HOST`, default
-`stallman`) and copies it back to `build/game`; the game still runs locally. It sends `CMakeLists.txt`, `runtime/`,
-`generated/` and `PS2Recomp/` with rsync and builds them with Clang 23 from mise (conda-forge) on the remote host's
-GCC headers, libstdc++ and linker, so the runner needs nothing newer than what the local machine has. The remote host
-needs rsync, mise and the X11 and OpenGL development headers, but not FFmpeg: the local FFmpeg headers and libraries
-are copied over once, so the runner links against the FFmpeg it runs with. On a 40-core Debian 12 host a clean runner
-build takes about 4 minutes of compiling and 6 minutes overall, and a rebuild with nothing changed about 15 seconds.
-
-`scripts/regress.sh build/game ~/sc3-regress` checks a build for regressions: it boots with movies off, goes through the
-menus into a Free Training fight, attacks for a minute, then writes a verdict to `summary.txt` (route reached, ok,
-hang or crash, GS frame rate, SPU2 underruns) with the last frame and the log.
+A controller is used when one is connected, otherwise the keyboard; both are rebound in the settings window and kept
+in `input.ini`.
 
 ### Saves, settings and logs
 
@@ -224,84 +128,105 @@ hang or crash, GS frame rate, SPU2 underruns) with the last frame and the log.
 |---|---|---|
 | User folder | `$XDG_DATA_HOME/soulcalibur3_recomp` (`~/.local/share/soulcalibur3_recomp`) | `%APPDATA%\SoulCaliburIII_Recomp` |
 
-It holds the memory cards (`mc0/`, `mc1/`), the controls (`input.ini`), the video settings (`video.ini`), the debugger's
-window layout (`imgui.ini`) and the log of the last three runs (`logs/SoulCaliburIII_Recomp.log`, `.1.log`,
-`.2.log`); on Windows also `crashes/crash-<time>.txt`, a report shown in a message box when the runner crashes.
-`PS2X_USER_DIR=<dir>` uses another folder, `PS2X_LOG_FILE=<file>` writes the log there (`0`: no log file), and
-`PS2X_NO_DIALOGS=1` keeps the message boxes in the log only, for unattended runs.
+It holds the memory cards (`mc0/`, `mc1/`), `input.ini`, `video.ini` and the logs. It is the same folder, with the same
+card layout, as the PS2Recomp build's.
 
-Cards and settings kept next to the ELF by an older build (`game/mc0`, `game/mc1`, `game/input.ini`,
-`game/video.ini`) are copied into the user folder on the first launch from that game folder, which is then listed in
-`migrated.txt`; a save the user folder already has is not overwritten, and nothing next to the ELF is changed or
-deleted. `scripts/regress.sh` and `scripts/sc3run.sh` run on a user folder of their own, with blank cards, and never
-touch the player's saves.
-
-### Windows
-
-The same scripts run in an MSYS2 **UCRT64** shell, with MSYS2's GCC (MSVC is not supported):
+## Build (developers)
 
 ```bash
-pacman -S --needed mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,pkgconf,ffmpeg,libarchive,python} git rsync
-git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
+git submodule update --init BozoEngine
+cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16> -DSC3_ISO=<disc image>
+cmake --build build/bozo                      # sc3, sc3-headless, sc3-check, sc3-irx-check
+cmake --build build/bozo --target sc3_packs   # build/bozo/packs: textures, meshes, 2D
 ```
 
-Then follow the steps above. `scripts/build_runtime.sh` ends with `scripts/stage_dlls.sh`, which copies the DLLs the
-runner needs (compiler runtime, FFmpeg and their dependencies) from the MSYS2 prefix next to `ps2EntryRunner.exe`,
-so it also starts outside the MSYS2 shell. With `mingw-w64-ucrt-x86_64-clang` installed it builds with Clang, as on
-Linux; the **CLANG64** environment works the same way with the `mingw-w64-clang-x86_64-` packages. The runner runs
-the same native defaults as on Linux and needs an OpenGL 4.5 driver. Profile with `PS2X_PROFILE=<s>` (no `perf`);
-`scripts/remote_build.sh`, `scripts/threadcpu.sh` and the screenshot of `scripts/sc3run.sh` are Linux only.
+`scripts/bozo_build.sh` runs the same into `build/bozo` from `game/SLUS_212.16` (`scripts/extract_iso.sh <image>` makes
+`game/`), and `scripts/bozo_headless.sh <name> [args]` runs `sc3-headless` with a fresh user folder. The sound modules
+are read from `IRX/` beside the ELF (`SC3_IRX_DIR`), the packs' inputs from the ELF's folder (`SC3_DISC_DIR`).
 
-A controller is used when one is connected; otherwise the keyboard (US key positions). A second gamepad plays
-player 2:
-
-| PS2 button | Keyboard |
+| CMake option | |
 |---|---|
-| D-pad | Arrow keys or W A S D |
-| Cross / Circle / Square / Triangle | X or Space / C or Esc / Z or Numpad 0 / V or Numpad 1 |
-| L1 / R1 / L2 / R2 | Q / E / Left Shift / Right Shift |
-| Start / Select | Enter / Tab |
+| `BOZO_ENGINE_DIR` | Another BozoEngine tree (default: the submodule) |
+| `SC3_SYMBOL_MAP` | The library names of the stripped ELF (default `recomp/sc3_symbols.txt`) |
+| `SC3_EXTERNALS` | An externals list to generate with (`bozo-calllog-tool externals`: what `sc3-check --pinned` needs) |
+| `SC3_WINDOW=OFF` | No `sc3` and no SDL3 |
+| `SC3_NATIVE_SOUND=OFF` | No sound modules |
+| `SC3_GEN_FILES`, `SC3_GEN_OPT` | How many files the generated code is split into (32), its optimisation (`-O1`) |
+| `SC3_HOST_TOOLS`, `SC3_GUI_SUBSYSTEM` | Windows cross build: the native `bozo-externals` and `bozo-recomp`; `sc3.exe` without a console |
 
-| Key | What it does |
-|---|---|
-| F1 | Runtime debugger |
-| F3 | Frame rate and emulated EE speed overlay (`PS2X_SHOW_FPS=1` starts with it on) |
+Windows from Linux: a mingw-w64 GCC targeting the UCRT with `cmake/mingw-cross.cmake` (the command is at its top),
+`scripts/build_win_ffmpeg.sh` for the static FFmpeg, `scripts/make_win_package.sh` for a portable folder that never
+leaves the machine that built it. Clang targets (zig c++, llvm-mingw) build a binary that crashes: on Win64 their
+`__builtin_longjmp` restores rbp from the frame address instead of the frame pointer, which breaks BozoEngine's stops.
+
+The release: `scripts/make_build_kit.py` (Windows, MSYS2 and the network) assembles the kit at the versions
+`scripts/build_kit_packages.json` pins; `launcher/` is `SC3 Launcher.exe`; `scripts/make_release.py` makes the zip
+from a commit and a `CHANGELOG.md` section; `.github/workflows/release.yml` runs it on a version tag and makes a draft
+release. `tests/test_release_tools.py` checks the build driver and release tools without game data (CI, Linux and
+Windows).
+
+### Running
+
+```
+sc3 [--iso image] [--elf SLUS_212.16] [--card-dir dir] [--width w --height h] [--fullscreen] [--no-vsync]
+    [--render-scale s] [--capture-dir dir] [--capture-frames n,n,...] [--quit-after n] [--pad-script [n=]file]...
+    [--print] [--no-sound] [--audio-latency ms] [--wav file]
+sc3-headless --frames n [--iso image] [--pad-script file] [--out run.ref] [--dump-ram dir] [--profile-io] [--wav file] ...
+```
+
+The disc image is `--iso`, else `SC3_ISO`, else the build's, else the one `.iso` beside the ELF. The packs are the
+variables below, else `packs/` beside the program; the symbol map `SC3_SYMBOL_MAP`, else `sc3_symbols.txt` beside it.
+`sc3-headless` runs on the game's own clock and is deterministic: two runs give the same `--out` record.
 
 <details>
-<summary><b>Runtime and diagnostic options</b></summary>
+<summary><b>Environment variables</b></summary>
 
 | Variable | Effect |
 |---|---|
-| `PS2X_GS_RENDERER=cpu` | Draw with the CPU rasterizer, the reference, instead of the native GS back end |
-| `PS2X_GS_SCALE=<n>` | Internal resolution multiplier of the native GS back end |
-| `PS2X_IOP_NATIVE=0` | Interpret the IRX modules instead of running their recompiled code |
-| `PS2X_IOP_WALLCLOCK=0` | Run the IOP on the EE cycles the game accounts instead of the host's clock |
-| `SC3_NATIVE_MOVIES=0` | Show full-screen movies by replacing the presented frame (the presentation override) instead of as the native renderer's backdrop, and set up Sofdec's decoders through the MPEG HLE |
-| `SC3_NATIVE_VU1=0` | Run the VU1 microprograms on the emulated VU1 instead of in C++ |
-| `SC3_NATIVE_VU1_PORT=0\|check` | Run the VU1 programs on the native sandbox (the AOT microcode on PS2Recomp's interpreter) instead of in C++, or both, compared |
-| `SC3_NATIVE_VU1_PORT_SKIP=<A:0x10,…>` | Keep those entries on the sandbox |
-| `SC3_NATIVE_VU1_DIRECT=0\|check\|@file` | Draw the C++ programs from their GIF packets (parsed, their register writes replayed on the GS) instead of directly, or both, compared; `@file` reads 0 / 1 / check at each frame end |
-| `SC3_NATIVE_MESHES=1\|check` | The stage's rigid parts drawn natively from the offline mesh pack (`build/sc3_meshes.pack`, made by `scripts/sc3_mesh_pack.py` from your disc) at the game's part builder; needs the texture pack on (`SC3_TEXTURE_PACK_MODE=keep`); `check` compares each part with the lifted VU1 program. Opt-in, in progress: see RECOMP_NOTES |
-| `SC3_NATIVE_2D=0\|check\|@file` | The 2D builders (menus, text, labels, icons, draw items, the fight HUD) are C++ by default, textured from the offline 2D pack (`build/sc3_2d.pack`, made by `scripts/sc3_2d_pack.py` from your disc); `0` gives them back to the game's own packets, `check` builds both and compares them word for word, `@file` reads 0 / 1 / check at each frame end |
-| `SC3_TEXTURE_PACK_MODE=1\|keep\|@file` | Direct draws textured from the offline texture pack (`build/sc3_textures.pack`, made by `scripts/sc3_texture_pack.py` from your disc), the uploads it covers left out (`keep`: still sent); a diagnostic for now, see RECOMP_NOTES |
-| `SC3_HIDE_EE=<addr,…>`, `SC3_TRACE_LOAD=1`, `SC3_TRACE_FRAMES=<frame>,<n>`, `SC3_TRACE_OT=1`, `SC3_RECORD_FRAME=<frame>` | Census: game functions returned at entry, file loads, one frame's batches / texture uploads / sync points / direct draws, ordering-table insertions, one frame's builder calls with their state and memory dumps (`SC3_RECORD_DIR`) |
-| `SC3_NATIVE_VU0=0\|check` | Run the VU0 microprograms on PS2Recomp's interpreter instead of in C++, or both, compared (`SC3_NATIVE_VU0_LOG`, `SC3_NATIVE_VU0_RECORD` as for VU1) |
-| `SC3_NATIVE_VU1_LOG=1` | Every 5 s, MSCALs by entry, the direct draws' counts; a line lists any without a C++ port |
-| `SC3_NATIVE_VU1_RECORD=<file>` | Record sampled sandbox runs per entry (and, with `=check`, runs whose port differs) for `sc3_tests` (`SC3_VU1_TRACE`) |
-| `PS2X_VIF1_THREAD=0` | Run VIF1 and the VU1 microcode on the game thread (default: their own thread, about a third faster in fights) |
-| `PS2X_EE_CATCHUP=0\|field\|1` | Wall-clock catch-up: SC3 defaults to off, so emulated time never runs faster than real time |
-| `PS2X_SC3_NO_MOVIES=1` | Skip the one-shot movies (for tests) |
-| `PS2X_SC3_AUTOWIN=1` | Keep the player at full health and the opponent at 1 HP, so scripted input wins each fight |
-| `PS2X_PAD_SCRIPT=t:BUTTON[/ms],…` | Scripted button presses (seconds from start); `PS2X_PAD_INPUT=<file>` reads presses appended to a file while the game runs |
-| `PS2X_PAD2_SCRIPT=t:BUTTON[/ms],…` | Player 2's scripted presses in the same format; plugs in the second controller without a second gamepad |
-| `PS2X_STATE_DUMP=<s>` | Every few seconds: EE and IOP threads, GS frames, EE speed, DMA and VIF counters, SPU2 state |
-| `PS2X_FRAME_DUMP=<dir>`, `PS2X_FRAME_DUMP_EVERY=<s>` | Save the presented frame as raw 640x448 RGBA |
-| `PS2X_PROFILE=<s>` | Sampling profiler: where every host thread spends its time |
-| `PS2X_EE_PROFILE=1` | EE cycles by guest loop, in the state dump |
-| `PS2X_GS_DUMP_WHEN=<file>` | Log the next GS primitives once that file appears (`PS2X_GS_DUMP_OUT`, `PS2X_GS_DUMP_COUNT`) |
-| `PS2X_SC3_TRACE_ADXT=1`, `_TASKS`, `_ENTRY=<addr,…>`, `_OBJ`, `_FADE`, `_MOVIE` | Game tracers: ADX player states, task creation, guest function entries, object fields, fades, movies |
+| `SC3_TEXTURE_PACK`, `SC3_MESH_PACK`, `SC3_2D_PACK` | The packs. Without the mesh or 2D pack that layer is not drawn; the game still runs |
+| `SC3_SYMBOL_MAP`, `SC3_ISO` | The symbol map, the disc image |
+| `SC3_NO_MOVIES=1` | Skip the one-shot movies (menu preview loops still play) |
+| `SC3_MIPMAPS=0` | Textures at level 0 only (by default stage materials use the game's own mip levels) |
+| `SC3_NATIVE_2D=0`, `SC3_NATIVE_MESHES=0` | That layer's hooks not installed: nothing of it is drawn (diagnostic) |
+| `SC3_HOLD_FRAMES=n,...` | The game stands 1 s at the end of those frames, so a capture by frame (`--capture-frames`) has that frame's picture |
+| `SC3_HIDE_EE=<addr>,...`, `SC3_HIDE_TBP=<tbp>,...` | Leave out the draws of those builders, or of textures at those pages (diagnostic) |
+| `SC3_TRACE_CD=1`, `SC3_MESH_DUMP=<frame>`, `SC3_MESH_TRACE_LISTS=1` | Disc reads, one frame's mesh draws, model list relocations, in the log |
+| `PS2X_USER_DIR=<dir>` | Another user folder |
+| `PS2X_LOG_FILE=<file>` | The log there (`0`: no log file) |
+| `PS2X_NO_DIALOGS=1` | Errors in the log only, no message box |
+| `PS2X_WINDOW_SIZE=WxH`, `PS2X_WINDOW_MODE`, `PS2X_RENDER_SCALE`, `PS2X_FRAME_RATE` | Override `video.ini` |
+| `PS2X_SHOW_FPS=1`, `PS2X_FRAME_STATS=1` | Start with the overlay on; frame pacing statistics in the log |
+| `PS2X_INPUT_CONFIG`, `PS2X_VIDEO_CONFIG`, `PS2X_GAMEPAD_DB` | Other `input.ini`, `video.ini`, controller database |
+| `PS2X_RUMBLE=0` | No vibration |
 
 </details>
+
+Every run prints `[sc3:acknowledged] N hits` at its end: the game's accesses to device registers, which have no device
+behind them. It is 0 on every route checked; a non-zero count names a site still to replace (`--profile-io` lists them).
+
+## How it works
+
+```
+your disc ──► sc3_build.py / CMake
+                │
+  SLUS_212.16 ──► bozo-externals (+ recomp/sc3_symbols.txt, sc3_stubs.txt, the port's overrides)
+                └► bozo-recomp (+ recomp/sc3_patches.txt, sc3_entries.txt) ──► C++ ──┐
+  IRX/CRI_ADXI, NUSOUND, SDRDRV ──► BozoEngine's native_irx ──► C++ ─────────────────┤
+  ROOT.OLK ──► scripts/sc3_texture_pack.py, sc3_mesh_pack.py, sc3_2d_pack.py ──► packs/ (read at run time)
+                                                                                     │
+  bozo/port/*.cpp (SC3's overrides) + BozoEngine (kernel, libraries, renderer, mixer) ┴──► sc3, sc3-headless
+```
+
+- The ELF has no symbols. `recomp/sc3_symbols.txt` names its library functions from our own matcher and a hand review
+  (`sc3_symbols_reviewed.txt`); BozoEngine answers those natively.
+- `bozo/port/` holds SC3's own code: the frame kick and ordering table (`sc3_frame.cpp`, `sc3_ot.cpp`,
+  `sc3_packet.cpp`), the clock (`sc3_clock.cpp`), the 2D builders (`sc3_2d.cpp`), meshes, textures and materials
+  (`sc3_meshes.cpp`, `sc3_textures.cpp`, `sc3_texture_pack.cpp`, `sc3_material.cpp`), passes (`sc3_offscreen.cpp`),
+  movies (`sc3_movies.cpp`), loads (`sc3_loads.cpp`), VU0 (`sc3_vu0.cpp`) and sound wiring (`bozo/sound/`).
+- Textures and meshes exist on the disc only as ready-made GS and VIF data: the pack scripts convert them offline from
+  your disc into the build tree, and the game's own keys find them at run time. Nothing converted is committed.
+- [RECOMP_NOTES.md](RECOMP_NOTES.md) describes each piece, how it was checked, and the history.
+  [`reference/`](reference/README.md) holds the hashes and scripts of the PS2Recomp build's reference runs.
 
 ## Disc facts
 
@@ -310,29 +235,31 @@ player 2:
 | Boot ELF | `SLUS_212.16`, entry `0x100008`, stripped |
 | Video mode | NTSC (`SYSTEM.CNF` `VER = 1.01`) |
 | IOP modules | `IRX/*.IRX`: CRI_ADXI, LIBSD, MCMAN, MCSERV, NUSOUND, PADMAN, SDRDRV, SIO2MAN |
-| IOP image | `IOPRP300.IMG` |
 | Data | `ROOT.OLK`, `BGM.AFS`, `SE.AFS`, `VOICE.AFS`, `MOVIE.AFS` (Sofdec) |
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `PS2Recomp/` | The recompiler and runtime (git submodule, TheBozos/PS2Recomp branch `sc3/windows`) |
-| `CMakeLists.txt` | Builds the runtime with the generated code and the game overrides linked in |
-| `recomp/` | Recompiler config (`sc3.toml`), the VU programs to lift (`vu1_lift_spec.json`), the Ghidra function map and the entry-point hint lists |
-| `runtime/` | Game override module (`sc3_overrides.cpp`), the native VU1 hooks (`sc3_native.cpp`), the VU1 program ports' entry table (`sc3_vu1_programs.cpp`), the VU0 hook (`sc3_vu0.cpp`), B:0x1388 by hand (`sc3_vu1_port.cpp`) |
-| `scripts/` | Build, recompile and run scripts; disassembly, IRX and profiling helpers |
-| `patches/` | Experiments kept for reference |
+| `BozoEngine/` | The engine (git submodule, at a merged engine commit) |
+| `CMakeLists.txt`, `cmake/` | The build (`bozo.cmake`), the sound modules (`sc3_audio.cmake`), the Windows cross build |
+| `bozo/` | The programs (`sc3_window.cpp`, `sc3_headless.cpp`, `sc3_check.cpp`), the port (`port/`), sound (`sound/`) |
+| `recomp/` | The recompiler's inputs: symbol map, stubs, entries, patches |
+| `scripts/` | The build driver, packs, kit and release tools; disassembly and IRX helpers |
+| `launcher/` | SC3 Launcher.exe (Windows) |
+| `reference/` | The PS2Recomp build's reference records, route and A/B tools |
+| `tests/` | The build driver's and release tools' tests |
 | `docs/screenshots/` | Pictures of the running port |
-| `tests/` | `sc3_tests` (`SC3_BUILD_TESTS=ON`): the VU1 and VU0 ports against the interpreter and recorded runs |
-| `RECOMP_NOTES.md` | How the port was brought up, the fixes and the debugging tools |
-| `game/`, `generated/`, `build/` | Created by the scripts, ignored by git: disc files, generated C++, builds |
+| `game/`, `build/` | Created by the scripts, ignored by git |
 
-Everything derived from the game (disc files, generated code, builds, logs) stays outside this repository.
-Never commit or redistribute it.
+Everything derived from the game (disc files, generated code, packs, builds, logs, captures) stays outside this
+repository. Never commit or redistribute it.
 
 ## Credits
 
-- [PS2Recomp](https://github.com/ran-j/PS2Recomp) by ran-j and contributors (GPL), the recompiler and runtime this port is built on.
-- [TheBozos/PS2Recomp](https://github.com/TheBozos/PS2Recomp) and the *Twisted Metal: Black*, *Valkyrie Profile 2: Silmeria*, *The Lord of the Rings: The Third Age* and *Drakengard* recompilations developed on it; runtime fixes are shared both ways.
+- [BozoEngine](https://github.com/TheBozos/BozoEngine) (MIT), the recompiler and runtime.
+- *Twisted Metal: Black*'s port ([TheBozos/TMB_Recomp](https://github.com/TheBozos/TMB_Recomp)), whose build kit,
+  launcher and release pattern this port follows.
+- The earlier build used [PS2Recomp](https://github.com/ran-j/PS2Recomp) by ran-j and contributors, through
+  [TheBozos/PS2Recomp](https://github.com/TheBozos/PS2Recomp).
 - *Soulcalibur III* © Bandai Namco Entertainment, developed by Project Soul. This is an unofficial fan project, not affiliated with or endorsed by them.

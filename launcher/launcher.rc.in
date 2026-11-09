@@ -1,0 +1,33 @@
+// SC3 Launcher's resources: its icon (The Bozos' logo, launcher/sc3.ico; GLFW_ICON is the name GLFW gives the
+// window's class, so the window and the taskbar show it too), the Exo 2 font and its licence, and version information.
+#include <winver.h>
+
+GLFW_ICON ICON "@LAUNCHER_ICON@"
+1 24 "@LAUNCHER_MANIFEST@"
+EXO2 RCDATA "@LAUNCHER_EXO2@"
+OFL RCDATA "@LAUNCHER_OFL@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @LAUNCHER_FILEVERSION@,0
+PRODUCTVERSION @LAUNCHER_FILEVERSION@,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "The Bozos"
+            VALUE "FileDescription", "SC3 Launcher"
+            VALUE "ProductName", "Soulcalibur III PC port (SoulCaliburIII_Recomp), by boubou666 & Arzaroth"
+            VALUE "InternalName", "SC3 Launcher"
+            VALUE "OriginalFilename", "SC3 Launcher.exe"
+            VALUE "FileVersion", "@LAUNCHER_VERSION@"
+            VALUE "ProductVersion", "@LAUNCHER_VERSION@ (@LAUNCHER_COMMIT@)"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

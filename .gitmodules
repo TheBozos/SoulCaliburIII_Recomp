@@ -1,4 +1,3 @@
-[submodule "PS2Recomp"]
-	path = PS2Recomp
-	url = https://github.com/TheBozos/PS2Recomp.git
-	branch = main
+[submodule "BozoEngine"]
+	path = BozoEngine
+	url = https://github.com/TheBozos/BozoEngine.git

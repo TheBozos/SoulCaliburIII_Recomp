@@ -1,0 +1,2 @@
+# Explicit entry points for bozo-recomp --entries (BozoEngine's docs/explicit-entries.md): only what its analysis of
+# SLUS_212.16 misses, one address per line.
