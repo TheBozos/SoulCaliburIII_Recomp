@@ -105,23 +105,28 @@ bool VideoConfig::load(const std::string &file)
         renderScale = v["render_scale"];
     if (!v["gs_scale"].empty())
         gsScale = std::clamp(std::atoi(v["gs_scale"].c_str()), 1, 4);
+    if (!v["frame_rate"].empty())
+        frameRate = v["frame_rate"];
     return true;
 }
 
 bool VideoConfig::save(const std::string &file) const
 {
-    // The same text ps2_video::save() writes.
+    // The same text BozoEngine's video::save() writes.
     std::string text =
         "# The window (the Video tab of the settings window, F2, writes this file; PS2X_WINDOW_SIZE, PS2X_WINDOW_MODE,\n"
-        "# PS2X_RENDER_SCALE and PS2X_GS_SCALE override it). size: the window's, or the full-screen video mode's.\n"
+        "# PS2X_RENDER_SCALE and PS2X_FRAME_RATE override it). size: the window's, or the full-screen video mode's.\n"
         "# mode: windowed, fullscreen (exclusive) or borderless (the monitor's size). render_scale: the 3D drawn at\n"
-        "# that many times the window's size each way (0.25 to 4). gs_scale: the GS renderer's internal scale (1 to 4,\n"
-        "# read at launch).\n"
+        "# that many times the window's size each way (0.25 to 4). gs_scale: the PS2Recomp build's GS renderer scale\n"
+        "# (1 to 4; BozoEngine has no GS and keeps it as it is). frame_rate: game (60, each game frame shown once),\n"
+        "# monitor (the monitor's refresh with vsync, the frames between the game's drawn interpolated, one game frame\n"
+        "# later) or a number (that many a second, interpolated, without vsync).\n"
         "\n[video]\n";
     text += "size = " + std::to_string(width) + "x" + std::to_string(height) + "\n";
     text += "mode = " + mode + "\n";
     text += "render_scale = " + renderScale + "\n";
     text += "gs_scale = " + std::to_string(gsScale) + "\n";
+    text += "frame_rate = " + frameRate + "\n";
     return writeAtomically(file, text);
 }
 

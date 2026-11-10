@@ -29,6 +29,7 @@ struct VideoConfig
     std::string mode = "windowed";
     std::string renderScale = "1";
     int gsScale = 1;
+    std::string frameRate = "game";
     bool exists = false;
 
     bool load(const std::string &file);
