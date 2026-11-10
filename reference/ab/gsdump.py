@@ -70,11 +70,11 @@ def flush():
     pr, fb, z, te, al, t = k[:6]
     print('f%d n=%d prim=%d iip=%d tme=%d fge=%d abe=%d fst=%d ctx=%d FBP=%x FBW=%d PSM=%x FBMSK=%08x Z=%x ZPSM=%x ZMSK=%d TEST=%x ALPHA=%x(fix %x) '
           'TBP=%x TBW=%d TPSM=%x TW=%d TH=%d TCC=%d TFX=%d CBP=%x CPSM=%x TEX1=%x SCI=%x OFS=%x FOGCOL=%x CC=%x DTHE=%x PABE=%x FBA=%x TEXA=%x CLAMP=%x | '
-          'rgba=%08x first=%s last=%s uv=%s bbox=%d,%d,%d,%d A=%s' % (
+          'rgba=%08x first=%s last=%s uv=%s uvlast=%s bbox=%d,%d,%d,%d A=%s' % (
               frame, x['n'], pr & 7, pr >> 3 & 1, pr >> 4 & 1, pr >> 5 & 1, pr >> 6 & 1, pr >> 8 & 1, pr >> 9 & 1,
               fb & 0x1ff, fb >> 16 & 0x3f, fb >> 24 & 0x3f, fb >> 32, z & 0x1ff, z >> 24 & 0xf, z >> 32 & 1, te, al & 0xff, al >> 32 & 0xff,
               t & 0x3fff, t >> 14 & 0x3f, t >> 20 & 0x3f, t >> 26 & 0xf, t >> 30 & 0xf, t >> 34 & 1, t >> 35 & 3, t >> 37 & 0x3fff, t >> 51 & 0xf,
-              k[6], k[7], k[8], k[9], k[10], k[11], k[12], k[13], k[14], k[15], x['c'], x['f'], x['l'], x['uv'], (x['b'][0] - (k[8] & 0xffff)) // 16, (x['b'][1] - (k[8] >> 32 & 0xffff)) // 16, (x['b'][2] - (k[8] & 0xffff)) // 16, (x['b'][3] - (k[8] >> 32 & 0xffff)) // 16, sorted(set(c >> 24 for c in x['cs']))[:12]))
+              k[6], k[7], k[8], k[9], k[10], k[11], k[12], k[13], k[14], k[15], x['c'], x['f'], x['l'], x['uv'], x['uvl'], (x['b'][0] - (k[8] & 0xffff)) // 16, (x['b'][1] - (k[8] >> 32 & 0xffff)) // 16, (x['b'][2] - (k[8] & 0xffff)) // 16, (x['b'][3] - (k[8] >> 32 & 0xffff)) // 16, sorted(set(c >> 24 for c in x['cs']))[:12]))
     run = None
 
 
@@ -89,11 +89,12 @@ def setreg(a, v):
         if run and run['k'] == k:
             run['n'] += 1
             run['l'] = xy
+            run['uvl'] = (R.get('UV', 0) & 0xffff, R.get('UV', 0) >> 16 & 0xffff)
             run['cs'].append(R.get('RGBAQ', 0) & 0xffffffff)
             run['b'] = [min(run['b'][0], xy[0]), min(run['b'][1], xy[1]), max(run['b'][2], xy[0]), max(run['b'][3], xy[1])]
         else:
             flush()
-            run = {'cs': [R.get('RGBAQ', 0) & 0xffffffff], 'b': [xy[0], xy[1], xy[0], xy[1]], 'k': k, 'n': 1, 'f': xy, 'l': xy, 'c': R.get('RGBAQ', 0), 'uv': (R.get('UV', 0) & 0xffff, R.get('UV', 0) >> 16 & 0xffff)}
+            run = {'cs': [R.get('RGBAQ', 0) & 0xffffffff], 'b': [xy[0], xy[1], xy[0], xy[1]], 'k': k, 'n': 1, 'f': xy, 'l': xy, 'c': R.get('RGBAQ', 0), 'uv': (R.get('UV', 0) & 0xffff, R.get('UV', 0) >> 16 & 0xffff), 'uvl': None}
         return
     if a == 0x53:
         flush()
