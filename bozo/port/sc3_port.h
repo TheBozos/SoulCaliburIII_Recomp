@@ -8,9 +8,15 @@
 #include "bozo/recomp.h"
 #include "sc3_functions.h"
 
+#include <memory>
 #include <vector>
 
 using PS2Runtime = Runtime;
+
+namespace bozo::render
+{
+    struct Texture;
+}
 
 namespace sc3
 {
@@ -42,6 +48,8 @@ namespace sc3
         void presentAlone();
         void holdStill();
         bool hidden(uint32_t address);
+        // The frame being built draws the full-screen movie's picture last, over GS rectangle (x0, y0)-(x1, y1).
+        void drawMovie(uint8_t *rdram, float x0, float y0, float x1, float y1);
         void shutdown();
     }
     namespace twoD { void install(Registry &runtime); void shutdown(); }
@@ -56,6 +64,7 @@ namespace sc3
         // A smaller movie's current picture by Sofdec handle, for the 2D builders: RGBA rows (alpha 0x80 = 1.0), nothing copied while `known` is
         // its number.
         bool picture(PS2Runtime *runtime, uint32_t handle, uint32_t known, std::vector<uint32_t> &rgba, uint32_t &width, uint32_t &height, uint32_t &number);
+        std::shared_ptr<const bozo::render::Texture> fullScreenPicture();
         void shutdown();
     }
     namespace audio { void install(Registry &runtime); }

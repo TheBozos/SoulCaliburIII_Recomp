@@ -1,7 +1,7 @@
 // Sofdec answered at mwPly's level. Movies of MOVIE.AFS (partition 1) are decoded here with FFmpeg, on the game's frames, and
-// Sofdec's own player is never started: full-screen ones are the renderer's held backdrop, smaller ones (menu previews) a
-// picture the 2D builders ask for by handle, their ADX soundtracks go to the mixer through the port's PCM stream. Any other
-// start reports its end straight away.
+// Sofdec's own player is never started: full-screen ones are drawn in the frame where the game draws them (0x217458) and
+// held as the renderer's backdrop for frames with no kick, smaller ones (menu previews) a picture the 2D builders ask for by
+// handle, their ADX soundtracks go to the mixer through the port's PCM stream. Any other start reports its end straight away.
 #include "sc3_draw.h"
 
 #include "bozo/audio/port_stream.h"
@@ -68,6 +68,8 @@ namespace sc3::movies
         constexpr int32_t kMoviePlayStatFinished = 4;
         constexpr uint32_t kMovieTaskEnd = 0x00218600u;
         constexpr uint32_t kMovieStatePointer = 0x70000030u;
+        constexpr uint32_t kFullScreenDraw = 0x00217458u;
+        constexpr uint32_t kDisplaySettings = 0x00469230u;
 
         uint32_t readWord(PS2Runtime *runtime, uint32_t address)
         {
@@ -195,12 +197,18 @@ namespace sc3::movies
             bool frameInfo(bool alphaMovie, uint32_t &width, uint32_t &height, uint32_t &number)
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                if (!m_active || m_fullScreen || m_current.empty())
+                if (!m_active || m_current.empty())
                     return false;
                 width = m_width;
                 height = alphaMovie ? m_height / 2u : m_height;
                 number = m_number;
                 return true;
+            }
+
+            std::shared_ptr<const bozo::render::Texture> fullScreenPicture()
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                return m_active && m_fullScreen && m_backdropShown ? m_picture : nullptr;
             }
 
             // RGBA rows, alpha 0x80 = 1.0 or a mask movie's luma from the picture's bottom half. Nothing is copied while `known` is
@@ -293,6 +301,7 @@ namespace sc3::movies
                 screen.originY = 0.0f;
                 screen.width = static_cast<float>(picture->width);
                 screen.height = static_cast<float>(picture->height);
+                m_picture = picture;
                 renderer.setBackdrop(std::move(picture), screen, 0.0f, 0.0f, screen.width, screen.height, true);
                 m_backdropShown = true;
                 m_backdropNumber = m_number;
@@ -303,6 +312,7 @@ namespace sc3::movies
                 if (!m_backdropShown)
                     return;
                 m_backdropShown = false;
+                m_picture.reset();
                 bozo::render::Renderer::instance().clearBackdrop();
             }
 
@@ -483,6 +493,7 @@ namespace sc3::movies
             std::deque<Picture> m_frames;
             std::deque<int16_t> m_audio;
             std::vector<uint8_t> m_current;
+            std::shared_ptr<const bozo::render::Texture> m_picture;
             uint32_t m_width = 0, m_height = 0, m_number = 0, m_file = 0, m_backdropNumber = 0;
             bool m_loop = false, m_fullScreen = false, m_decoderDone = false, m_hasAudio = false, m_backdropShown = false, m_reported = false, m_active = true;
             std::atomic<bool> m_quit{false};
@@ -632,6 +643,40 @@ namespace sc3::movies
 
         void answered(uint8_t *, R5900Context *ctx, PS2Runtime *) { ctx->pc = getRegU32(ctx, 31); }
 
+        // 0x217458 (pixels, width, height, packets): the picture's sprite as 0x216860 places it, a 16:9 band on a 4:3
+        // screen unless the display settings' +0x50 is set.
+        void fullScreenDraw(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const int32_t w = getRegS32(ctx, 5), h = getRegS32(ctx, 6);
+            const bool wide = readWord(runtime, readWord(runtime, kDisplaySettings) + 0x50u) != 0u;
+            const float fw = static_cast<float>(w);
+            float x0, y0, x1, y1;
+            if (h >= 401 && !wide)
+            {
+                x0 = static_cast<float>(static_cast<int32_t>(2048.0f - (fw * 0.5f + 0.5f)));
+                y0 = static_cast<float>(static_cast<int32_t>(2048.0f - (fw * 0.5625f * 0.5f + 0.5f)));
+                x1 = x0 + static_cast<float>(static_cast<int32_t>(fw + 0.5f));
+                y1 = y0 + static_cast<float>(static_cast<int32_t>(fw * 0.5625f + 0.5f));
+            }
+            else if (h < 401 && wide)
+            {
+                const float scaled = fw * (369.6f / static_cast<float>(h));
+                x0 = static_cast<float>(static_cast<int32_t>(2048.0f - (scaled * 0.5f + 0.5f)));
+                y0 = 1823.0f;
+                x1 = x0 + static_cast<float>(static_cast<int32_t>(scaled + 0.5f));
+                y1 = y0 + 448.0f;
+            }
+            else
+            {
+                x0 = static_cast<float>(2048 - w / 2);
+                y0 = static_cast<float>(2048 - h / 2);
+                x1 = x0 + fw;
+                y1 = y0 + static_cast<float>(h);
+            }
+            ot::drawMovie(rdram, x0, y0, x1, y1);
+            func_0x217458(rdram, ctx, runtime);
+        }
+
         // A handle holds what the game gave and the overrides read: no decoder is ever made behind it, which is what
         // keeps Sofdec's own create and destroy, with their timer and IPU set-up, from being reached.
         void create(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
@@ -710,6 +755,16 @@ namespace sc3::movies
 #endif
     }
 
+    std::shared_ptr<const bozo::render::Texture> fullScreenPicture()
+    {
+#ifdef SC3_HAVE_FFMPEG
+        for (const auto &entry : g_players)
+            if (auto picture = entry.second->fullScreenPicture())
+                return picture;
+#endif
+        return nullptr;
+    }
+
     void shutdown()
     {
 #ifdef SC3_HAVE_FFMPEG
@@ -734,6 +789,7 @@ namespace sc3::movies
         for (uint32_t setting : kMwPlyDecoderSettings)
             runtime.registerFunction(setting, &answered);
         runtime.registerFunction(kMwPlyGetCurFrm, &getCurFrm);
+        runtime.registerFunction(kFullScreenDraw, &fullScreenDraw);
         runtime.registerFunction(kMwPlyRelCurFrm, &answered);
         runtime.registerFunction(kMwPlyIsNextFrmReady, &isNextFrmReady);
 #ifdef SC3_HAVE_FFMPEG
