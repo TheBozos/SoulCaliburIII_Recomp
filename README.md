@@ -191,6 +191,7 @@ variables below, else `packs/` beside the program; the symbol map `SC3_SYMBOL_MA
 | `SC3_HOLD_FRAMES=n,...` | The game stands 1 s at the end of those frames, so a capture by frame (`--capture-frames`) has that frame's picture |
 | `SC3_HIDE_EE=<addr>,...`, `SC3_HIDE_TBP=<tbp>,...` | Leave out the draws of those builders, or of textures at those pages (diagnostic) |
 | `SC3_TRACE_CD=1`, `SC3_MESH_DUMP=<frame>`, `SC3_MESH_TRACE_LISTS=1` | Disc reads, one frame's mesh draws, model list relocations, in the log |
+| `SC3_TRACE_SCENE=1`, `SC3_TRACE_CLOCKS=<addr>,...` | Each scene the game changes to and each start of those counters, with the frame, in the log (the PCSX2 comparison's anchors, `reference/pcsx2`) |
 | `PS2X_USER_DIR=<dir>` | Another user folder |
 | `PS2X_LOG_FILE=<file>` | The log there (`0`: no log file) |
 | `PS2X_NO_DIALOGS=1` | Errors in the log only, no message box |
