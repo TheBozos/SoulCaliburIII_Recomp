@@ -30,6 +30,8 @@ struct VideoConfig
     std::string renderScale = "1";
     int gsScale = 1;
     std::string frameRate = "game";
+    std::string textureUpscale = "off"; // off, 2x or 4x
+    std::string textureFilter = "edge"; // edge or smooth
     bool exists = false;
 
     bool load(const std::string &file);

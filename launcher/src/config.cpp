@@ -107,6 +107,10 @@ bool VideoConfig::load(const std::string &file)
         gsScale = std::clamp(std::atoi(v["gs_scale"].c_str()), 1, 4);
     if (!v["frame_rate"].empty())
         frameRate = v["frame_rate"];
+    if (v["texture_upscale"] == "off" || v["texture_upscale"] == "2x" || v["texture_upscale"] == "4x")
+        textureUpscale = v["texture_upscale"];
+    if (v["texture_filter"] == "edge" || v["texture_filter"] == "smooth")
+        textureFilter = v["texture_filter"];
     return true;
 }
 
@@ -120,13 +124,17 @@ bool VideoConfig::save(const std::string &file) const
         "# that many times the window's size each way (0.25 to 4). gs_scale: the PS2Recomp build's GS renderer scale\n"
         "# (1 to 4; BozoEngine has no GS and keeps it as it is). frame_rate: game (60, each game frame shown once),\n"
         "# monitor (the monitor's refresh with vsync, the frames between the game's drawn interpolated, one game frame\n"
-        "# later) or a number (that many a second, interpolated, without vsync).\n"
+        "# later) or a number (that many a second, interpolated, without vsync). texture_upscale: the game's textures\n"
+        "# drawn from copies made 2x or 4x as large (off, 2x or 4x; PS2X_TEXTURE_UPSCALE), texture_filter: how they are\n"
+        "# made (edge: sharp edges kept, smooth: bicubic; PS2X_TEXTURE_FILTER).\n"
         "\n[video]\n";
     text += "size = " + std::to_string(width) + "x" + std::to_string(height) + "\n";
     text += "mode = " + mode + "\n";
     text += "render_scale = " + renderScale + "\n";
     text += "gs_scale = " + std::to_string(gsScale) + "\n";
     text += "frame_rate = " + frameRate + "\n";
+    text += "texture_upscale = " + textureUpscale + "\n";
+    text += "texture_filter = " + textureFilter + "\n";
     return writeAtomically(file, text);
 }
 

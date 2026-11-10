@@ -1276,9 +1276,9 @@ static void drawSettings(App &app, float inner)
 {
     heading(L("Settings", "Réglages"));
     gap(2);
-    ui::textWrapped(L("Controls and video are in the game: press F2 while playing. Here, the window the game opens with.",
+    ui::textWrapped(L("Controls and video are in the game: press F2 while playing. Here, the window and textures the game opens with.",
                       "Les commandes et la vidéo sont dans le jeu : appuyez sur F2 en jouant. Ici, la fenêtre "
-                      "avec laquelle le jeu démarre."),
+                      "et les textures avec lesquelles le jeu démarre."),
                     18, ui::color::inkDim);
     gap(10);
     VideoConfig &v = app.video;
@@ -1333,6 +1333,39 @@ static void drawSettings(App &app, float inner)
             ImGui::EndCombo();
         }
         ImGui::PopFont();
+    }
+    gap(6);
+    ui::text(L("Texture upscaling", "Agrandissement des textures"), 17, ui::color::inkFaint);
+    const char *upscales[3] = {"off", "2x", "4x"};
+    const char *upscaleNames[3] = {L("Off (the game's)", "Non (celles du jeu)"), "2x", "4x"};
+    for (int i = 0; i < 3; ++i)
+    {
+        if (i)
+            ImGui::SameLine(0, S(8));
+        char id[64];
+        std::snprintf(id, sizeof(id), "%s##upscale%d", upscaleNames[i], i);
+        if (ui::pill(id, v.textureUpscale == upscales[i], 18))
+        {
+            v.textureUpscale = upscales[i];
+            changed = true;
+        }
+    }
+    if (v.textureUpscale != "off")
+    {
+        const char *filters[2] = {"edge", "smooth"};
+        const char *filterNames[2] = {L("Sharp edges", "Bords nets"), L("Smooth", "Lisse")};
+        for (int i = 0; i < 2; ++i)
+        {
+            if (i)
+                ImGui::SameLine(0, S(8));
+            char id[64];
+            std::snprintf(id, sizeof(id), "%s##filter%d", filterNames[i], i);
+            if (ui::pill(id, v.textureFilter == filters[i], 18))
+            {
+                v.textureFilter = filters[i];
+                changed = true;
+            }
+        }
     }
     if (changed)
     {
