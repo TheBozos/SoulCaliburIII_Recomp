@@ -167,6 +167,7 @@ namespace sc3::draw
                 for (uint32_t x = 0; x < u.size; ++x)
                     out->rgba[static_cast<size_t>(y) * u.size + x] = image->rgba[static_cast<size_t>(v.first + y) * image->width + u.first + x];
             out->key = (image->key * 0x9E3779B97F4A7C15ull) ^ clamp;
+            out->asset = image->asset;
             windows.emplace(key, out);
             return out;
         }

@@ -13,6 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   card folders.
 
 ### Added
+- Texture upscaling, off by default: the game's textures drawn from 2x or 4x copies (edge-directed or smooth filter),
+  in the launcher's settings, the Video tab (F2) and `video.ini`.
 - The game on BozoEngine: the whole executable recompiled (16,656 functions), every library answered natively, the
   sound modules (CRI_ADXI, NUSOUND, SDRDRV) translated from the disc at build time, libsd and the mixer native.
 - The frame in C++: the kick, the ordering table, the packet API and the frame clock. The game's code touches no device
