@@ -23,6 +23,7 @@ namespace sc3::ot
         constexpr uint32_t kRenderer = 0x005BE700u; // +0 frame not built, +0x38 frame being built, +0x50 the layer's table, +0x54 the table, +0x62 layers, +0x64 buckets a layer, +0x80 the frame the kick sends
         constexpr uint32_t kSyncPoint = 0x0010F9D0u;
         constexpr uint32_t kSetLayer = 0x0010D718u;
+        constexpr uint32_t kDisplayCopy = 0x00141C80u;
         constexpr uint32_t kBuckets = 0x2000u;
 
         uint32_t word(const uint8_t *rdram, uint32_t address)
@@ -62,6 +63,8 @@ namespace sc3::ot
             std::vector<std::vector<Draw>> buckets = std::vector<std::vector<Draw>>(kBuckets);
             std::vector<uint32_t> usedBuckets;
             uint64_t draws = 0;
+            bool displayCopy = false, movie = false;
+            float movieRect[4] = {};
         };
 
         struct State
@@ -95,6 +98,12 @@ namespace sc3::ot
             else if (channel == 2u)
                 ++frame.vif[selectedVif(rdram)].current;
             func_0x10f9d0(rdram, ctx, runtime);
+        }
+
+        void displayCopy(uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
+        {
+            building(rdram).displayCopy = true;
+            func_0x141c80(rdram, ctx, runtime);
         }
 
         // 0x10D718 (n > 0, &head, &tail): the table's layer before n, entered from the list by a NEXT the caller appends.
@@ -219,12 +228,42 @@ namespace sc3::ot
         return slot;
     }
 
+    static void drawPicture(bozo::render::Renderer &renderer, const float rect[4], std::shared_ptr<const bozo::render::Texture> picture)
+    {
+        bozo::render::Material m;
+        m.textured = true;
+        m.blend = bozo::render::Material::Blend::Opaque;
+        m.depthTest = false;
+        m.depthWrite = false;
+        const float du = 0.5f / static_cast<float>(picture->width), dv = 0.5f / static_cast<float>(picture->height);
+        bozo::render::Vertex v[6];
+        const float corners[6][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 0}, {1, 1}, {0, 1}};
+        for (int i = 0; i < 6; ++i)
+        {
+            v[i].x = rect[corners[i][0] != 0.0f ? 2 : 0];
+            v[i].y = rect[corners[i][1] != 0.0f ? 3 : 1];
+            v[i].u = corners[i][0] + du;
+            v[i].v = corners[i][1] + dv;
+            v[i].rgba = 0x80808080u;
+        }
+        renderer.draw(m, draw::kIdentity, v, 6u, std::move(picture));
+    }
+
+    void drawMovie(uint8_t *rdram, float x0, float y0, float x1, float y1)
+    {
+        FrameMirror &frame = building(rdram);
+        frame.movie = true;
+        frame.movieRect[0] = x0, frame.movieRect[1] = y0, frame.movieRect[2] = x1, frame.movieRect[3] = y1;
+    }
+
     void dropFrame(uint8_t *rdram)
     {
         FrameMirror &frame = g_state.frames[(word(rdram, kRenderer + 0x80u) & 0xFFFFu) & 1u];
         frame.gif.reset();
         frame.vif[0].reset();
         frame.vif[1].reset();
+        frame.displayCopy = false;
+        frame.movie = false;
         for (std::vector<Draw> &bucket : frame.buckets)
             bucket.clear();
     }
@@ -281,7 +320,13 @@ namespace sc3::ot
         frame.draws = 0;
         meshes::frameStart();
         walk(frame, renderer);
-        offscreen::displayCopy(rdram, renderer);
+        if (frame.movie)
+            if (std::shared_ptr<const bozo::render::Texture> picture = movies::fullScreenPicture())
+                drawPicture(renderer, frame.movieRect, std::move(picture));
+        frame.movie = false;
+        if (frame.displayCopy)
+            offscreen::displayCopy(rdram, renderer);
+        frame.displayCopy = false;
         renderer.endFrame();
         renderer.beginFrame(screen());
         twoD::frameDone();
@@ -332,5 +377,6 @@ namespace sc3::ot
         offscreen::install(runtime);
         runtime.registerFunction(kSyncPoint, &syncPoint);
         runtime.registerFunction(kSetLayer, &setLayer);
+        runtime.registerFunction(kDisplayCopy, &displayCopy);
     }
 }

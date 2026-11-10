@@ -26,3 +26,4 @@ mc1/
 *.png
 *.log
 runs/
+__pycache__/

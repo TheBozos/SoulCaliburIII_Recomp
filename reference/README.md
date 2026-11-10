@@ -76,3 +76,27 @@ A fight compared with main needs one game state on both builds. `route_frames.tx
 - Main's picture is older than the port's at one frame number: compare main's still at n with the port's at n - 2 (the best match is n - 1 or n - 2 by the still). Hold the port at n - 2 and capture that frame. Runs go to the hidden workspace 9: fix the window with a floating 952x1046 so both sizes match.
 - `ab/gsdump.py x.gs`: a PCSX2 GS dump as text, one line per run of equal state, with the display registers, each run's bounding box and vertex alphas. Reference analysis only (the port reads no packet): this is how the display copy and the two contexts' TEST and ZBUF were found. PCSX2 runs on a private `-datapath` holding `PCSX2/inis`, `PCSX2/bios`.
 - Floors: two reference runs against each other. `SC3_HIDE_EE=0x172e90,0x163650` hides the object glow and the sun flare on both builds (0x1f6c48, the shadows' darkening, on the port).
+
+## PCSX2 as the oracle (`pcsx2/`)
+
+The records above compare with SC3's PS2Recomp build, so what that build got wrong reads as right. `pcsx2/` compares
+with PCSX2 instead: an external reference on a private `-datapath`, never part of the port. Scripts only; stills, dumps
+and sound stay local.
+
+- `p2drive.py setup DATAPATH` writes the private settings: PINE on slot 28161 (`P2_SLOT` for another), the software GS
+  at native resolution, PNG screenshots (F8) of the uncorrected 640x448 picture, the pad on the keyboard.
+- `p2drive.py run DATAPATH OUT --script s --scenes port.log --clocks 4ED7F0,4B6BE4 --stills n,n,..` boots the ISO with a
+  new memory card, plays a port pad script and shoots stills named by the port frame they stand for. PCSX2 loads slower
+  than the port (boot about 220 frames, a stage about 25), so frame numbers are not moments: every event is anchored on
+  the last scene change (word 0x4EE008) or clock start (0x4ED7F0 the fight's stage loaded, 0x4B6BE4 the fight begun)
+  the port logged before it (`SC3_TRACE_SCENE=1`, `SC3_TRACE_CLOCKS=...`), and fires as many frames after PCSX2 reaches
+  the same anchor. Keys go to the window through Hyprland; the game's counter 0x46E608 is read through PINE (`pine.py`).
+  `--gsdump n` takes a single-frame GS dump (read with `ab/gsdump.py`), `--watch A>F` logs a word as it changes, `--sound`
+  sends PCSX2's sound to SDL's disk driver (`pcsx2_audio.raw`, float32 stereo 48 kHz).
+- `routes.py` holds the routes (the nine modes, the fight on four stages, the boot's movies) as pad scripts for a port run
+  with movies and the stills of each. `compare_route.sh ROUTE OUT` runs the port (window, scene trace, held stills),
+  then PCSX2, then `compare.py` (best of port frames n-6..n+6 per still: PSNR, share of pixels off by more than 24, mean
+  colour offset, worst tiles; `--diff` writes PCSX2 | port | difference). `audio_compare.py` lines sound segments up by
+  envelope and gives level and spectrum differences.
+- Run under a benchlock lease (`benchlock take`); both windows go to workspace 9. PCSX2 2.8's own capture needs FFmpeg 8,
+  which this system lacks, hence the SDL disk driver.

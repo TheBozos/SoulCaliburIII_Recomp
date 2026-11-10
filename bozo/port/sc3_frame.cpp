@@ -6,7 +6,9 @@
 #include "bozo/app/frame_pacer.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace sc3::frame
 {
@@ -55,6 +57,7 @@ namespace sc3::frame
         constexpr uint32_t kFinishCount = 0x0046E60Cu;
         constexpr uint32_t kSignals = 0x00467494u;
         constexpr uint32_t kKickedFrameNumber = 0x0047100Cu;
+        constexpr uint32_t kScene = 0x004EE008u;
 
         bool g_frameOpen = false;
         bozo::app::FramePacer g_pacer;
@@ -95,8 +98,42 @@ namespace sc3::frame
             func_0x12cf38(rdram, ctx, runtime);
         }
 
+        void traceScene(const uint8_t *rdram)
+        {
+            static const bool on = std::getenv("SC3_TRACE_SCENE") != nullptr;
+            static const std::vector<uint32_t> clocks = [] {
+                std::vector<uint32_t> list;
+                if (const char *text = std::getenv("SC3_TRACE_CLOCKS"))
+                    for (const char *p = text; *p;)
+                    {
+                        char *end = nullptr;
+                        list.push_back(static_cast<uint32_t>(std::strtoul(p, &end, 16)) & 0x1FFFFFCu);
+                        p = *end ? end + 1 : end;
+                    }
+                return list;
+            }();
+            static std::vector<uint32_t> values(clocks.size(), 0u);
+            static uint32_t last = 0xFFFFFFFFu;
+            if (!on)
+                return;
+            const uint32_t frame = get<uint32_t>(rdram, kFrameNumber);
+            if (get<uint32_t>(rdram, kScene) != last)
+            {
+                last = get<uint32_t>(rdram, kScene);
+                std::fprintf(stderr, "[sc3:scene] frame %u scene 0x%x\n", frame, last);
+            }
+            for (size_t i = 0; i < clocks.size(); ++i)
+            {
+                const uint32_t v = get<uint32_t>(rdram, clocks[i]);
+                if (v != 0u && (values[i] == 0u || v < values[i]))
+                    std::fprintf(stderr, "[sc3:scene] frame %u clock 0x%x starts\n", frame, clocks[i]);
+                values[i] = v;
+            }
+        }
+
         void endOfFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            traceScene(rdram);
             movies::tick(runtime);
             g_pacer.setCap(60u);
             g_pacer.setPaced(bozo::port::realTime(runtime));
