@@ -122,6 +122,13 @@ disc. On 8 threads (Ryzen 7 7800X3D) a build from nothing took 649 s, 550 of the
 A controller is used when one is connected, otherwise the keyboard; both are rebound in the settings window and kept
 in `input.ini`.
 
+**Texture upscaling** (off by default, so the game looks as on the PS2): the game's textures drawn from copies made
+2x or 4x as large, with an edge-directed filter (sharp outlines and text, smooth diagonals) or a smooth one. Set in
+the launcher's settings or the Video tab (F2), kept in `video.ini` (`texture_upscale`, `texture_filter`). It is not the
+render scale: that one sets the 3D's resolution, upscaling the detail of the textures drawn in it. Movie pictures and
+frame effects are never upscaled. The copies are made in the background (a texture shows as it is for a moment the
+first time it appears) and take GPU memory: on the route about 53 MB of textures off, 265 MB at 2x, 1.1 GB at 4x.
+
 ### Saves, settings and logs
 
 | | Linux | Windows |
@@ -194,7 +201,8 @@ variables below, else `packs/` beside the program; the symbol map `SC3_SYMBOL_MA
 | `PS2X_USER_DIR=<dir>` | Another user folder |
 | `PS2X_LOG_FILE=<file>` | The log there (`0`: no log file) |
 | `PS2X_NO_DIALOGS=1` | Errors in the log only, no message box |
-| `PS2X_WINDOW_SIZE=WxH`, `PS2X_WINDOW_MODE`, `PS2X_RENDER_SCALE`, `PS2X_FRAME_RATE` | Override `video.ini` |
+| `PS2X_WINDOW_SIZE=WxH`, `PS2X_WINDOW_MODE`, `PS2X_RENDER_SCALE`, `PS2X_FRAME_RATE`, `PS2X_TEXTURE_UPSCALE=off\|2x\|4x`, `PS2X_TEXTURE_FILTER=edge\|smooth` | Override `video.ini` |
+| `PS2X_TEXTURE_STATS=1` | Texture memory and upscaled copies in the log every 10 s |
 | `PS2X_SHOW_FPS=1`, `PS2X_FRAME_STATS=1` | Start with the overlay on; frame pacing statistics in the log |
 | `PS2X_INPUT_CONFIG`, `PS2X_VIDEO_CONFIG`, `PS2X_GAMEPAD_DB` | Other `input.ini`, `video.ini`, controller database |
 | `PS2X_RUMBLE=0` | No vibration |
