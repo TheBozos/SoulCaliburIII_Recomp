@@ -23,6 +23,7 @@ namespace sc3::ot
         constexpr uint32_t kRenderer = 0x005BE700u; // +0 frame not built, +0x38 frame being built, +0x50 the layer's table, +0x54 the table, +0x62 layers, +0x64 buckets a layer, +0x80 the frame the kick sends
         constexpr uint32_t kSyncPoint = 0x0010F9D0u;
         constexpr uint32_t kSetLayer = 0x0010D718u;
+        constexpr uint32_t kDisplayCopy = 0x00141C80u;
         constexpr uint32_t kBuckets = 0x2000u;
 
         uint32_t word(const uint8_t *rdram, uint32_t address)
@@ -62,6 +63,7 @@ namespace sc3::ot
             std::vector<std::vector<Draw>> buckets = std::vector<std::vector<Draw>>(kBuckets);
             std::vector<uint32_t> usedBuckets;
             uint64_t draws = 0;
+            bool displayCopy = false;
         };
 
         struct State
@@ -95,6 +97,12 @@ namespace sc3::ot
             else if (channel == 2u)
                 ++frame.vif[selectedVif(rdram)].current;
             func_0x10f9d0(rdram, ctx, runtime);
+        }
+
+        void displayCopy(uint8_t *rdram, R5900Context *ctx, Runtime *runtime)
+        {
+            building(rdram).displayCopy = true;
+            func_0x141c80(rdram, ctx, runtime);
         }
 
         // 0x10D718 (n > 0, &head, &tail): the table's layer before n, entered from the list by a NEXT the caller appends.
@@ -225,6 +233,7 @@ namespace sc3::ot
         frame.gif.reset();
         frame.vif[0].reset();
         frame.vif[1].reset();
+        frame.displayCopy = false;
         for (std::vector<Draw> &bucket : frame.buckets)
             bucket.clear();
     }
@@ -281,7 +290,9 @@ namespace sc3::ot
         frame.draws = 0;
         meshes::frameStart();
         walk(frame, renderer);
-        offscreen::displayCopy(rdram, renderer);
+        if (frame.displayCopy)
+            offscreen::displayCopy(rdram, renderer);
+        frame.displayCopy = false;
         renderer.endFrame();
         renderer.beginFrame(screen());
         twoD::frameDone();
@@ -332,5 +343,6 @@ namespace sc3::ot
         offscreen::install(runtime);
         runtime.registerFunction(kSyncPoint, &syncPoint);
         runtime.registerFunction(kSetLayer, &setLayer);
+        runtime.registerFunction(kDisplayCopy, &displayCopy);
     }
 }
