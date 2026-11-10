@@ -27,7 +27,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 - `scripts/sc3_build.py`: the same build from the command line, on Windows or Linux.
 - `scripts/make_release.py`, `scripts/apply_update.py` and the CI and release workflows.
 
+### Fixed
+- Full-screen movies (the Namco intro, the opening) were black: they are now drawn in the frame where the game draws
+  them, in its 16:9 band on a 4:3 screen, and the display copy is drawn only on the frames the game builds it for.
+
 ### Known limits
+- Compared with PCSX2 (`reference/pcsx2`): the Museum's screens are black, Character Creation shows no model, and the
+  glow is stronger in menus than on the GS.
 - Not yet played by a human on this build; sound not checked on a real device; Windows not run on a real GPU or with
   a gamepad.
 - Fight stills compare at 20.4-27.7 dB with the PS2Recomp build's (its own run-to-run floor 22.6-35.5 dB).
