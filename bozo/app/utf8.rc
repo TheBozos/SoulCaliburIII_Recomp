@@ -1,1 +1,4 @@
+// The window build's resources: its icon (The Bozos' logo in Soulcalibur III's variant, docs/branding/make_logo.py sc3) and
+// the UTF-8 manifest.
+1 ICON "sc3.ico"
 1 24 "sc3.manifest"

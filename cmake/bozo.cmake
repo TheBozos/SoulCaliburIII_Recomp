@@ -214,7 +214,7 @@ set(sc3_main_defines BOZO_RUN_DEFAULT_ELF="${SC3_ELF}" SC3_DEFAULT_ISO="${SC3_IS
 if(WIN32)
     enable_language(RC)
     set_source_files_properties("${CMAKE_SOURCE_DIR}/bozo/app/utf8.rc" PROPERTIES
-        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/bozo/app/sc3.manifest")
+        OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/bozo/app/sc3.manifest;${CMAKE_SOURCE_DIR}/bozo/app/sc3.ico")
 endif()
 function(sc3_static_link target)
     if(MINGW)

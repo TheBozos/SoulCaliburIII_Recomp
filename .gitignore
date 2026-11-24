@@ -24,5 +24,6 @@ mc1/
 *.gstrace
 *.wav
 *.png
+!docs/branding/*.png
 *.log
 runs/
