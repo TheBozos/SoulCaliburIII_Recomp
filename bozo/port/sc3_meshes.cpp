@@ -97,7 +97,7 @@ namespace sc3
         struct Stats
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
-            uint64_t tableParts = 0;
+            uint64_t tableParts = 0, strandParts = 0, strandRefused = 0;
             uint64_t chainNotInPack = 0;
             uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, copies = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
@@ -163,6 +163,8 @@ namespace sc3
                 fn::Relocate(rdram, ctx, runtime);
             else if (address == addr::Clipper)
                 fn::Clipper(rdram, ctx, runtime);
+            else if (address == addr::StrandPart)
+                fn::StrandPart(rdram, ctx, runtime);
             else if (address == addr::StrandBones)
                 fn::StrandBones(rdram, ctx, runtime);
             else
@@ -1607,8 +1609,70 @@ namespace sc3
             }
         }
 
+        void strandPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            ++g_state.stats.strandParts;
+            callOriginal(addr::StrandPart, rdram, ctx, runtime);
+        }
+
+        // One triangle of a strand part as 0x10B4D8 links it (OtInsertFixed from StrandLink): a2 its CNT, then the GIF tag and
+        // the PACKED vertices.
+        void strandTriangle(uint32_t cnt)
+        {
+            State &s = g_state;
+            noteMaterial();
+            uint32_t tag[4];
+            for (uint32_t i = 0; i < 4u; ++i)
+                tag[i] = peek32(cnt + 0x10u + i * 4u);
+            const uint32_t loops = tag[0] & 0x7FFFu, nreg = (tag[1] >> 28) != 0u ? tag[1] >> 28 : 16u;
+            const uint64_t regs = tag[2] | (static_cast<uint64_t>(tag[3]) << 32);
+            std::vector<Out> out(loops);
+            uint32_t at = cnt + 0x20u;
+            for (Out &o : out)
+            {
+                o = Out{};
+                for (uint32_t r = 0; r < nreg; ++r, at += 16u)
+                {
+                    uint32_t w[4];
+                    for (uint32_t i = 0; i < 4u; ++i)
+                        w[i] = peek32(at + i * 4u);
+                    switch ((regs >> (4u * r)) & 0xFu)
+                    {
+                    case 1u:
+                        for (uint32_t i = 0; i < 4u; ++i)
+                            o.rgba[i] = static_cast<int32_t>(w[i]);
+                        break;
+                    case 2u:
+                        std::memcpy(&o.s, &w[0], 4);
+                        std::memcpy(&o.t, &w[1], 4);
+                        std::memcpy(&o.q, &w[2], 4);
+                        break;
+                    case 4u:
+                        for (uint32_t i = 0; i < 3u; ++i)
+                            o.xyz[i] = static_cast<int32_t>(w[i]);
+                        o.w = w[3];
+                        break;
+                    default:
+                        ++s.stats.strandRefused;
+                        return;
+                    }
+                }
+            }
+            PartSource source;
+            source.object = s.material.address & kRamMask;
+            packs::LoadedImages::Image image;
+            if (findImage(source.object, image))
+                source.file = image.index, source.offset = source.object - image.base;
+            Sc3Draw draw;
+            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, Shade{}, tag, {}, source, draw, &out))
+                queueDraw(std::move(draw));
+        }
+
         void otInsertFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            const uint32_t ra = getRegU32(ctx, 31);
+            if (std::find(std::begin(addr::StrandLink), std::end(addr::StrandLink), ra) != std::end(addr::StrandLink))
+                strandTriangle(getRegU32(ctx, 6));
             const float z = ps2_fmul(ctx->f[12], 0.12f);
             linkUnflushed(rdram, ps2FpuCvtWS(z < 1.0f ? ps2_fmul(z, otScale()) : otScale()));
             packet::closeFixed(rdram, ctx, runtime);
@@ -1637,11 +1701,13 @@ namespace sc3
                               static_cast<unsigned>((tex0 >> 37) & 0x3FFFu), static_cast<unsigned long long>(n));
                 miss += item;
             }
-            statsLine("[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu, routine table %llu), dropped for the packs %llu; clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
+            const uint64_t table = t.tableParts > t.strandParts ? t.tableParts - t.strandParts : 0u;
+            statsLine("[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, strand parts %llu (refused %llu), LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu, routine table %llu), dropped for the packs %llu; clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
                       static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
-                      static_cast<unsigned long long>(t.chainParts), static_cast<unsigned long long>(t.chainNative), static_cast<unsigned long long>(t.leftToVu1 + t.tableParts),
+                      static_cast<unsigned long long>(t.chainParts), static_cast<unsigned long long>(t.chainNative),
+                      static_cast<unsigned long long>(t.strandParts), static_cast<unsigned long long>(t.strandRefused), static_cast<unsigned long long>(t.leftToVu1 + table + t.strandRefused),
                       static_cast<unsigned long long>(t.notInPack), static_cast<unsigned long long>(t.chainNotInPack), static_cast<unsigned long long>(t.noMaterial),
-                      static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.tableParts),
+                      static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(table),
                       static_cast<unsigned long long>(t.packDropped), static_cast<unsigned long long>(t.clipped),
                       static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedDropped), static_cast<unsigned long long>(t.drawsSubmitted),
                       static_cast<unsigned long long>(t.bound), static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), left.c_str(), miss.c_str());
@@ -1808,6 +1874,7 @@ namespace sc3
         runtime.registerFunction(addr::RegisterPacket, &hooked<registerPacket>);
         runtime.registerFunction(addr::OtInsertDepth, &hooked<otInsertDepth>);
         runtime.registerFunction(addr::OtInsertFixed, &hooked<otInsertFixed>);
+        runtime.registerFunction(addr::StrandPart, &hooked<strandPart>);
         runtime.registerFunction(addr::StrandBones, &hooked<strandBones>);
         std::fprintf(stderr, "[sc3:mesh] native meshes: %s, %zu leaves, %zu objects\n", path, s.pack.files().size(), s.pack.objectCount());
     }
