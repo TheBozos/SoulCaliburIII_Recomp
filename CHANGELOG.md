@@ -40,6 +40,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 - Hair is drawn with its fine see-through strands instead of the flat, opaque shell under them, on every character
   (#15): the strand parts the game skins on VU0 were never drawn. The `LOST` mesh counter now also counts the parts
   left to the game's routine table, which it missed before.
+- Fights cost the game's thread less: a Tales of Souls fight (Valentine Mansion) about 5.2 ms a frame instead of
+  10.4 on a Ryzen 7 7800X3D (VU0 arithmetic inlined, each mesh part's header decoded once, its buffers kept), which
+  should let a slower CPU hold 60 frames a second there (#15).
+- On Windows the frame pacer sleeps on a waitable timer: under some Wine builds (Proton Experimental with fsync) its
+  sleeps overslept by up to 13 ms and the menus ran at 55 frames a second (#15).
 - Saving to the memory card no longer hangs after the icon is written, and neither does formatting a card (#6).
 - The draw counters printed every 250 frames are off by default (`SC3_STATS=1` turns them on); writing them to a slow
   console could hold up a frame.
