@@ -66,6 +66,19 @@ namespace sc3
                 std::memcpy(&v, &bits, 4);
                 return v;
             }
+            struct Floats
+            {
+                float v[19][4];
+                float f(int qword, int lane) const { return v[qword][lane]; }
+            };
+            Floats floats() const
+            {
+                Floats out;
+                for (int qword = 0; qword < 19; ++qword)
+                    for (int lane = 0; lane < 4; ++lane)
+                        out.v[qword][lane] = f(qword, lane);
+                return out;
+            }
         };
 
         struct Material
@@ -552,6 +565,7 @@ namespace sc3
         // vf20 through vf25-27 (an environment map), one colour for all (vf21's words), fogged.
         void shadeEnvironment(const Header &h, bool fog, const std::vector<In> &in, std::vector<Out> &out)
         {
+            const Header::Floats hf = h.floats();
             out.resize(in.size());
             bool outside[3] = {false, false, false};
             for (size_t k = 0; k < in.size(); ++k)
@@ -559,20 +573,20 @@ namespace sc3
                 const In &v = in[k];
                 float p[4], e[4], r[4];
                 for (int c = 0; c < 4; ++c)
-                    p[c] = h.f(0, c) * v.position[0] + h.f(1, c) * v.position[1] + h.f(2, c) * v.position[2] + h.f(3, c);
+                    p[c] = hf.f(0, c) * v.position[0] + hf.f(1, c) * v.position[1] + hf.f(2, c) * v.position[2] + hf.f(3, c);
                 const float q = 1.0f / p[3];
                 const float pos[4] = {v.position[0], v.position[1], v.position[2], 0.0f};
                 const float nrm[4] = {v.normal[0], v.normal[1], v.normal[2], 0.0f};
                 for (int c = 0; c < 4; ++c)
-                    e[c] = nrm[c] + pos[c] * h.f(11, c);
+                    e[c] = nrm[c] + pos[c] * hf.f(11, c);
                 for (int c = 0; c < 4; ++c)
-                    r[c] = h.f(4, c) * e[0] + h.f(5, c) * e[1] + h.f(6, c) * e[2];
-                const float s0 = h.f(13, 0) + r[0] * h.f(12, 0), t0 = h.f(13, 1) + r[1] * h.f(12, 1);
+                    r[c] = hf.f(4, c) * e[0] + hf.f(5, c) * e[1] + hf.f(6, c) * e[2];
+                const float s0 = hf.f(13, 0) + r[0] * hf.f(12, 0), t0 = hf.f(13, 1) + r[1] * hf.f(12, 1);
                 const float position[4] = {p[0] * q, p[1] * q, p[2] * q, p[3]};
                 float g[4];
                 for (int i = 0; i < 4; ++i)
-                    g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) +
-                               static_cast<double>(sat(static_cast<double>(position[i]) * h.f(8, i))));
+                    g[i] = sat(static_cast<double>(sat(static_cast<double>(hf.f(7, i)) * hf.f(8, i))) +
+                               static_cast<double>(sat(static_cast<double>(position[i]) * hf.f(8, i))));
                 outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                 const bool clipped = outside[0] || outside[1] || outside[2];
                 Out &o = out[k];
@@ -585,7 +599,7 @@ namespace sc3
                     o.xyz[i] = ftoi(position[i], 16.0f);
                 if (fog)
                 {
-                    const float f = std::max(std::min(g[3], h.f(9, 0)), h.f(9, 1));
+                    const float f = std::max(std::min(g[3], hf.f(9, 0)), hf.f(9, 1));
                     o.w = ((((clipped ? 0x8000u : 0u) | v.flags) & 0x8000u) + (static_cast<uint32_t>(ftoi(f, 16.0f)) & 0xFFFFu)) & 0xFFFFu;
                 }
                 else
@@ -614,6 +628,7 @@ namespace sc3
 
         void shade(const Header &h, Shade mode, const uint32_t tag[4], const std::vector<In> &in, std::vector<Out> &out)
         {
+            const Header::Floats hf = h.floats();
             if (mode.environment)
             {
                 shadeEnvironment(h, mode.fog, in, out);
@@ -628,14 +643,14 @@ namespace sc3
                 const In &v = in[k];
                 float p[4];
                 for (int c = 0; c < 4; ++c)
-                    p[c] = h.f(0, c) * v.position[0] + h.f(1, c) * v.position[1] + h.f(2, c) * v.position[2] + h.f(3, c);
+                    p[c] = hf.f(0, c) * v.position[0] + hf.f(1, c) * v.position[1] + hf.f(2, c) * v.position[2] + hf.f(3, c);
                 const float q = 1.0f / p[3];
                 const float xs = p[0] * q, ys = p[1] * q, zs = p[2] * q;
                 const float position[4] = {xs, ys, zs, p[3]};
                 float g[4];
                 for (int i = 0; i < 4; ++i)
-                    g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(13, i)) * h.f(14, i))) +
-                               static_cast<double>(sat(static_cast<double>(position[i]) * h.f(14, i))));
+                    g[i] = sat(static_cast<double>(sat(static_cast<double>(hf.f(13, i)) * hf.f(14, i))) +
+                               static_cast<double>(sat(static_cast<double>(position[i]) * hf.f(14, i))));
                 outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                 const bool clipped = outside[0] || outside[1] || outside[2];
                 Out &o = out[k];
@@ -643,39 +658,39 @@ namespace sc3
                 if (!mode.lit)
                 {
                     for (int i = 0; i < 4; ++i)
-                        c[i] = v.colour[i] * h.f(12, i);
+                        c[i] = v.colour[i] * hf.f(12, i);
                 }
                 else if (mode.highlight)
                 {
                     float l[4];
                     for (int i = 0; i < 4; ++i)
-                        l[i] = h.f(4, i) * v.normal[0] + h.f(5, i) * v.normal[1] + h.f(6, i) * v.normal[2];
+                        l[i] = hf.f(4, i) * v.normal[0] + hf.f(5, i) * v.normal[1] + hf.f(6, i) * v.normal[2];
                     for (int i = 0; i < 3; ++i)
                         l[i] = std::max(l[i], 0.0f);
-                    float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
-                    e[1] = std::min(e[1], h.f(16, 1));
+                    float e[2] = {std::max(hf.f(15, 2) + l[3], 0.0f) * hf.f(16, 2), std::max(hf.f(15, 3) + l[3], 0.0f) * hf.f(16, 3)};
+                    e[1] = std::min(e[1], hf.f(16, 1));
                     for (int i = 0; i < 4; ++i)
                     {
-                        const float lit = h.f(12, i) + h.f(8, i) * l[0] + h.f(9, i) * l[1] + h.f(10, i) * l[2];
-                        const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
-                        c[i] = std::min(lit * v.colour[i] + highlight * 128.0f, h.f(16, 0));
+                        const float lit = hf.f(12, i) + hf.f(8, i) * l[0] + hf.f(9, i) * l[1] + hf.f(10, i) * l[2];
+                        const float highlight = hf.f(11, i) * e[0] + hf.f(11, i) * e[1];
+                        c[i] = std::min(lit * v.colour[i] + highlight * 128.0f, hf.f(16, 0));
                     }
                 }
                 else
                 {
                     float l[4];
                     for (int i = 0; i < 4; ++i)
-                        l[i] = std::max(h.f(4, i) * v.normal[0] + h.f(5, i) * v.normal[1] + h.f(6, i) * v.normal[2], 0.0f);
+                        l[i] = std::max(hf.f(4, i) * v.normal[0] + hf.f(5, i) * v.normal[1] + hf.f(6, i) * v.normal[2], 0.0f);
                     for (int i = 0; i < 4; ++i)
                     {
-                        const float lit = h.f(12, i) + h.f(8, i) * l[0] + h.f(9, i) * l[1] + h.f(10, i) * l[2] + h.f(11, i) * l[3];
-                        c[i] = std::min(lit * v.colour[i], h.f(16, 0));
+                        const float lit = hf.f(12, i) + hf.f(8, i) * l[0] + hf.f(9, i) * l[1] + hf.f(10, i) * l[2] + hf.f(11, i) * l[3];
+                        c[i] = std::min(lit * v.colour[i], hf.f(16, 0));
                     }
                 }
                 for (int i = 0; i < 4; ++i)
                     o.rgba[i] = ftoi(c[i], 1.0f);
-                const float s0 = mode.scroll ? h.f(4, 0) + v.st[0] * h.f(18, 0) : v.st[0] * h.f(18, 0);
-                const float t0 = mode.scroll ? h.f(4, 1) + v.st[1] * h.f(18, 1) : v.st[1] * h.f(18, 1);
+                const float s0 = mode.scroll ? hf.f(4, 0) + v.st[0] * hf.f(18, 0) : v.st[0] * hf.f(18, 0);
+                const float t0 = mode.scroll ? hf.f(4, 1) + v.st[1] * hf.f(18, 1) : v.st[1] * hf.f(18, 1);
                 o.s = s0 * q;
                 o.t = t0 * q;
                 o.q = q;
@@ -685,7 +700,7 @@ namespace sc3
                 const uint32_t clipBit = (clipped ? 0x8000u : 0u) | (mode.cull ? faces.next(xs, ys, k) : 0u);
                 if (mode.fog)
                 {
-                    const float fog = std::max(std::min(g[3], h.f(15, 0)), h.f(15, 1));
+                    const float fog = std::max(std::min(g[3], hf.f(15, 0)), hf.f(15, 1));
                     o.w = (((clipBit | v.flags) & 0x8000u) + (static_cast<uint32_t>(ftoi(fog, 16.0f)) & 0xFFFFu)) & 0xFFFFu;
                 }
                 else
@@ -1008,6 +1023,7 @@ namespace sc3
 
         bool skinBlock(const Header &h, const uint8_t *data, uint32_t qwords, uint32_t tag[4], std::vector<Out> &out, Skinning kind)
         {
+            const Header::Floats hf = h.floats();
             State &s = g_state;
             const auto word = [&](uint32_t q, int lane) { uint32_t w; std::memcpy(&w, data + 16u * q + 4u * static_cast<uint32_t>(lane), 4); return w; };
             const auto flt = [&](uint32_t q, int lane) { float f; std::memcpy(&f, data + 16u * q + 4u * static_cast<uint32_t>(lane), 4); return f; };
@@ -1071,48 +1087,48 @@ namespace sc3
                 q += 2u;
                 float p[4];
                 for (int c = 0; c < 4; ++c)
-                    p[c] = h.f(0, c) * pos[0] + h.f(1, c) * pos[1] + h.f(2, c) * pos[2] + h.f(3, c);
+                    p[c] = hf.f(0, c) * pos[0] + hf.f(1, c) * pos[1] + hf.f(2, c) * pos[2] + hf.f(3, c);
                 float l[4];
                 for (int i = 0; i < 4; ++i)
-                    l[i] = h.f(4, i) * nrm[0] + h.f(5, i) * nrm[1] + h.f(6, i) * nrm[2];
+                    l[i] = hf.f(4, i) * nrm[0] + hf.f(5, i) * nrm[1] + hf.f(6, i) * nrm[2];
                 Out o;
                 if (kind.environment)
                 {
                     const float qv = 1.0f / p[3];
                     float r[3];
                     for (int c = 0; c < 3; ++c)
-                        r[c] = h.f(4, c) * nrm[0] + h.f(5, c) * nrm[1] + h.f(6, c) * nrm[2];
+                        r[c] = hf.f(4, c) * nrm[0] + hf.f(5, c) * nrm[1] + hf.f(6, c) * nrm[2];
                     const float position[3] = {p[0] * qv, p[1] * qv, p[2] * qv};
                     const float guarded[4] = {position[0], position[1], position[2], p[3]};
                     float g[4];
                     for (int i = 0; i < 4; ++i)
-                        g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(7, i)) * h.f(8, i))) + static_cast<double>(sat(static_cast<double>(guarded[i]) * h.f(8, i))));
+                        g[i] = sat(static_cast<double>(sat(static_cast<double>(hf.f(7, i)) * hf.f(8, i))) + static_cast<double>(sat(static_cast<double>(guarded[i]) * hf.f(8, i))));
                     outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                     const bool clipped = outside[0] || outside[1] || outside[2];
                     for (int i = 0; i < 4; ++i)
                         o.rgba[i] = static_cast<int32_t>(h.q[10][i]);
                     for (int i = 0; i < 3; ++i)
                         o.xyz[i] = ftoi(position[i], 16.0f);
-                    o.s = (h.f(13, 0) + r[0] * h.f(12, 0)) * qv;
-                    o.t = (h.f(13, 1) + r[1] * h.f(12, 1)) * qv;
-                    o.q = kind.cull ? qv : (h.f(13, 2) + r[2] * h.f(12, 2)) * qv;
-                    finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(9, 0), h.f(9, 1)) : vi3);
+                    o.s = (hf.f(13, 0) + r[0] * hf.f(12, 0)) * qv;
+                    o.t = (hf.f(13, 1) + r[1] * hf.f(12, 1)) * qv;
+                    o.q = kind.cull ? qv : (hf.f(13, 2) + r[2] * hf.f(12, 2)) * qv;
+                    finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], hf.f(9, 0), hf.f(9, 1)) : vi3);
                     continue;
                 }
                 if (kind.unlit)
                 {
                     for (int i = 0; i < 4; ++i)
-                        o.rgba[i] = ftoi(colour[i] * h.f(12, i), 1.0f);
+                        o.rgba[i] = ftoi(colour[i] * hf.f(12, i), 1.0f);
                 }
                 else if (kind.highlight)
                 {
-                    float e[2] = {std::max(h.f(15, 2) + l[3], 0.0f) * h.f(16, 2), std::max(h.f(15, 3) + l[3], 0.0f) * h.f(16, 3)};
-                    e[1] = std::min(e[1], h.f(16, 1));
+                    float e[2] = {std::max(hf.f(15, 2) + l[3], 0.0f) * hf.f(16, 2), std::max(hf.f(15, 3) + l[3], 0.0f) * hf.f(16, 3)};
+                    e[1] = std::min(e[1], hf.f(16, 1));
                     for (int i = 0; i < 4; ++i)
                     {
-                        const float lit = h.f(12, i) + h.f(8, i) * std::max(l[0], 0.0f) + h.f(9, i) * std::max(l[1], 0.0f) + h.f(10, i) * std::max(l[2], 0.0f);
-                        const float highlight = h.f(11, i) * e[0] + h.f(11, i) * e[1];
-                        o.rgba[i] = ftoi(std::min(lit * colour[i] + highlight * 128.0f, h.f(16, 0)), 1.0f);
+                        const float lit = hf.f(12, i) + hf.f(8, i) * std::max(l[0], 0.0f) + hf.f(9, i) * std::max(l[1], 0.0f) + hf.f(10, i) * std::max(l[2], 0.0f);
+                        const float highlight = hf.f(11, i) * e[0] + hf.f(11, i) * e[1];
+                        o.rgba[i] = ftoi(std::min(lit * colour[i] + highlight * 128.0f, hf.f(16, 0)), 1.0f);
                     }
                 }
                 else
@@ -1121,23 +1137,23 @@ namespace sc3
                         l[i] = std::max(l[i], 0.0f);
                     for (int i = 0; i < 4; ++i)
                     {
-                        const float lit = h.f(12, i) + h.f(8, i) * l[0] + h.f(9, i) * l[1] + h.f(10, i) * l[2] + h.f(11, i) * l[3];
-                        o.rgba[i] = ftoi(std::min(lit * colour[i], h.f(16, 0)), 1.0f);
+                        const float lit = hf.f(12, i) + hf.f(8, i) * l[0] + hf.f(9, i) * l[1] + hf.f(10, i) * l[2] + hf.f(11, i) * l[3];
+                        o.rgba[i] = ftoi(std::min(lit * colour[i], hf.f(16, 0)), 1.0f);
                     }
                 }
                 const float qv = 1.0f / p[3];
                 const float position[4] = {p[0] * qv, p[1] * qv, p[2] * qv, p[3]};
                 float g[4];
                 for (int i = 0; i < 4; ++i)
-                    g[i] = sat(static_cast<double>(sat(static_cast<double>(h.f(13, i)) * h.f(14, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * h.f(14, i))));
+                    g[i] = sat(static_cast<double>(sat(static_cast<double>(hf.f(13, i)) * hf.f(14, i))) + static_cast<double>(sat(static_cast<double>(position[i]) * hf.f(14, i))));
                 outside[k % 3] = std::fabs(g[0]) > 1.0f || std::fabs(g[1]) > 1.0f || std::fabs(g[2]) > 1.0f;
                 const bool clipped = outside[0] || outside[1] || outside[2];
                 for (int i = 0; i < 3; ++i)
                     o.xyz[i] = ftoi(position[i], 16.0f);
-                o.s = (kind.unlit ? h.f(4, 0) + st[0] * h.f(18, 0) : st[0] * h.f(18, 0)) * qv;
-                o.t = (kind.unlit ? h.f(4, 1) + st[1] * h.f(18, 1) : st[1] * h.f(18, 1)) * qv;
+                o.s = (kind.unlit ? hf.f(4, 0) + st[0] * hf.f(18, 0) : st[0] * hf.f(18, 0)) * qv;
+                o.t = (kind.unlit ? hf.f(4, 1) + st[1] * hf.f(18, 1) : st[1] * hf.f(18, 1)) * qv;
                 o.q = qv;
-                finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], h.f(kind.fogMost, 0), h.f(15, 1)) : vi3);
+                finish(o, clipped, flags, position, k, kind.fog ? fogWord(g[3], hf.f(kind.fogMost, 0), hf.f(15, 1)) : vi3);
             }
             return true;
         }
