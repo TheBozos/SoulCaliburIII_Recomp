@@ -121,6 +121,20 @@ namespace sc3::draw
             out.push_back(toVertex(c, map, c.rgba, c.z));
         }
 
+        size_t outputVertices(uint32_t type, uint32_t count)
+        {
+            switch (type)
+            {
+            case GS_PRIM_SPRITE:
+            case GS_PRIM_LINE: return count / 2u * 6u;
+            case GS_PRIM_LINESTRIP: return count > 1u ? (count - 1u) * 6u : 0u;
+            case GS_PRIM_TRISTRIP:
+            case GS_PRIM_TRIFAN: return count > 2u ? (count - 2u) * 3u : 0u;
+            case GS_PRIM_POINT: return 0u;
+            default: return count / 3u * 3u;
+            }
+        }
+
         struct Window
         {
             uint32_t first = 0, size = 0;
@@ -282,6 +296,7 @@ namespace sc3::draw
             m.clampV = v.clamp;
         }
         out.clear();
+        out.reserve(outputVertices(gs.prim.type, count));
         const bool shaded = gs.prim.iip;
         switch (gs.prim.type)
         {
