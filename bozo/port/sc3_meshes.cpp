@@ -1621,7 +1621,7 @@ namespace sc3
         void strandTriangle(uint32_t cnt)
         {
             State &s = g_state;
-            noteMaterial();
+            const Material material = materialAt(sp32(0x36Cu), sp32(0x370u));
             uint32_t tag[4];
             for (uint32_t i = 0; i < 4u; ++i)
                 tag[i] = peek32(cnt + 0x10u + i * 4u);
@@ -1660,12 +1660,12 @@ namespace sc3
                 }
             }
             PartSource source;
-            source.object = s.material.address & kRamMask;
+            source.object = material.address & kRamMask;
             packs::LoadedImages::Image image;
             if (findImage(source.object, image))
                 source.file = image.index, source.offset = source.object - image.base;
             Sc3Draw draw;
-            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, s.material, Shade{}, tag, {}, source, draw, &out))
+            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, material, Shade{}, tag, {}, source, draw, &out))
                 queueDraw(std::move(draw));
         }
 
