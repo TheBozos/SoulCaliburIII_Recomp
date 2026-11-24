@@ -97,6 +97,7 @@ namespace sc3
         struct Stats
         {
             uint64_t parts = 0, native = 0, triangles = 0, leftToVu1 = 0, notInPack = 0, unsupported = 0, noMaterial = 0, noTexture = 0;
+            uint64_t tableParts = 0, strandParts = 0, strandRefused = 0;
             uint64_t chainNotInPack = 0;
             uint64_t chainParts = 0, chainNative = 0, chainBatches = 0, headers = 0, bound = 0, boundBad = 0, copies = 0, kicks = 0, drawsSubmitted = 0;
             uint64_t inheritedAlpha = 0, inheritedTest = 0, unknownAlpha = 0, unknownTest = 0;
@@ -162,6 +163,10 @@ namespace sc3
                 fn::Relocate(rdram, ctx, runtime);
             else if (address == addr::Clipper)
                 fn::Clipper(rdram, ctx, runtime);
+            else if (address == addr::StrandPart)
+                fn::StrandPart(rdram, ctx, runtime);
+            else if (address == addr::StrandBones)
+                fn::StrandBones(rdram, ctx, runtime);
             else
                 fn::ClipEmit(rdram, ctx, runtime);
         }
@@ -767,6 +772,32 @@ namespace sc3
             return size != 0u && size < whole ? size : whole;
         }
 
+        Material materialAt(uint32_t block, uint32_t qwc)
+        {
+            Material m;
+            m.address = block;
+            m.qwc = qwc;
+            if (readMaterial(block, m))
+            {
+                m.known = true;
+                return m;
+            }
+            return Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, qwc};
+        }
+
+        void noteMaterial()
+        {
+            State &s = g_state;
+            if (const uint32_t block = sp32(0x36Cu))
+            {
+                s.material = materialAt(block, sp32(0x370u));
+                if (s.material.setsAlpha)
+                    s.gameAlpha = s.material.alpha, s.gameAlphaKnown = true;
+                if (s.material.setsTest)
+                    s.gameTest = s.material.test, s.gameTestKnown = true;
+            }
+        }
+
         void noteState(uint32_t flags, uint32_t jump)
         {
             State &s = g_state;
@@ -776,23 +807,7 @@ namespace sc3
                 if (!buildHeader(flags, jump, s.header))
                     s.header.valid = false;
             }
-            if (const uint32_t block = sp32(0x36Cu))
-            {
-                Material m;
-                m.address = block;
-                m.qwc = sp32(0x370u);
-                if (readMaterial(block, m))
-                {
-                    m.known = true;
-                    s.material = m;
-                    if (m.setsAlpha)
-                        s.gameAlpha = m.alpha, s.gameAlphaKnown = true;
-                    if (m.setsTest)
-                        s.gameTest = m.test, s.gameTestKnown = true;
-                }
-                else
-                    s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, m.qwc};
-            }
+            noteMaterial();
         }
 
         void packetFlush(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
@@ -862,12 +877,12 @@ namespace sc3
 
         // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
         // the header and material the game sent last. False: nothing drawn, the reason counted.
-        bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
+        bool drawVertices(uint32_t routine, const Material &part, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
                           const std::vector<Out> *shaded = nullptr)
         {
             State &s = g_state;
             const uint32_t prim = ((tag[1] >> 15) & 0x7FFu) & (source.noFog ? ~0x20u : ~0u);
-            if (!s.material.known || (((prim >> 4) & 1u) != 0u && s.material.tex0 == 0u))
+            if (!part.known || (((prim >> 4) & 1u) != 0u && part.tex0 == 0u))
             {
                 ++s.stats.noMaterial;
                 return false;
@@ -875,9 +890,9 @@ namespace sc3
             GsMaterial material;
             material.prim = decodePrim(prim);
             if (material.prim.tme)
-                material.tex0 = decodeTex0(s.material.tex0);
-            material.tex1 = s.material.tex1;
-            material.clamp = s.material.clamp;
+                material.tex0 = decodeTex0(part.tex0);
+            material.tex1 = part.tex1;
+            material.clamp = part.clamp;
             if (material.prim.tme)
             {
                 const auto used = [](uint32_t size, uint32_t log2)
@@ -885,20 +900,20 @@ namespace sc3
                     const uint32_t whole = 1u << std::min<uint32_t>(log2, 10u);
                     return size != 0u && size < whole ? size : whole;
                 };
-                const uint32_t width = used(static_cast<uint32_t>(s.material.tagRegs >> 32) & 0xFFFFu, material.tex0.tw);
-                const uint32_t height = used(static_cast<uint32_t>(s.material.tagRegs >> 48) & 0xFFFFu, material.tex0.th);
-                material.texture = textures::atHook(s.material.tex0, width, height, source.object & kRamMask);
+                const uint32_t width = used(static_cast<uint32_t>(part.tagRegs >> 32) & 0xFFFFu, material.tex0.tw);
+                const uint32_t height = used(static_cast<uint32_t>(part.tagRegs >> 48) & 0xFFFFu, material.tex0.th);
+                material.texture = textures::atHook(part.tex0, width, height, source.object & kRamMask);
                 if (!material.texture)
                 {
                     ++s.stats.noTexture;
-                    ++s.stats.textureMisses[s.material.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
+                    ++s.stats.textureMisses[part.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
                     ++s.stats.packDropped;
                     draw = Sc3Draw{};
                     return true;
                 }
-                if (mipmapsOn() && bozo::render::mipmapOf(s.material.tex1).levels != 0u)
+                if (mipmapsOn() && bozo::render::mipmapOf(part.tex1).levels != 0u)
                 {
-                    TexturePtr joined = withLevels(material.texture, s.material.tex0, s.material.tex1, s.material.miptbp1, width, height, source.object & kRamMask);
+                    TexturePtr joined = withLevels(material.texture, part.tex0, part.tex1, part.miptbp1, width, height, source.object & kRamMask);
                     ++(joined ? s.stats.mipOwn : s.stats.mipMade);
                     if (joined)
                         material.texture = std::move(joined);
@@ -911,11 +926,11 @@ namespace sc3
                 shade(s.header, mode, tag, in, own);
                 out = &own;
             }
-            material.alpha = s.material.setsAlpha ? s.material.alpha : s.gameAlphaKnown ? s.gameAlpha : material.alpha;
-            material.test = s.material.setsTest ? s.material.test : s.gameTestKnown ? s.gameTest : material.test;
-            if (!s.material.setsAlpha)
+            material.alpha = part.setsAlpha ? part.alpha : s.gameAlphaKnown ? s.gameAlpha : material.alpha;
+            material.test = part.setsTest ? part.test : s.gameTestKnown ? s.gameTest : material.test;
+            if (!part.setsAlpha)
                 ++(s.gameAlphaKnown ? s.stats.inheritedAlpha : s.stats.unknownAlpha);
-            if (!s.material.setsTest)
+            if (!part.setsTest)
                 ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
             std::vector<GsVertex> triangles;
             toTriangles(prim, *out, triangles);
@@ -941,7 +956,7 @@ namespace sc3
                              static_cast<unsigned long long>(sum[0] / texels), static_cast<unsigned long long>(sum[1] / texels), static_cast<unsigned long long>(sum[2] / texels), static_cast<unsigned long long>(sum[3] / texels),
                              static_cast<unsigned long long>(draw.texture ? draw.texture->key : 0u));
                 std::fprintf(stderr, "[sc3:mesh] dump routine %#x prim %#x tex0 %#llx tw %u th %u psm %#x tex %ux%u clamp %#llx tex1 %#llx alpha %#llx test %#llx u %g..%g v %g..%g q %g..%g verts %zu\n", routine, prim,
-                             static_cast<unsigned long long>(s.material.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
+                             static_cast<unsigned long long>(part.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
                              static_cast<unsigned long long>(material.clamp), static_cast<unsigned long long>(material.tex1), static_cast<unsigned long long>(material.alpha), static_cast<unsigned long long>(material.test),
                              u0, u1, v0, v1, q0, q1, draw.vertices.size());
             }
@@ -1262,7 +1277,7 @@ namespace sc3
                 return dropPart(rdram, ctx, runtime, 1u);
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
+            if (!drawVertices(routine, s.material, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
                 return false;
             ++s.stats.native;
             ++s.stats.routinesDrawn[routine];
@@ -1331,7 +1346,7 @@ namespace sc3
                 std::memcpy(v.normal, w + 12, 12);
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address, fogCleared(s.clip.address)}, draw))
+            if (!drawVertices(routine, s.material, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address, fogCleared(s.clip.address)}, draw))
                 return false;
             std::vector<Sc3Draw> draws;
             draws.push_back(std::move(draw));
@@ -1359,6 +1374,8 @@ namespace sc3
             const uint32_t flags = sp32(0x1BFCu);
             if (flags == kSkipPartList || !(flags & kFlagRaw))
             {
+                if (flags != kSkipPartList)
+                    ++g_state.stats.tableParts;
                 callOriginal(addr::RawPartTail, rdram, ctx, runtime);
                 return;
             }
@@ -1412,7 +1429,7 @@ namespace sc3
                 std::vector<Out> out;
                 if (!skinBlock(s.header, block->data, block->size / 16u, tag, out, kind))
                     return false;
-                if (!drawVertices(routine, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
+                if (!drawVertices(routine, s.material, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
                     return false;
             }
             ++s.stats.chainNative;
@@ -1476,7 +1493,7 @@ namespace sc3
             }
             std::vector<Sc3Draw> draws(parts.size());
             for (size_t i = 0; i < parts.size(); ++i)
-                if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
+                if (!drawVertices(routine, s.material, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
                     return false;
             ++s.stats.chainNative;
             ++s.stats.routinesDrawn[routine];
@@ -1578,8 +1595,89 @@ namespace sc3
             packet::closeDepth(rdram, ctx, runtime);
         }
 
+        // The port does not run 0x10B330's VIF0 transfer.
+        void strandBones(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t matrices = getRegU32(ctx, 4), indices = getRegU32(ctx, 5);
+            const int32_t count = static_cast<int32_t>(getRegU32(ctx, 6));
+            callOriginal(addr::StrandBones, rdram, ctx, runtime);
+            for (int32_t k = 0; k < count; ++k)
+            {
+                const uint32_t index = (peek32(indices + k) >> (8u * ((indices + k) & 3u))) & 0xFFu;
+                for (uint32_t w = 0; w < 16u; ++w)
+                {
+                    const uint32_t word = peek32(matrices + 64u * index + 4u * w);
+                    std::memcpy(bozo::vu0::quad(runtime, 4u * static_cast<uint32_t>(k) + w / 4u) + 4u * (w % 4u), &word, 4);
+                }
+            }
+        }
+
+        void strandPart(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            ++g_state.stats.strandParts;
+            callOriginal(addr::StrandPart, rdram, ctx, runtime);
+        }
+
+        void strandTriangle(uint32_t cnt)
+        {
+            State &s = g_state;
+            // The material as 0x10B4D8 read it before the call's checkpoint: the REF it put before the CNT.
+            const uint32_t ref = peek32(cnt - 0x10u);
+            const Material material = (ref >> 28) == 3u ? materialAt(peek32(cnt - 0xCu), ref & 0xFFFFu) : Material{};
+            uint32_t tag[4];
+            for (uint32_t i = 0; i < 4u; ++i)
+                tag[i] = peek32(cnt + 0x10u + i * 4u);
+            const uint32_t loops = tag[0] & 0x7FFFu, nreg = (tag[1] >> 28) != 0u ? tag[1] >> 28 : 16u;
+            const uint64_t regs = tag[2] | (static_cast<uint64_t>(tag[3]) << 32);
+            std::vector<Out> out(loops);
+            uint32_t at = cnt + 0x20u;
+            for (Out &o : out)
+            {
+                o = Out{};
+                for (uint32_t r = 0; r < nreg; ++r, at += 16u)
+                {
+                    uint32_t w[4];
+                    for (uint32_t i = 0; i < 4u; ++i)
+                        w[i] = peek32(at + i * 4u);
+                    switch ((regs >> (4u * r)) & 0xFu)
+                    {
+                    case 1u:
+                        for (uint32_t i = 0; i < 4u; ++i)
+                            o.rgba[i] = static_cast<int32_t>(w[i]);
+                        break;
+                    case 2u:
+                        std::memcpy(&o.s, &w[0], 4);
+                        std::memcpy(&o.t, &w[1], 4);
+                        std::memcpy(&o.q, &w[2], 4);
+                        break;
+                    case 4u:
+                        for (uint32_t i = 0; i < 3u; ++i)
+                            o.xyz[i] = static_cast<int32_t>(w[i]);
+                        o.w = w[3];
+                        break;
+                    default:
+                        ++s.stats.strandRefused;
+                        return;
+                    }
+                }
+            }
+            PartSource source;
+            source.object = material.address & kRamMask;
+            packs::LoadedImages::Image image;
+            if (findImage(source.object, image))
+                source.file = image.index, source.offset = source.object - image.base;
+            Sc3Draw draw;
+            if (drawVertices(addr::StrandPart, material, Shade{}, tag, {}, source, draw, &out))
+                queueDraw(std::move(draw));
+            else
+                ++s.stats.strandRefused;
+        }
+
         void otInsertFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
+            const uint32_t ra = getRegU32(ctx, 31);
+            if (std::find(std::begin(addr::StrandLink), std::end(addr::StrandLink), ra) != std::end(addr::StrandLink))
+                strandTriangle(getRegU32(ctx, 6));
             const float z = ps2_fmul(ctx->f[12], 0.12f);
             linkUnflushed(rdram, ps2FpuCvtWS(z < 1.0f ? ps2_fmul(z, otScale()) : otScale()));
             packet::closeFixed(rdram, ctx, runtime);
@@ -1608,11 +1706,14 @@ namespace sc3
                               static_cast<unsigned>((tex0 >> 37) & 0x3FFFu), static_cast<unsigned long long>(n));
                 miss += item;
             }
-            statsLine("[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu), dropped for the packs %llu; clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
+            const uint64_t table = t.tableParts > t.strandParts ? t.tableParts - t.strandParts : 0u;
+            statsLine("[sc3:mesh] 250 frames: parts %llu native %llu (triangles %llu), chain parts %llu native %llu, strand parts %llu (refused %llu), LOST %llu (not in the pack %llu, chain %llu, no material %llu, no texture %llu, routine %llu, routine table %llu), dropped for the packs %llu; clipped %llu native %llu dropped %llu; drawn %llu; leaves bound %llu (not the pack's %llu), copies %llu;%s;%s\n",
                       static_cast<unsigned long long>(t.parts), static_cast<unsigned long long>(t.native), static_cast<unsigned long long>(t.triangles),
-                      static_cast<unsigned long long>(t.chainParts), static_cast<unsigned long long>(t.chainNative), static_cast<unsigned long long>(t.leftToVu1),
+                      static_cast<unsigned long long>(t.chainParts), static_cast<unsigned long long>(t.chainNative),
+                      static_cast<unsigned long long>(t.strandParts), static_cast<unsigned long long>(t.strandRefused), static_cast<unsigned long long>(t.leftToVu1 + table + t.strandRefused),
                       static_cast<unsigned long long>(t.notInPack), static_cast<unsigned long long>(t.chainNotInPack), static_cast<unsigned long long>(t.noMaterial),
-                      static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(t.packDropped), static_cast<unsigned long long>(t.clipped),
+                      static_cast<unsigned long long>(t.noTexture), static_cast<unsigned long long>(t.unsupported), static_cast<unsigned long long>(table),
+                      static_cast<unsigned long long>(t.packDropped), static_cast<unsigned long long>(t.clipped),
                       static_cast<unsigned long long>(t.clippedNative), static_cast<unsigned long long>(t.clippedDropped), static_cast<unsigned long long>(t.drawsSubmitted),
                       static_cast<unsigned long long>(t.bound), static_cast<unsigned long long>(t.boundBad), static_cast<unsigned long long>(t.copies), left.c_str(), miss.c_str());
             std::string drawn;
@@ -1778,6 +1879,8 @@ namespace sc3
         runtime.registerFunction(addr::RegisterPacket, &hooked<registerPacket>);
         runtime.registerFunction(addr::OtInsertDepth, &hooked<otInsertDepth>);
         runtime.registerFunction(addr::OtInsertFixed, &hooked<otInsertFixed>);
+        runtime.registerFunction(addr::StrandPart, &hooked<strandPart>);
+        runtime.registerFunction(addr::StrandBones, &hooked<strandBones>);
         std::fprintf(stderr, "[sc3:mesh] native meshes: %s, %zu leaves, %zu objects\n", path, s.pack.files().size(), s.pack.objectCount());
     }
 }

@@ -71,6 +71,12 @@ disc, never read from packets at run time.
   never reached in 302.2 M program calls recorded on the PS2Recomp build over every mode nor on any BozoEngine run:
   A:0xDA8, A:0x2098 (a setup) with A:0x2140 and A:0x2330, B:0xDD0, B:0x10F0, B:0x21E0 (a setup) with B:0x2290, B:0x24F8
   and B:0x2740. `[sc3:mesh] 250 frames: parts drawn by routine` gives the coverage of a run.
+- **Strand parts** (hair's see-through layer). 0x109990 leaves a part whose flags lack the raw bit to the handler the
+  routine table at 0x467410 names; on every checked route that is 0x10B3F0. It skins and lights the vertices with VU0
+  on the EE (microprogram 0x3E8, then 0x443ED0) and links each triangle as its own packet through 0x10DC90, sorted by
+  depth. The bones come from 0x10B330's VIF0 transfer to VU0 memory (bone k at quadwords 4k to 4k + 3), which the
+  hook does natively; each triangle linked from 0x10B4D8 becomes a draw of the part's material in the game's bucket.
+  LOST counts the table's parts that do not reach 0x10B3F0 ("routine table").
 - **Textures** (`sc3_textures.cpp`, `sc3_texture_pack.cpp`, `scripts/sc3_texture_pack.py`). Each upload list of a
   model is played offline into a picture of GS memory and every texture a material selects becomes a record, keyed by
   the list's place in `ROOT.OLK` and the material's TEX0 (`.keys`). Stage materials carry the game's own mip levels
