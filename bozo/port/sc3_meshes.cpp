@@ -1591,8 +1591,7 @@ namespace sc3
             packet::closeDepth(rdram, ctx, runtime);
         }
 
-        // 0x10B330 sends a strand part's bones to VU0 memory through VIF0, which the port does not run: bone k, the matrix
-        // at a0 + 64 * a1[k], is VU0 quadwords 4k to 4k + 3.
+        // The port does not run 0x10B330's VIF0 transfer.
         void strandBones(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t matrices = getRegU32(ctx, 4), indices = getRegU32(ctx, 5);
@@ -1615,8 +1614,6 @@ namespace sc3
             callOriginal(addr::StrandPart, rdram, ctx, runtime);
         }
 
-        // One triangle of a strand part as 0x10B4D8 links it (OtInsertFixed from StrandLink): a2 its CNT, then the GIF tag and
-        // the PACKED vertices.
         void strandTriangle(uint32_t cnt)
         {
             State &s = g_state;
