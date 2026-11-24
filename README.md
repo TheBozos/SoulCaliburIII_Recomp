@@ -1,3 +1,5 @@
+<img src="docs/branding/sc3_banner.png" alt="Soulcalibur III, native PC port by The Bozos" width="100%">
+
 <div align="center">
 
 # SoulCaliburIII_Recomp
