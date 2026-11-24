@@ -1621,7 +1621,9 @@ namespace sc3
         void strandTriangle(uint32_t cnt)
         {
             State &s = g_state;
-            const Material material = materialAt(sp32(0x36Cu), sp32(0x370u));
+            // The material as 0x10B4D8 read it before the call's checkpoint: the REF it put before the CNT.
+            const uint32_t ref = peek32(cnt - 0x10u);
+            const Material material = (ref >> 28) == 3u ? materialAt(peek32(cnt - 0xCu), ref & 0xFFFFu) : Material{};
             uint32_t tag[4];
             for (uint32_t i = 0; i < 4u; ++i)
                 tag[i] = peek32(cnt + 0x10u + i * 4u);
@@ -1665,7 +1667,7 @@ namespace sc3
             if (findImage(source.object, image))
                 source.file = image.index, source.offset = source.object - image.base;
             Sc3Draw draw;
-            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, material, Shade{}, tag, {}, source, draw, &out))
+            if (drawVertices(addr::StrandPart, material, Shade{}, tag, {}, source, draw, &out))
                 queueDraw(std::move(draw));
         }
 
