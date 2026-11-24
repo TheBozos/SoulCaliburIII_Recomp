@@ -772,25 +772,29 @@ namespace sc3
             return size != 0u && size < whole ? size : whole;
         }
 
+        Material materialAt(uint32_t block, uint32_t qwc)
+        {
+            Material m;
+            m.address = block;
+            m.qwc = qwc;
+            if (readMaterial(block, m))
+            {
+                m.known = true;
+                return m;
+            }
+            return Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, qwc};
+        }
+
         void noteMaterial()
         {
             State &s = g_state;
             if (const uint32_t block = sp32(0x36Cu))
             {
-                Material m;
-                m.address = block;
-                m.qwc = sp32(0x370u);
-                if (readMaterial(block, m))
-                {
-                    m.known = true;
-                    s.material = m;
-                    if (m.setsAlpha)
-                        s.gameAlpha = m.alpha, s.gameAlphaKnown = true;
-                    if (m.setsTest)
-                        s.gameTest = m.test, s.gameTestKnown = true;
-                }
-                else
-                    s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, m.qwc};
+                s.material = materialAt(block, sp32(0x370u));
+                if (s.material.setsAlpha)
+                    s.gameAlpha = s.material.alpha, s.gameAlphaKnown = true;
+                if (s.material.setsTest)
+                    s.gameTest = s.material.test, s.gameTestKnown = true;
             }
         }
 
@@ -873,12 +877,12 @@ namespace sc3
 
         // A part's draw from its vertices as its routine finds them in VU memory (the GIF tag, four quadwords a vertex), under
         // the header and material the game sent last. False: nothing drawn, the reason counted.
-        bool drawVertices(uint32_t routine, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
+        bool drawVertices(uint32_t routine, const Material &part, const Shade &mode, const uint32_t tag[4], const std::vector<In> &in, const PartSource &source, Sc3Draw &draw,
                           const std::vector<Out> *shaded = nullptr)
         {
             State &s = g_state;
             const uint32_t prim = ((tag[1] >> 15) & 0x7FFu) & (source.noFog ? ~0x20u : ~0u);
-            if (!s.material.known || (((prim >> 4) & 1u) != 0u && s.material.tex0 == 0u))
+            if (!part.known || (((prim >> 4) & 1u) != 0u && part.tex0 == 0u))
             {
                 ++s.stats.noMaterial;
                 return false;
@@ -886,9 +890,9 @@ namespace sc3
             GsMaterial material;
             material.prim = decodePrim(prim);
             if (material.prim.tme)
-                material.tex0 = decodeTex0(s.material.tex0);
-            material.tex1 = s.material.tex1;
-            material.clamp = s.material.clamp;
+                material.tex0 = decodeTex0(part.tex0);
+            material.tex1 = part.tex1;
+            material.clamp = part.clamp;
             if (material.prim.tme)
             {
                 const auto used = [](uint32_t size, uint32_t log2)
@@ -896,20 +900,20 @@ namespace sc3
                     const uint32_t whole = 1u << std::min<uint32_t>(log2, 10u);
                     return size != 0u && size < whole ? size : whole;
                 };
-                const uint32_t width = used(static_cast<uint32_t>(s.material.tagRegs >> 32) & 0xFFFFu, material.tex0.tw);
-                const uint32_t height = used(static_cast<uint32_t>(s.material.tagRegs >> 48) & 0xFFFFu, material.tex0.th);
-                material.texture = textures::atHook(s.material.tex0, width, height, source.object & kRamMask);
+                const uint32_t width = used(static_cast<uint32_t>(part.tagRegs >> 32) & 0xFFFFu, material.tex0.tw);
+                const uint32_t height = used(static_cast<uint32_t>(part.tagRegs >> 48) & 0xFFFFu, material.tex0.th);
+                material.texture = textures::atHook(part.tex0, width, height, source.object & kRamMask);
                 if (!material.texture)
                 {
                     ++s.stats.noTexture;
-                    ++s.stats.textureMisses[s.material.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
+                    ++s.stats.textureMisses[part.tex0 & ((0x3FFFull) | (0x3Full << 20) | (0x3FFFull << 37))];
                     ++s.stats.packDropped;
                     draw = Sc3Draw{};
                     return true;
                 }
-                if (mipmapsOn() && bozo::render::mipmapOf(s.material.tex1).levels != 0u)
+                if (mipmapsOn() && bozo::render::mipmapOf(part.tex1).levels != 0u)
                 {
-                    TexturePtr joined = withLevels(material.texture, s.material.tex0, s.material.tex1, s.material.miptbp1, width, height, source.object & kRamMask);
+                    TexturePtr joined = withLevels(material.texture, part.tex0, part.tex1, part.miptbp1, width, height, source.object & kRamMask);
                     ++(joined ? s.stats.mipOwn : s.stats.mipMade);
                     if (joined)
                         material.texture = std::move(joined);
@@ -922,11 +926,11 @@ namespace sc3
                 shade(s.header, mode, tag, in, own);
                 out = &own;
             }
-            material.alpha = s.material.setsAlpha ? s.material.alpha : s.gameAlphaKnown ? s.gameAlpha : material.alpha;
-            material.test = s.material.setsTest ? s.material.test : s.gameTestKnown ? s.gameTest : material.test;
-            if (!s.material.setsAlpha)
+            material.alpha = part.setsAlpha ? part.alpha : s.gameAlphaKnown ? s.gameAlpha : material.alpha;
+            material.test = part.setsTest ? part.test : s.gameTestKnown ? s.gameTest : material.test;
+            if (!part.setsAlpha)
                 ++(s.gameAlphaKnown ? s.stats.inheritedAlpha : s.stats.unknownAlpha);
-            if (!s.material.setsTest)
+            if (!part.setsTest)
                 ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
             std::vector<GsVertex> triangles;
             toTriangles(prim, *out, triangles);
@@ -952,7 +956,7 @@ namespace sc3
                              static_cast<unsigned long long>(sum[0] / texels), static_cast<unsigned long long>(sum[1] / texels), static_cast<unsigned long long>(sum[2] / texels), static_cast<unsigned long long>(sum[3] / texels),
                              static_cast<unsigned long long>(draw.texture ? draw.texture->key : 0u));
                 std::fprintf(stderr, "[sc3:mesh] dump routine %#x prim %#x tex0 %#llx tw %u th %u psm %#x tex %ux%u clamp %#llx tex1 %#llx alpha %#llx test %#llx u %g..%g v %g..%g q %g..%g verts %zu\n", routine, prim,
-                             static_cast<unsigned long long>(s.material.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
+                             static_cast<unsigned long long>(part.tex0), material.tex0.tw, material.tex0.th, material.tex0.psm, draw.texture ? draw.texture->width : 0u, draw.texture ? draw.texture->height : 0u,
                              static_cast<unsigned long long>(material.clamp), static_cast<unsigned long long>(material.tex1), static_cast<unsigned long long>(material.alpha), static_cast<unsigned long long>(material.test),
                              u0, u1, v0, v1, q0, q1, draw.vertices.size());
             }
@@ -1273,7 +1277,7 @@ namespace sc3
                 return dropPart(rdram, ctx, runtime, 1u);
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
+            if (!drawVertices(routine, s.material, mode, tag, in, PartSource{image.index, address - image.base, address, fogCleared(address)}, draw))
                 return false;
             ++s.stats.native;
             ++s.stats.routinesDrawn[routine];
@@ -1342,7 +1346,7 @@ namespace sc3
                 std::memcpy(v.normal, w + 12, 12);
             }
             Sc3Draw draw;
-            if (!drawVertices(routine, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address, fogCleared(s.clip.address)}, draw))
+            if (!drawVertices(routine, s.material, mode, tag, in, PartSource{image.index, s.clip.address - image.base, s.clip.address, fogCleared(s.clip.address)}, draw))
                 return false;
             std::vector<Sc3Draw> draws;
             draws.push_back(std::move(draw));
@@ -1425,7 +1429,7 @@ namespace sc3
                 std::vector<Out> out;
                 if (!skinBlock(s.header, block->data, block->size / 16u, tag, out, kind))
                     return false;
-                if (!drawVertices(routine, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
+                if (!drawVertices(routine, s.material, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
                     return false;
             }
             ++s.stats.chainNative;
@@ -1489,7 +1493,7 @@ namespace sc3
             }
             std::vector<Sc3Draw> draws(parts.size());
             for (size_t i = 0; i < parts.size(); ++i)
-                if (!drawVertices(routine, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
+                if (!drawVertices(routine, s.material, mode, parts[i].tag, parts[i].in, PartSource{image.index, parts[i].offset, image.base + parts[i].offset, fogCleared(list)}, draws[i]))
                     return false;
             ++s.stats.chainNative;
             ++s.stats.routinesDrawn[routine];
@@ -1661,7 +1665,7 @@ namespace sc3
             if (findImage(source.object, image))
                 source.file = image.index, source.offset = source.object - image.base;
             Sc3Draw draw;
-            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, Shade{}, tag, {}, source, draw, &out))
+            if (drawVertices(sp32(0x1BFCu) & 0xFFFFu, s.material, Shade{}, tag, {}, source, draw, &out))
                 queueDraw(std::move(draw));
         }
 
