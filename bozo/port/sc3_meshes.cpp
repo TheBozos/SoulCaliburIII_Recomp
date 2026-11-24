@@ -1669,6 +1669,8 @@ namespace sc3
             Sc3Draw draw;
             if (drawVertices(addr::StrandPart, material, Shade{}, tag, {}, source, draw, &out))
                 queueDraw(std::move(draw));
+            else
+                ++s.stats.strandRefused;
         }
 
         void otInsertFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
