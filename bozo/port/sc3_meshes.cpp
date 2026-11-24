@@ -163,6 +163,8 @@ namespace sc3
                 fn::Relocate(rdram, ctx, runtime);
             else if (address == addr::Clipper)
                 fn::Clipper(rdram, ctx, runtime);
+            else if (address == addr::StrandBones)
+                fn::StrandBones(rdram, ctx, runtime);
             else
                 fn::ClipEmit(rdram, ctx, runtime);
         }
@@ -1587,6 +1589,24 @@ namespace sc3
             packet::closeDepth(rdram, ctx, runtime);
         }
 
+        // 0x10B330 sends a strand part's bones to VU0 memory through VIF0, which the port does not run: bone k, the matrix
+        // at a0 + 64 * a1[k], is VU0 quadwords 4k to 4k + 3.
+        void strandBones(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t matrices = getRegU32(ctx, 4), indices = getRegU32(ctx, 5);
+            const int32_t count = static_cast<int32_t>(getRegU32(ctx, 6));
+            callOriginal(addr::StrandBones, rdram, ctx, runtime);
+            for (int32_t k = 0; k < count; ++k)
+            {
+                const uint32_t index = (peek32(indices + k) >> (8u * ((indices + k) & 3u))) & 0xFFu;
+                for (uint32_t w = 0; w < 16u; ++w)
+                {
+                    const uint32_t word = peek32(matrices + 64u * index + 4u * w);
+                    std::memcpy(bozo::vu0::quad(runtime, 4u * static_cast<uint32_t>(k) + w / 4u) + 4u * (w % 4u), &word, 4);
+                }
+            }
+        }
+
         void otInsertFixed(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const float z = ps2_fmul(ctx->f[12], 0.12f);
@@ -1788,6 +1808,7 @@ namespace sc3
         runtime.registerFunction(addr::RegisterPacket, &hooked<registerPacket>);
         runtime.registerFunction(addr::OtInsertDepth, &hooked<otInsertDepth>);
         runtime.registerFunction(addr::OtInsertFixed, &hooked<otInsertFixed>);
+        runtime.registerFunction(addr::StrandBones, &hooked<strandBones>);
         std::fprintf(stderr, "[sc3:mesh] native meshes: %s, %zu leaves, %zu objects\n", path, s.pack.files().size(), s.pack.objectCount());
     }
 }

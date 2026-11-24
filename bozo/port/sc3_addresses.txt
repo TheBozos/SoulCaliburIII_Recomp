@@ -13,6 +13,7 @@ TextureCallOt          0x00104E94 0x00104E94
 RawPartTail            0x00109990 0x00109990
 RawPart                0x0010A178 0x0010A178
 ChainPart              0x0010A4E8 0x0010A4E8
+StrandBones            0x0010B330 0x0010B338
 ClipEmit               0x0010B7E0 0x0010B7E8
 Clipper                0x0010B970 0x0010B978
 DmaInit                0x0010C890 0x0010C898
