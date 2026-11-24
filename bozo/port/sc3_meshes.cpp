@@ -767,15 +767,9 @@ namespace sc3
             return size != 0u && size < whole ? size : whole;
         }
 
-        void noteState(uint32_t flags, uint32_t jump)
+        void noteMaterial()
         {
             State &s = g_state;
-            if (sp32(0x368u) != 0u)
-            {
-                ++s.stats.headers;
-                if (!buildHeader(flags, jump, s.header))
-                    s.header.valid = false;
-            }
             if (const uint32_t block = sp32(0x36Cu))
             {
                 Material m;
@@ -793,6 +787,18 @@ namespace sc3
                 else
                     s.material = Material{0, 0, 0, 0x44, 0, 0, 0, 0, false, false, false, block, m.qwc};
             }
+        }
+
+        void noteState(uint32_t flags, uint32_t jump)
+        {
+            State &s = g_state;
+            if (sp32(0x368u) != 0u)
+            {
+                ++s.stats.headers;
+                if (!buildHeader(flags, jump, s.header))
+                    s.header.valid = false;
+            }
+            noteMaterial();
         }
 
         void packetFlush(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
