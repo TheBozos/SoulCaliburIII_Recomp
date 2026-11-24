@@ -934,7 +934,7 @@ namespace sc3
                         material.texture = std::move(joined);
                 }
             }
-            std::vector<Out> own;
+            static std::vector<Out> own;
             const std::vector<Out> *out = shaded;
             if (!out)
             {
@@ -947,7 +947,7 @@ namespace sc3
                 ++(s.gameAlphaKnown ? s.stats.inheritedAlpha : s.stats.unknownAlpha);
             if (!part.setsTest)
                 ++(s.gameTestKnown ? s.stats.inheritedTest : s.stats.unknownTest);
-            std::vector<GsVertex> triangles;
+            static std::vector<GsVertex> triangles;
             toTriangles(prim, *out, triangles);
             s.stats.triangles += triangles.size() / 3u;
             material.prim.type = GS_PRIM_TRIANGLE;
@@ -1285,7 +1285,7 @@ namespace sc3
                                  getRegU32(ctx, 31), object ? "yes" : "no", object ? object->kind : 0u, object ? object->attribute<uint32_t>(0) : 0u);
                 return loaded ? dropPart(rdram, ctx, runtime, 1u) : false;
             }
-            std::vector<In> in;
+            static std::vector<In> in;
             uint32_t tag[4];
             if (!readVertices(*object, in, tag))
             {
@@ -1338,7 +1338,7 @@ namespace sc3
             const packs::MeshObject *object = nullptr;
             if (findImage(s.clip.address, image) && image.file)
                 object = image.file->object(s.clip.address - image.base);
-            std::vector<In> in;
+            static std::vector<In> in;
             uint32_t tag[4];
             if (!object || object->kind != kRawPartKind || object->attribute<uint32_t>(0) != s.clip.qwc * 16u || !readVertices(*object, in, tag))
                 return false;
@@ -1442,7 +1442,7 @@ namespace sc3
                     return dropPart(rdram, ctx, runtime, n);
                 }
                 uint32_t tag[4];
-                std::vector<Out> out;
+                static std::vector<Out> out;
                 if (!skinBlock(s.header, block->data, block->size / 16u, tag, out, kind))
                     return false;
                 if (!drawVertices(routine, s.material, Shade{}, tag, {}, PartSource{image.index, entry[0], image.base + entry[0], fogCleared(list)}, draws[i], &out))
@@ -1493,7 +1493,8 @@ namespace sc3
                 uint32_t tag[4];
                 uint32_t offset;
             };
-            std::vector<Batch> parts(batches->size / 8u);
+            static std::vector<Batch> parts;
+            parts.resize(batches->size / 8u);
             for (size_t i = 0; i < parts.size(); ++i)
             {
                 uint32_t entry[2];
