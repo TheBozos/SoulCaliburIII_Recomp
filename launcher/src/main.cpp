@@ -4,13 +4,15 @@
 // SDL3 and OpenGL 3 backends; window.h).
 //
 // The release folder it expects (its own folder, or --release <dir>):
-//   SC3 Launcher.exe
+//   SC3 Launcher.exe (sc3-launcher on Linux)
 //   source\   the SoulCaliburIII_Recomp code (scripts\sc3_build.py, BozoEngine\...)
-//   kit\      the build kit (kit\python\python.exe, the compiler...)
+//   kit\      the build kit (kit\python\python.exe, the compiler...); on Linux only kit_manifest.json and deps\, the
+//             system's python3 and compiler doing the rest
 //   build\    sc3_build's work folder (made here)
-//   game\     the game folder the build stages (made here): sc3.exe, the disc's ELF, disc.iso, packs\
-// The player's settings: launcher.ini in the runner's user folder (%APPDATA%\SoulCaliburIII_Recomp, or PS2X_USER_DIR), next to
-// the game's video.ini, which the Settings tab writes in the runner's format.
+//   game\     the game folder the build stages (made here): sc3.exe (sc3), the disc's ELF, disc.iso, packs\
+// The player's settings: launcher.ini in the runner's user folder (%APPDATA%\SoulCaliburIII_Recomp,
+// ~/.local/share/soulcalibur3_recomp on Linux, or PS2X_USER_DIR), next to the game's video.ini, which the Settings tab
+// writes in the runner's format.
 //
 // --selftest <iso> --shots <dir>: the whole flow without a hand on it, a screenshot of each screen (see selftest()).
 
