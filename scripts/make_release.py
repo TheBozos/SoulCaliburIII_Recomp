@@ -42,6 +42,7 @@ What it does, from <commit> (default HEAD; only committed files count, the worki
 Standard library only (Python 3.8+; the kit's embeddable Python runs it too). Needs git; gh only for --publish.
 """
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -65,6 +66,9 @@ ENGINE_SKIP = ('reference',)
 NAME = 'SoulCaliburIII_Recomp'
 # The zips are <NAME>-<version>(.zip, -sources.zip), the folder in them TOP.
 TOP = NAME
+# The Linux release: <NAME>-<version>-linux.tar.gz, the same top folder, the launcher built for Linux.
+LINUX_SUFFIX = '-linux.tar.gz'
+LINUX_LAUNCHER = 'sc3-launcher'
 VERSION_RE = re.compile(r'^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$')
 MSYS2_SOURCES = 'https://repo.msys2.org/mingw/sources/'
 # The launcher's font (launcher/CMakeLists.txt pins the same commit and hash).
@@ -833,6 +837,11 @@ class Release:
             'conversion and the compile take a while), **Play**.', '',
             'Saves and settings are in `%APPDATA%\\SoulCaliburIII_Recomp`; they stay across updates.',
             '',
+        ]
+        linux = self.linux_archive()
+        if linux:
+            lines += linux_download_lines(self.name, sha256_of_file_record(linux))
+        lines += [
             '## Build information', '',
             '- Code: %s (`%s`), BozoEngine `%s`' % (REPO, self.commit, self.engine_commit),
             '- Build kit: GCC %s, CMake %s, Ninja %s (MSYS2 UCRT64), FFmpeg %s (LGPL, static), Python %s'
@@ -845,6 +854,9 @@ class Release:
                 sdig = f.read().split()[0]
             lines.append('- `%s-sources.zip`: %.1f MB, SHA-256 `%s`' % (self.name, os.path.getsize(self.sources_zip) / 1e6,
                                                                       sdig))
+        if linux:
+            lines.append('- `%s`: %.1f MB, SHA-256 `%s`' % (os.path.basename(linux), os.path.getsize(linux) / 1e6,
+                                                           sha256_of_file_record(linux)))
         lines += [
             '', '## Source code and licences', '',
             'The code is in the zip (`source\\`) and at the commit above: our own code and BozoEngine (the recompiler '
@@ -862,6 +874,11 @@ class Release:
         write_text(os.path.join(self.out, 'RELEASE_NOTES.md'), '\n'.join(lines))
         log('  RELEASE_NOTES.md (the changelog section for %s, the hashes, the source offer)' % self.version)
 
+    def linux_archive(self):
+        """The Linux release a run with --linux left in --out (with its .sha256), else None."""
+        path = os.path.join(self.out, self.name + LINUX_SUFFIX)
+        return path if os.path.isfile(path) and os.path.isfile(path + '.sha256') else None
+
     def pkg_version(self, name):
         info = self.manifest['toolchain']['msys2_packages'].get(name)
         return info['version'] if info else '?'
@@ -872,6 +889,11 @@ class Release:
             assets += [self.sources_zip, self.sources_zip + '.sha256']
         else:
             log('  WARNING: no %s: the GPL source would not be attached' % os.path.basename(self.sources_zip))
+        linux = self.linux_archive()
+        if linux:
+            assets += [linux, linux + '.sha256']
+        else:
+            log('  WARNING: no %s: the release would have no Linux download' % (self.name + LINUX_SUFFIX))
         cmd = ['gh', 'release', 'create', 'v' + self.version, '--repo', REPO, '--draft', '--target', self.commit,
                '--title', '%s %s' % (NAME, self.version), '--notes-file', os.path.join(self.out, 'RELEASE_NOTES.md')]
         if '-' in self.version:
@@ -907,6 +929,13 @@ class Release:
             raise ReleaseError('%s:\n  %s' % (self.zip, '\n  '.join(problems[:40])))
         if not sha256_matches(self.zip):
             raise ReleaseError('%s does not match its .sha256' % self.zip)
+        linux = self.linux_archive()
+        if linux:
+            problems = verify_tar(linux)
+            if problems:
+                raise ReleaseError('%s:\n  %s' % (linux, '\n  '.join(problems[:40])))
+            if not sha256_matches(linux):
+                raise ReleaseError('%s does not match its .sha256' % linux)
         self.publish()
 
     def main(self):
@@ -930,6 +959,210 @@ class Release:
         if not self.args.keep_work:
             rmtree(self.work)
         log('done in %.0f s: %s' % (time.time() - t0, self.zip))
+
+
+class LinuxRelease(Release):
+    """--linux: <name>-linux.tar.gz, the Linux player's download. The same source/ as the zip's, a kit/ with only
+    the libraries' sources (deps/: SDL3, Dear ImGui; the compiler, Python and FFmpeg are the system's), the launcher
+    built for Linux (sc3-launcher), the licences and a README. No GPL binary is redistributed: no sources zip."""
+
+    def __init__(self, args):
+        super().__init__(args)
+        self.archive = os.path.join(self.out, self.name + LINUX_SUFFIX)
+        self.stage = os.path.join(self.out, self.name + '-linux')
+        self.source = os.path.join(self.stage, 'source')
+        self.kit = os.path.join(self.stage, 'kit')
+
+    def step_kit(self):
+        rmtree(self.kit)
+        if self.args.kit:
+            src = os.path.join(os.path.abspath(self.args.kit), 'deps')
+            if not os.path.isdir(src):
+                raise ReleaseError('%s has no deps/ (--kit)' % self.args.kit)
+            link_tree(src, os.path.join(self.kit, 'deps'))
+            deps = {}
+        else:
+            work = os.path.join(self.work, 'kit-work')
+            run(self.kit_tool() + ['--out', self.kit, '--only', 'deps', '--downloads', self.downloads, '--work', work])
+            with open(os.path.join(self.kit, '.parts', 'deps.json')) as f:
+                deps = json.load(f)
+            rmtree(os.path.join(self.kit, '.parts'))
+        for name in ('sdl3', 'imgui'):
+            if not os.path.isdir(os.path.join(self.kit, 'deps', name + '-src')):
+                raise ReleaseError('the Linux kit has no deps/%s-src' % name)
+        self.manifest = {'kit': NAME + ' build kit', 'kit_version': self.kit_version(), 'engine': 'BozoEngine',
+                         'platform': 'linux', 'made_from': self.commit,
+                         'layout': {'deps': '<name>-src FetchContent sources: sdl3, imgui (the compiler, Python and '
+                                            'FFmpeg are the system\'s)',
+                                    'licenses': 'license files per component'},
+                         'deps': deps}
+        with open(os.path.join(self.kit, 'kit_manifest.json'), 'w') as f:
+            json.dump(self.manifest, f, indent=1)
+        log('  kit (Linux, libraries\' sources only): %.1f MB' % (dir_size(self.kit) / 1e6))
+
+    def kit_version(self):
+        text = open(os.path.join(self.source, 'scripts', 'make_build_kit.py'), encoding='utf-8').read()
+        m = re.search(r'^KIT_VERSION = (\d+)', text, re.M)
+        return int(m.group(1)) if m else None
+
+    def step_launcher(self):
+        build = os.path.join(self.work, 'launcher-build')
+        rmtree(build)
+        deps = os.path.join(self.kit, 'deps')
+        logf = os.path.join(self.work, 'launcher.log')
+        cmake = shutil.which('cmake')
+        if not cmake or not shutil.which('ninja'):
+            raise ReleaseError('the Linux launcher needs cmake and ninja on the PATH')
+        run([cmake, '-S', os.path.join(self.source, 'launcher'), '-B', build, '-G', 'Ninja',
+             '-DCMAKE_BUILD_TYPE=Release', '-DFETCHCONTENT_FULLY_DISCONNECTED=ON',
+             '-DFETCHCONTENT_SOURCE_DIR_SDL3=' + os.path.join(deps, 'sdl3-src'),
+             '-DFETCHCONTENT_SOURCE_DIR_IMGUI=' + os.path.join(deps, 'imgui-src'),
+             '-DLAUNCHER_FONT_DIR=' + self.font_dir(),
+             '-DLAUNCHER_VERSION=' + self.version, '-DLAUNCHER_COMMIT=' + self.commit], logfile=logf)
+        run([cmake, '--build', build, '-j', str(self.args.jobs)], logfile=logf)
+        exe = os.path.join(build, LINUX_LAUNCHER)
+        if not os.path.isfile(exe):
+            raise ReleaseError('the launcher build made no %s' % exe)
+        dest = os.path.join(self.stage, LINUX_LAUNCHER)
+        strip = shutil.which('strip')
+        if strip:
+            run([strip, '-o', dest, exe], logfile=logf)
+        else:
+            shutil.copy2(exe, dest)
+        os.chmod(dest, 0o755)
+        libs = linked_libraries(dest)
+        log('  %s: %.1f MB, needs %s' % (LINUX_LAUNCHER, os.path.getsize(dest) / 1e6, ', '.join(libs) or '?'))
+
+    def step_licenses(self):
+        lic = os.path.join(self.stage, 'LICENSES')
+        rmtree(lic)
+        for name, src in (('SoulCaliburIII_Recomp', os.path.join(self.source, 'LICENSE')),
+                          ('BozoEngine', os.path.join(self.source, ENGINE_DIR, 'LICENSE'))):
+            if not os.path.isfile(src):
+                raise ReleaseError('%s has no LICENSE at this commit (%s)' % (name, src))
+            os.makedirs(os.path.join(lic, name))
+            shutil.copy2(src, os.path.join(lic, name, 'LICENSE'))
+        for name in sorted(os.listdir(os.path.join(self.kit, 'deps'))):
+            src = os.path.join(self.kit, 'deps', name)
+            files = [n for n in os.listdir(src) if re.match(r'(LICEN[CS]E|COPYING|NOTICE)', n, re.I)
+                     and os.path.isfile(os.path.join(src, n))]
+            if files:
+                d = os.path.join(lic, 'libraries', name[:-4] if name.endswith('-src') else name)
+                os.makedirs(d, exist_ok=True)
+                for n in files:
+                    shutil.copy2(os.path.join(src, n), d)
+        os.makedirs(os.path.join(lic, 'launcher-font-exo2'))
+        shutil.copy2(os.path.join(self.font_dir(), 'OFL.txt'), os.path.join(lic, 'launcher-font-exo2', 'OFL.txt'))
+        write_text(os.path.join(lic, 'README.txt'), LINUX_LICENSES_README.format(name=self.name))
+        log('  LICENSES: %d files' % sum(len(f) for _d, _s, f in os.walk(lic)))
+
+    def step_readme(self):
+        write_text(os.path.join(self.stage, 'README.txt'),
+                   LINUX_README.format(version=self.version, name=self.name, repo=REPO,
+                                       archive=os.path.basename(self.archive)))
+        text = self.changelog_text()
+        if text is not None:
+            text = text.replace('\r\n', '\n')
+            if changelog_section(text, self.version) is None and self.args.allow_missing_changelog:
+                at = text.find('\n## ')
+                at = at + 1 if at >= 0 else len(text)
+                text = text[:at] + '## [%s] - test build\n\n%s\n\n' % (self.version, self.changelog_section) + text[at:]
+            write_text(os.path.join(self.stage, 'CHANGELOG.md'), text)
+
+    def step_tar(self):
+        problems = audit_tree(self.stage, allow_pe=True)
+        problems = [p for p in problems if not p.startswith(LINUX_LAUNCHER + ':')]
+        if problems:
+            raise ReleaseError('the release folder holds what looks like game data:\n  ' + '\n  '.join(problems[:20]))
+        t = time.time()
+        tar_dir(self.stage, self.archive, TOP, self.commit_date)
+        problems = verify_tar(self.archive)
+        if problems:
+            raise ReleaseError('%s:\n  %s' % (self.archive, '\n  '.join(problems[:40])))
+        digest = write_sha256(self.archive)
+        with tarfile.open(self.archive) as tf:
+            n = len(tf.getmembers())
+        log('  %s: %d entries, %.1f MB (unpacked %.1f MB), %.0f s, SHA-256 %s'
+            % (os.path.basename(self.archive), n, os.path.getsize(self.archive) / 1e6, dir_size(self.stage) / 1e6,
+               time.time() - t, digest))
+
+    def main(self):
+        os.makedirs(self.work, exist_ok=True)
+        log('%s from %s' % (os.path.basename(self.archive), self.commit))
+        self.changelog_section = self.changelog()
+        t0 = time.time()
+        for name, fn in (('export', self.step_export), ('kit', self.step_kit), ('launcher', self.step_launcher),
+                         ('licenses', self.step_licenses), ('readme', self.step_readme), ('tar', self.step_tar)):
+            log('[%s]' % name)
+            t = time.time()
+            fn()
+            log('  %.1f s' % (time.time() - t))
+        if not self.args.keep_work:
+            rmtree(self.work)
+        log('done in %.0f s: %s' % (time.time() - t0, self.archive))
+
+
+def linked_libraries(path):
+    """The shared libraries an ELF program needs (its DT_NEEDED entries, from readelf), or [] without readelf."""
+    readelf = shutil.which('readelf')
+    if not readelf:
+        return []
+    out = subprocess.run([readelf, '-d', path], stdout=subprocess.PIPE, universal_newlines=True).stdout
+    return re.findall(r'\(NEEDED\)\s+Shared library: \[([^\]]+)\]', out)
+
+
+def tar_dir(folder, path, top, mtime):
+    """A reproducible .tar.gz of folder under top/: entries sorted, every time mtime, owner root, modes 755 / 644
+    (755 for what is executable in folder), no link, gzip without a name or time."""
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames.sort()
+        rel_dir = os.path.relpath(dirpath, folder).replace('\\', '/')
+        rel_dir = '' if rel_dir == '.' else rel_dir
+        entries.append((rel_dir, dirpath, True))
+        for n in sorted(filenames):
+            entries.append(((rel_dir + '/' if rel_dir else '') + n, os.path.join(dirpath, n), False))
+    entries.sort(key=lambda e: e[0])
+    with open(path, 'wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as gz, \
+            tarfile.open(fileobj=gz, mode='w', format=tarfile.PAX_FORMAT) as tf:
+        for rel, full, is_dir in entries:
+            if os.path.islink(full):
+                raise ReleaseError('%s is a link: a release holds none' % full)
+            info = tarfile.TarInfo(top + ('/' + rel if rel else ''))
+            info.mtime, info.uid, info.gid, info.uname, info.gname = mtime, 0, 0, '', ''
+            if is_dir:
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                tf.addfile(info)
+            else:
+                info.size = os.path.getsize(full)
+                info.mode = 0o755 if os.stat(full).st_mode & 0o111 else 0o644
+                with open(full, 'rb') as f:
+                    tf.addfile(info, f)
+
+
+def sha256_of_file_record(path):
+    with open(path + '.sha256') as f:
+        return f.read().split()[0]
+
+
+def linux_download_lines(name, digest):
+    return [
+        '## Linux', '',
+        '1. `%s%s` below. Check it: `sha256sum %s%s` must print' % (name, LINUX_SUFFIX, name, LINUX_SUFFIX), '',
+        '   ```', '   %s' % digest, '   ```', '',
+        '2. Install what the build needs (GCC, CMake, Ninja, pkg-config, Python 3, the FFmpeg, X11/Wayland, OpenGL and '
+        'audio development files). On Debian or Ubuntu:', '',
+        '   ```', '   %s' % LINUX_APT, '   ```', '',
+        '   The launcher names the packages for Fedora, Arch and openSUSE when one is missing.',
+        '3. `tar xzf %s%s`, then run `SoulCaliburIII_Recomp/%s`, select your disc image, **Prepare the game**, **Play**.'
+        % (name, LINUX_SUFFIX, LINUX_LAUNCHER), '',
+        'Saves and settings are in `~/.local/share/soulcalibur3_recomp`.', '']
+
+
+LINUX_APT = ('sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev '
+             'libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev '
+             'libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev '
+             'libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev')
 
 
 CHANGELOG_HEADING = re.compile(r'^##[ \t]+\[?([^\]\s]+)\]?(.*)$', re.M)
@@ -982,6 +1215,50 @@ def verify_zip(path, top=TOP):
                      'kit/python/python.exe', 'source/scripts/sc3_build.py', 'source/BozoEngine/CMakeLists.txt',
                      'kit/deps/sdl3-src/CMakeLists.txt', 'kit/deps/imgui-src/imgui.cpp'):
             if '%s/%s' % (top, need) not in names:
+                problems.append('%s/%s is missing' % (top, need))
+    return problems
+
+
+LINUX_REQUIRED = (LINUX_LAUNCHER, 'README.txt', 'CHANGELOG.md', 'LICENSES/SoulCaliburIII_Recomp/LICENSE',
+                  'LICENSES/BozoEngine/LICENSE', 'source/release.ini', 'kit/kit_manifest.json',
+                  'source/scripts/sc3_build.py', 'source/BozoEngine/CMakeLists.txt', 'kit/deps/sdl3-src/CMakeLists.txt',
+                  'kit/deps/imgui-src/imgui.cpp')
+
+
+def verify_tar(path, top=TOP):
+    """The Linux release audited as verify_zip audits the zip: one top folder, only files and folders, no game file,
+    no ELF but the launcher, the files a Linux release must have."""
+    problems = []
+    with tarfile.open(path) as tf:
+        members = tf.getmembers()
+        names = set()
+        tops = set(m.name.split('/', 1)[0] for m in members)
+        if tops != {top}:
+            problems.append('the archive\'s top folders are %s, expected %s only' % (sorted(tops), top))
+        for m in members:
+            n = m.name
+            rel = n.split('/', 1)[1] if '/' in n else ''
+            names.add(rel)
+            if not (m.isfile() or m.isdir()):
+                problems.append('%s: not a file or a folder' % n)
+                continue
+            if n.startswith('/') or '..' in n.split('/'):
+                problems.append('%s: an absolute or parent path' % n)
+            if rel.lower().startswith('source/ps2recomp/'):
+                problems.append('%s: PS2Recomp in a BozoEngine release' % n)
+            if m.isdir():
+                if rel and game_name(rel + '/'):
+                    problems.append('%s: a generated / game folder' % n)
+                continue
+            if game_name(rel) or (rel.lower().endswith(GAME_EXTENSIONS) and not allowed_extension(rel)):
+                problems.append('%s: named like a file of the game' % n)
+            head = tf.extractfile(m).read(0x8006)
+            if head[:4] == b'\x7fELF' and rel != LINUX_LAUNCHER:
+                problems.append('%s: an ELF file' % n)
+            if len(head) >= 0x8006 and head[0x8001:0x8006] == b'CD001':
+                problems.append('%s: an ISO9660 volume' % n)
+        for need in LINUX_REQUIRED:
+            if need not in names:
                 problems.append('%s/%s is missing' % (top, need))
     return problems
 
@@ -1138,6 +1415,74 @@ Un projet de fans non officiel, ni affilié ni approuvé par eux.
 Version {version}
 """
 
+LINUX_LICENSES_README = """{name} (Linux): licences
+
+SoulCaliburIII_Recomp/LICENSE   SoulCaliburIII_Recomp's own code in source/ (MIT)
+BozoEngine/LICENSE              BozoEngine, the recompiler and runtime in source/BozoEngine (MIT)
+libraries/                      the libraries compiled into the game and the launcher (SDL3, Dear ImGui), their
+                                sources in kit/deps
+launcher-font-exo2/             the launcher's font, Exo 2 (SIL Open Font License 1.1)
+
+No GPL program is redistributed: the compiler, Python and FFmpeg are your system's.
+Soulcalibur III is (c) Bandai Namco Entertainment. Nothing of the game is in this download.
+"""
+
+LINUX_README = """Soulcalibur III - PC port ({name}, Linux)
+by The Bozos (boubou666 & Arzaroth)
+
+What this is
+  A native PC version of Soulcalibur III (PS2), built on your own PC from YOUR OWN disc.
+  Nothing of the game is in this download: no game files, no code taken from the game.
+  Requires a 64-bit Linux with X11 or Wayland and OpenGL 3.3.
+  You need a disc image of the USA release (SLUS-21216) or the European one (SCES-53312): a .iso, or a .bin with its .cue.
+  Discs of the other regions are not supported.
+
+Before you start: check the download
+      sha256sum {archive}
+  The hash printed must be the same as on the release page (and in {archive}.sha256).
+
+What the build needs
+  GCC (C++20), CMake 3.21 or newer, Ninja, pkg-config, Python 3, and the development files of FFmpeg, X11 or
+  Wayland, OpenGL (EGL or GLX) and PipeWire, PulseAudio or ALSA. On Debian or Ubuntu:
+      sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev \\
+          libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \\
+          libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev \\
+          libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev
+  On Fedora, Arch or openSUSE, "Prepare the game" names the packages to install when one is missing.
+  The disc picker uses zenity or kdialog.
+
+Install
+  1. tar xzf {archive} wherever you like, with about 15 GB free: that makes SoulCaliburIII_Recomp/.
+     Keep the folders together: sc3-launcher, source/ and kit/.
+  2. Run SoulCaliburIII_Recomp/sc3-launcher.
+  3. Click "Select your disc image..." and pick your disc image. With the European disc, the settings choose the game's language.
+  4. Click "Prepare the game". It takes a while, once (converting the textures and models, then compiling).
+     You can stop it; it continues later.
+  5. Click "Play". In the game, F2 opens the settings (controls, video).
+  Without the launcher: python3 source/scripts/sc3_build.py --disc <your image> --out build --game game, then
+  game/play_sc3.sh.
+
+Your saves and settings
+  ~/.local/share/soulcalibur3_recomp (the launcher's Maintenance tab opens it). They stay when you update.
+
+Updates
+  The launcher tells you when a new version is out, and its Update button installs it. Or extract the new archive
+  where you extracted this one and click "Rebuild now": only what changed is built again. Your saves stay.
+
+Uninstall
+  Delete this folder, and ~/.local/share/soulcalibur3_recomp to remove your saves and settings too.
+
+Help
+  https://github.com/{repo}/issues
+  When preparing fails, the launcher's "Copy details" button copies what we need to know.
+
+Licences and source code: LICENSES/. Our code is MIT, and so is BozoEngine, the recompiler and runtime it is built on.
+Soulcalibur III (c) Bandai Namco Entertainment, developed by Namco.
+An unofficial fan project, not affiliated with or endorsed by them.
+
+Version {version}
+"""
+
 
 def main():
     ap = argparse.ArgumentParser(description='Makes the SoulCaliburIII_Recomp release zip (see the docstring).')
@@ -1161,11 +1506,13 @@ def main():
                     'CHANGELOG.md has no section for the version (never for a real release)')
     ap.add_argument('--check-changelog', action='store_true', help='only print CHANGELOG.md\'s section for the version '
                     '(--version or the commit\'s tag) at the commit; exit 1 when it is missing')
-    ap.add_argument('--verify-zip', metavar='ZIP', help='only audit a release zip (no game file, the expected files)')
+    ap.add_argument('--verify-zip', metavar='ZIP', help='only audit a release zip or Linux .tar.gz (no game file, the '
+                    'expected files)')
+    ap.add_argument('--linux', action='store_true', help='the Linux release (<name>-linux.tar.gz) instead of the zip')
     args = ap.parse_args()
     try:
         if args.verify_zip:
-            problems = verify_zip(args.verify_zip)
+            problems = (verify_tar if args.verify_zip.endswith('.tar.gz') else verify_zip)(args.verify_zip)
             if problems:
                 raise ReleaseError('%s:\n  %s' % (args.verify_zip, '\n  '.join(problems[:40])))
             log('%s: no game file, the expected files present' % args.verify_zip)
@@ -1193,7 +1540,7 @@ def main():
         if args.publish_only:
             Release(args).publish_made()
             return
-        Release(args).main()
+        (LinuxRelease if args.linux else Release)(args).main()
     except ReleaseError as e:
         sys.exit('make_release: %s' % e)
 
