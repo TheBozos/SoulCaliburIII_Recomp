@@ -63,7 +63,7 @@ class Archive:
 
     def __init__(self, path):
         if tarfile.is_tarfile(path):
-            self.kind, self.tf = 'tar', tarfile.open(path, 'r:gz')
+            self.kind, self.tf = 'tar', tarfile.open(path, 'r:*')
             self.members = {}
             for m in self.tf.getmembers():
                 if not (m.isfile() or m.isdir()):
