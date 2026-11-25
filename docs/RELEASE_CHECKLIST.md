@@ -4,6 +4,18 @@ Use a scratch user folder for every automated run. Keep game data and generated 
 A successful build is not a publication: this checklist records what was actually verified, and the owner publishes the
 draft by hand.
 
+v0.1.1 was published on 2026-11-25 (`0bc2a91`, engine `eca63e5`; run 45547629075), the first with a Linux download.
+Its draft assets were checked locally before publication:
+- the zip, the sources zip and `SoulCaliburIII_Recomp-0.1.1-linux.tar.gz` pass their SHA-256 checks, and both player
+  downloads pass `make_release.py --verify-zip` (the archive: one top folder, no ELF but `sc3-launcher`, no game file);
+- `sc3-launcher` from the downloaded archive, extracted under a path with spaces and an accent, prints version 0.1.1 and
+  the release commit and passes `--self-check` (sc3_build refuses a file of zeros); it needs only libc and libm;
+- an archive made locally from the branch before its review fixes (`dd2ee11`), extracted under `Jérôme Games/`, built
+  the game from the USA disc with the system's toolchain and the archive's kit alone (659 s; `game/sc3`, `play_sc3.sh`);
+- the Linux launcher's GUI selftest on the USA disc passed in a hand-assembled release folder: the build it drives
+  (10:36), Settings, Maintenance, French, Play, the game closed with exit code 0 and no crash report;
+- the release notes have a Linux section with the archive's hash and the Debian / Ubuntu install command.
+
 v0.1.0 was tagged on 2026-11-25 (`548cdc2`, engine `eca63e5`). The release workflow built its draft (run 45537147547).
 The draft assets were checked locally:
 - `SoulCaliburIII_Recomp-0.1.0.zip` and `SoulCaliburIII_Recomp-0.1.0-sources.zip` pass their SHA-256 checks;
@@ -41,6 +53,12 @@ The draft assets were checked locally:
 - [ ] Extract the player zip, then build from the USA disc and from the European disc with only its bundled kit,
   offline.
 - [ ] Test a path with spaces/non-ASCII, cancellation/resume, Play and restart.
+- [x] `SoulCaliburIII_Recomp-<version>-linux.tar.gz` contains one `SoulCaliburIII_Recomp/` folder with `sc3-launcher`
+  (0755), passes `make_release.py --verify-zip` and its SHA-256 check, and contains no game file.
+- [x] Linux: extract the archive, then build from the USA disc with the system's toolchain and the archive's kit; the
+  launcher's selftest drives the build, Play and close.
+- [ ] Linux: the European disc built from the archive; the launcher on a distribution other than Arch (Debian, Ubuntu,
+  Fedora); the Update button from 0.1.1 to the next Linux release.
 
 ## Clean-PC and player acceptance
 
