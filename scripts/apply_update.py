@@ -3,6 +3,7 @@
 
   python -I scripts/apply_update.py --zip <SoulCaliburIII_Recomp-x.y.z.zip> --sha256 <its .sha256 file> --version x.y.z
                                   --install <the release folder> [--keep-zip]
+  python3 -I scripts/apply_update.py --zip <SoulCaliburIII_Recomp-x.y.z-linux.tar.gz> ...       (the Linux release)
 
 Checks the zip's SHA-256 against the release's .sha256, checks every name in it (one top folder SoulCaliburIII_Recomp/, no
 absolute or parent paths, nothing under build/, game/ or update/, the launcher and source/release.ini of the version
@@ -20,10 +21,11 @@ import hashlib
 import os
 import shutil
 import sys
+import tarfile
 import zipfile
 
 TOP = 'SoulCaliburIII_Recomp/'  # scripts/make_release.py's TOP
-LAUNCHER = 'SC3 Launcher.exe'
+LAUNCHERS = {'zip': 'SC3 Launcher.exe', 'tar': 'sc3-launcher'}
 PROTECTED = ('build/', 'game/', 'update/')  # the player's build and game, and this update's own folder
 
 
@@ -56,11 +58,41 @@ def expected_sha256(path):
     return token[0].lower()
 
 
-def checked_names(zf, version):
-    """The zip's file entries as (entry, path under the top folder), after checking every name."""
+class Archive:
+    """A release's zip (Windows) or .tar.gz (Linux): its entries as (name, is_dir, size, mode), read the same way."""
+
+    def __init__(self, path):
+        if tarfile.is_tarfile(path):
+            self.kind, self.tf = 'tar', tarfile.open(path, 'r:gz')
+            self.members = {}
+            for m in self.tf.getmembers():
+                if not (m.isfile() or m.isdir()):
+                    raise UpdateError('unexpected entry in the archive: %r (a link or device)' % m.name)
+                name = m.name + ('/' if m.isdir() and not m.name.endswith('/') else '')
+                self.members[name] = m
+        else:
+            self.kind, self.zf = 'zip', zipfile.ZipFile(path)
+
+    def entries(self):
+        if self.kind == 'tar':
+            return [(n, m.isdir(), m.size, m.mode) for n, m in self.members.items()]
+        return [(i.filename, i.filename.endswith('/'), i.file_size, None) for i in self.zf.infolist()]
+
+    def open(self, name):
+        return self.tf.extractfile(self.members[name]) if self.kind == 'tar' else self.zf.open(name)
+
+    def read(self, name):
+        with self.open(name) as f:
+            return f.read()
+
+    def close(self):
+        (self.tf if self.kind == 'tar' else self.zf).close()
+
+
+def checked_names(archive, version):
+    """The archive's file entries as (name, size, mode, path under the top folder), after checking every name."""
     files = []
-    for info in zf.infolist():
-        name = info.filename
+    for name, is_dir, size, mode in archive.entries():
         if not name.startswith(TOP) or '\\' in name or ':' in name or name.startswith('/'):
             raise UpdateError('unexpected name in the zip: %r' % name)
         rel = name[len(TOP):]
@@ -68,12 +100,12 @@ def checked_names(zf, version):
             raise UpdateError('unexpected name in the zip: %r' % name)
         if rel.startswith(PROTECTED) or rel.rstrip('/') in ('build', 'game', 'update'):
             raise UpdateError('the zip holds %r, a folder of the player\'s own' % name)
-        if not name.endswith('/'):
-            files.append((info, rel))
-    rels = {rel for _info, rel in files}
-    if LAUNCHER not in rels or 'source/release.ini' not in rels:
+        if not is_dir:
+            files.append((name, size, mode, rel))
+    rels = {f[3] for f in files}
+    if LAUNCHERS[archive.kind] not in rels or 'source/release.ini' not in rels:
         raise UpdateError('this is not a SoulCaliburIII_Recomp release (no launcher or source/release.ini)')
-    stamp = zf.read(TOP + 'source/release.ini').decode('utf-8', 'replace')
+    stamp = archive.read(TOP + 'source/release.ini').decode('utf-8', 'replace')
     found = ''
     for line in stamp.splitlines():
         key, _, value = line.partition('=')
@@ -135,24 +167,29 @@ def main():
 
     say('step extract')
     remove_tree(staging)
-    with zipfile.ZipFile(args.zip) as zf:
-        files = checked_names(zf, args.version)
-        total = sum(info.file_size for info, _rel in files)
+    archive = Archive(args.zip)
+    try:
+        files = checked_names(archive, args.version)
+        total = sum(f[1] for f in files)
         if shutil.disk_usage(install).free < total + (256 << 20):
             raise UpdateError('not enough free space: %d MB needed' % ((total >> 20) + 256))
         done = 0
-        for info, rel in files:
+        for name, size, mode, rel in files:
             target = os.path.join(staging, *rel.split('/'))
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            with zf.open(info) as src, open(target, 'wb') as dst:
+            with archive.open(name) as src, open(target, 'wb') as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
-            done += info.file_size
+            if mode is not None:
+                os.chmod(target, 0o755 if mode & 0o111 else 0o644)
+            done += size
             say('progress', done, total)
+    finally:
+        archive.close()
 
     # Everything is extracted and checked: only moves on the same disk from here.
     say('step install')
     old_files = []
-    for n, (_info, rel) in enumerate(files):
+    for n, (_name, _size, _mode, rel) in enumerate(files):
         replace(os.path.join(staging, *rel.split('/')), os.path.join(install, *rel.split('/')), old_files)
         if n % 200 == 0:
             say('progress', n, len(files))
@@ -175,6 +212,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (UpdateError, OSError, zipfile.BadZipFile) as e:
+    except (UpdateError, OSError, zipfile.BadZipFile, tarfile.TarError) as e:
         say('error', e)
         sys.exit(1)

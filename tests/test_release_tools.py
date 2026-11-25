@@ -225,8 +225,10 @@ class ReleaseTests(unittest.TestCase):
             path = Path(folder) / 'other.zip'
             with zipfile.ZipFile(path, 'w') as archive:
                 archive.writestr('TMB_Recomp_Bozo/SC3 Launcher.exe', b'x')
-            with zipfile.ZipFile(path) as archive, self.assertRaises(apply_update.UpdateError):
+            archive = apply_update.Archive(str(path))
+            with self.assertRaises(apply_update.UpdateError):
                 apply_update.checked_names(archive, '0.1.0')
+            archive.close()
 
 
 if __name__ == '__main__':
