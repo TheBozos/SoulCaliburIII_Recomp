@@ -102,12 +102,13 @@ start the launcher, pick your USA or European disc image (`.iso`, or `.bin` with
 choose the game's language (Windows' by default). Requires Windows 10 1903 or newer, a 64-bit CPU and
 OpenGL 3.3.
 
-**Linux.** `SoulCaliburIII_Recomp-<version>-linux.tar.gz` holds `sc3-launcher`, the same code and the SDL3 and Dear ImGui
-sources; the compiler, Python and FFmpeg are your system's. The build needs GCC, CMake 3.21+, Ninja, pkg-config,
-Python 3 and the development files of FFmpeg (`libavcodec`, `libavformat`, `libavutil`, `libswresample`,
-`libswscale`), X11 or Wayland, OpenGL and PipeWire, PulseAudio or ALSA; **Prepare the game** names the packages to
-install for Debian, Ubuntu, Fedora, Arch and openSUSE when one is missing. Extract it anywhere with about 15 GB free and
-run `SoulCaliburIII_Recomp/sc3-launcher`; the disc picker uses zenity or kdialog. From a clone instead:
+**Linux.** `SoulCaliburIII_Recomp-<version>-linux.tar.gz` holds `sc3-launcher`, the same code and the SDL3 and Dear
+ImGui sources; the compiler, Python and FFmpeg are your system's. The build needs GCC, CMake 3.21+, Ninja, pkg-config,
+Python 3 and the development files of FFmpeg (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`),
+X11 (with its extensions) or Wayland, OpenGL and PipeWire, PulseAudio or ALSA; **Prepare the game** names the packages
+to install for Debian, Ubuntu, Fedora, Arch and openSUSE when one is missing. Extract it anywhere with about 15 GB free
+and run `SoulCaliburIII_Recomp/sc3-launcher`; the disc picker uses your desktop's file dialog (xdg-desktop-portal) or
+zenity. From a clone instead:
 
 ```bash
 git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
