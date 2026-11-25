@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-25
+
 ### Changed
 - **BozoEngine is now the only recompiler and runtime.** The PS2Recomp submodule, its build, the runtime overrides,
   the VU1 tests and the scripts that built, ran or mapped it are removed; that build stays in main's history
@@ -56,3 +58,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 - Ten rarely used vertex program entries are not written (none was reached in any recorded run); a part needing one
   is not drawn.
 - A fault at 0x117808 was seen in 4 of 15 runs early in the migration and not since.
+- The European disc was played on Linux only, in English, French and German; Spanish, Italian and the Chronicles of
+  the Sword mode are not checked yet.
+- A save state loaded in a new process can differ slightly from the run that saved it (USA disc).
