@@ -1161,7 +1161,8 @@ def linux_download_lines(name, digest):
 
 LINUX_APT = ('sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev '
              'libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev '
-             'libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev '
+             'libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev '
+             'libgl-dev '
              'libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev')
 
 
@@ -1446,10 +1447,10 @@ What the build needs
   Wayland, OpenGL (EGL or GLX) and PipeWire, PulseAudio or ALSA. On Debian or Ubuntu:
       sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev \\
           libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev \\
-          libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev \\
-          libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev
+          libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev \\
+          libgl-dev libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev
   On Fedora, Arch or openSUSE, "Prepare the game" names the packages to install when one is missing.
-  The disc picker uses zenity or kdialog.
+  The disc picker uses your desktop's file dialog (xdg-desktop-portal) or zenity.
 
 Install
   1. tar xzf {archive} wherever you like, with about 15 GB free: that makes SoulCaliburIII_Recomp/.

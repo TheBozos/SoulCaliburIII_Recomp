@@ -86,7 +86,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q cmake ninja-build g++ pkg-config libx11-dev libxext-dev \
-            libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev libpipewire-0.3-dev libpulse-dev \
             libasound2-dev libudev-dev libdbus-1-dev libibus-1.0-dev
 
