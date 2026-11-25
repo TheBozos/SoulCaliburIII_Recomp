@@ -250,7 +250,7 @@ namespace plat
                 if (fork() == 0)
                 {
                     setsid();
-                    const int null = ::open("/dev/null", O_RDWR);
+                    const int null = ::open("/dev/null", O_RDWR | O_CLOEXEC);
                     if (null >= 0)
                     {
                         dup2(null, 0);
@@ -449,7 +449,7 @@ namespace plat
             sigset_t none;
             sigemptyset(&none);
             sigprocmask(SIG_SETMASK, &none, nullptr);
-            const int null = ::open("/dev/null", O_RDWR);
+            const int null = ::open("/dev/null", O_RDWR | O_CLOEXEC);
             if (null >= 0)
             {
                 dup2(null, 0);
@@ -528,9 +528,12 @@ namespace plat
 
     void Process::kill()
     {
-        if (impl->pid <= 0 || impl->reap())
+        if (impl->pid <= 0)
             return;
-        ::kill(impl->group ? -impl->pid : impl->pid, SIGKILL);
+        if (impl->group)
+            ::kill(-impl->pid, SIGKILL);
+        else if (!impl->reap())
+            ::kill(impl->pid, SIGKILL);
     }
 
     void Process::drain(int timeoutMs)
@@ -606,6 +609,7 @@ namespace plat
             uint64_t length = 0;
             bool sized = false, aborted = false;
             const std::function<bool(Transfer &, const char *, size_t)> *sink = nullptr;
+            const std::atomic<bool> *cancel = nullptr;
 
             void readHeaders()
             {
@@ -632,9 +636,19 @@ namespace plat
             return n;
         }
 
+        int progressCallback(void *user, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+        {
+            auto *t = static_cast<Transfer *>(user);
+            if (!t->cancel || !t->cancel->load())
+                return 0;
+            t->aborted = true;
+            return 1;
+        }
+
         bool httpRequest(const std::string &url, const std::string &userAgent, const std::vector<std::string> &headers,
                          int receiveMs, long &status, std::string &error,
-                         const std::function<bool(Transfer &, const char *, size_t)> &sink)
+                         const std::function<bool(Transfer &, const char *, size_t)> &sink,
+                         const std::atomic<bool> *cancel = nullptr)
         {
             status = 0;
             Curl &c = curl();
@@ -656,6 +670,7 @@ namespace plat
                 return false;
             }
             t.sink = &sink;
+            t.cancel = cancel;
             curl_slist *list = nullptr;
             for (const std::string &h : headers)
                 list = c.slist_append(list, h.c_str());
@@ -675,6 +690,12 @@ namespace plat
             c.easy_setopt(t.handle, kOptErrorBuffer, errorBuffer);
             c.easy_setopt(t.handle, kOptWriteFunction, &writeCallback);
             c.easy_setopt(t.handle, kOptWriteData, &t);
+            if (cancel)
+            {
+                c.easy_setopt(t.handle, kOptXferInfoFunction, &progressCallback);
+                c.easy_setopt(t.handle, kOptXferInfoData, &t);
+                c.easy_setopt(t.handle, kOptNoProgress, 0L);
+            }
             const int code = c.easy_perform(t.handle);
             t.readHeaders();
             status = t.status;
@@ -738,7 +759,9 @@ namespace plat
                                   if (done.load() <= maxBytes)
                                       return true;
                                   error = "download too large";
-                                  return false; });
+                                  return false; }, &cancel);
+        if (!ok && error.empty() && cancel.load())
+            error = "stopped";
         if (std::fclose(out) != 0 && ok)
         {
             ok = false;
