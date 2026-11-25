@@ -30,6 +30,9 @@ FFmpeg (ffmpeg/), the libraries' sources (deps/: SDL3, Dear ImGui) and an embedd
 nothing else is needed (no MSYS2, git, network or installed Python), and the game is the player's build: statically
 linked (no DLL), FFmpeg from the kit.
   kit/python/python.exe -I scripts/sc3_build.py --disc "Soulcalibur III (USA).iso" --out D:/SC3
+The Linux release's kit has deps/ only: the compiler, Python and FFmpeg are the system's. On Linux the build first
+checks for GCC, CMake, Ninja, pkg-config and the FFmpeg, X11 or Wayland, OpenGL and audio development files, and names
+the packages to install (ERROR verify) when one is missing.
 
 Without a kit: --toolchain <dir> (a folder whose bin/ has g++, cmake, ninja: an MSYS2 UCRT64 prefix such as
 C:/msys64/ucrt64), else the PATH, else C:/msys64/ucrt64; FFmpeg through pkg-config; SDL3 and ImGui downloaded by CMake
@@ -264,10 +267,12 @@ class Build:
         self.kit = find_kit(args)
         self.ffmpeg_root = None
         if self.kit:
-            # The kit's parts unless the command line names others.
-            args.toolchain = args.toolchain or os.path.join(self.kit, 'ucrt64')
+            # The kit's parts unless the command line names others. A Linux kit has deps/ only.
+            if os.path.isdir(os.path.join(self.kit, 'ucrt64')):
+                args.toolchain = args.toolchain or os.path.join(self.kit, 'ucrt64')
             args.fetch_cache = args.fetch_cache or os.path.join(self.kit, 'deps')
-            self.ffmpeg_root = os.path.join(self.kit, 'ffmpeg')
+            if os.path.isdir(os.path.join(self.kit, 'ffmpeg')):
+                self.ffmpeg_root = os.path.join(self.kit, 'ffmpeg')
         if args.debug_info is None:  # a player's build (the kit): no debug information
             args.debug_info = 'no' if self.kit else 'yes'
 
@@ -753,6 +758,11 @@ class Build:
     # -- driver
 
     def main(self):
+        if os.name != 'nt':
+            missing = linux_missing(self.args.toolchain)
+            if missing:
+                emit('ERROR', 'verify', linux_missing_message(missing))
+                return 1
         redo_from = STEPS.index(self.args.redo) if self.args.redo else len(STEPS)
         n = len(STEPS)
         dirty = False
@@ -813,6 +823,69 @@ def find_kit(args):
         if os.path.isfile(os.path.join(kit, KIT_MANIFEST)):
             return kit
     return None
+
+
+LINUX_TOOLS = ('gcc', 'g++', 'cmake', 'ninja', 'pkg-config')
+LINUX_MODULES = (('FFmpeg', ('libavformat', 'libavcodec', 'libswresample', 'libswscale', 'libavutil')),
+                 ('X11 or Wayland', ('x11|wayland-client',)),
+                 ('OpenGL', ('gl|egl',)),
+                 ('PipeWire, PulseAudio or ALSA', ('libpipewire-0.3|libpulse|alsa',)))
+LINUX_PACKAGES = {
+    'debian': 'sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev '
+              'libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev '
+              'libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev '
+              'libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev',
+    'fedora': 'sudo dnf install gcc-c++ cmake ninja-build pkgconf python3 ffmpeg-free-devel libX11-devel libXext-devel '
+              'libXrandr-devel libXcursor-devel libXi-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel '
+              'libdecor-devel mesa-libEGL-devel mesa-libGL-devel pipewire-devel pulseaudio-libs-devel alsa-lib-devel '
+              'systemd-devel',
+    'arch': 'sudo pacman -S --needed base-devel cmake ninja pkgconf python ffmpeg libx11 libxext libxrandr libxcursor '
+            'libxi libxss libxkbcommon wayland libdecor mesa libpipewire libpulse alsa-lib',
+    'suse': 'sudo zypper install gcc-c++ cmake ninja pkg-config python3 ffmpeg-7-libavformat-devel '
+            'ffmpeg-7-libavcodec-devel ffmpeg-7-libswresample-devel ffmpeg-7-libswscale-devel ffmpeg-7-libavutil-devel '
+            'libX11-devel libXext-devel libXrandr-devel libXcursor-devel libXi-devel libXss-devel libxkbcommon-devel '
+            'wayland-devel libdecor-devel Mesa-libEGL-devel Mesa-libGL-devel pipewire-devel libpulse-devel '
+            'alsa-devel systemd-devel',
+}
+
+
+def linux_family():
+    try:
+        with open('/etc/os-release', encoding='utf-8') as f:
+            fields = dict(l.rstrip('\n').split('=', 1) for l in f if '=' in l)
+    except OSError:
+        return None
+    ids = ' '.join(fields.get(k, '').strip('"') for k in ('ID', 'ID_LIKE')).split()
+    for family, names in (('debian', ('debian', 'ubuntu')), ('fedora', ('fedora', 'rhel', 'centos')),
+                          ('arch', ('arch', 'archlinux')), ('suse', ('suse', 'opensuse'))):
+        if any(i in names or i.startswith('opensuse') and family == 'suse' for i in ids):
+            return family
+    return None
+
+
+def linux_missing(toolchain=None):
+    """What the Linux build needs and this system lacks: tools on the PATH and pkg-config modules."""
+    missing = []
+    if not toolchain:
+        missing += [t for t in LINUX_TOOLS if not shutil.which(t)]
+    elif not shutil.which('pkg-config'):
+        missing.append('pkg-config')
+    if shutil.which('pkg-config'):
+        for what, modules in LINUX_MODULES:
+            lacking = [m for m in modules if not any(
+                subprocess.run(['pkg-config', '--exists', alt]).returncode == 0 for alt in m.split('|'))]
+            if lacking:
+                missing.append('%s (%s)' % (what, ', '.join(m.replace('|', ' or ') for m in lacking)))
+    return missing
+
+
+def linux_missing_message(missing):
+    family = linux_family()
+    install = LINUX_PACKAGES.get(family)
+    return ('the build needs %s. %s' % (', '.join(missing),
+            'Install them with: %s' % install if install else
+            'Install your distribution\'s packages for them (GCC, CMake, Ninja, pkg-config, the FFmpeg, X11, Wayland, '
+            'OpenGL and audio development files); on Debian or Ubuntu: %s' % LINUX_PACKAGES['debian']))
 
 
 STEP_TITLES = {
