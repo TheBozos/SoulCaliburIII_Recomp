@@ -3,7 +3,9 @@
 #
 #   git tag v0.1.0 && git push origin v0.1.0          (or Actions > Release > Run workflow, with the tag)
 #
-# On a version tag it makes the build kit from the pinned MSYS2 packages (scripts/build_kit_packages.json) and the
+# On a version tag the linux job makes SoulCaliburIII_Recomp-<version>-linux.tar.gz (the Linux launcher, the code, the
+# libraries' sources; make_release.py --linux) on the oldest supported Ubuntu, so the launcher runs on older glibc.
+# Then the build job makes the build kit from the pinned MSYS2 packages (scripts/build_kit_packages.json) and the
 # release zip SoulCaliburIII_Recomp-<version>.zip (folder SoulCaliburIII_Recomp). It adds hashes and corresponding
 # sources, checks without game data, and creates a DRAFT
 # GitHub release with CHANGELOG.md's section for the version as its body. Nothing is ever published by this workflow:
@@ -46,8 +48,101 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  linux:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (github.event_name == 'push' && github.ref_name || '') }}
+      TEST_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Version from the tag (or a test build's)
+        run: |
+          set -eu
+          if [ -n "$TAG" ]; then
+            echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+            echo "TEST_BUILD=" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${TEST_VERSION:-0.0.0-test.$GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            echo "TEST_BUILD=1" >> "$GITHUB_ENV"
+          fi
+          echo "WORK=$RUNNER_TEMP/sc3" >> "$GITHUB_ENV"
+
+      - name: Check out the tag or the branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || '' }}
+          persist-credentials: false
+
+      - name: The BozoEngine submodule at its recorded commit
+        run: git submodule update --init BozoEngine
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: The launcher's build tools and SDL3's video and audio development files
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake ninja-build g++ pkg-config libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev libpipewire-0.3-dev libpulse-dev \
+            libasound2-dev libudev-dev libdbus-1-dev libibus-1.0-dev
+
+      - name: Cache the downloads (SDL3, ImGui, the font)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sc3/downloads
+          key: sc3-linux-downloads-${{ hashFiles('scripts/make_build_kit.py', 'scripts/make_release.py') }}
+          restore-keys: sc3-linux-downloads-
+
+      - name: Make the Linux release (.tar.gz, .sha256)
+        run: |
+          set -eu
+          if [ -n "$TEST_BUILD" ]; then extra="--allow-missing-changelog"; else extra=""; fi
+          python scripts/make_release.py --linux --version "$VERSION" --out "$WORK/release" \
+            --downloads "$WORK/downloads" $extra
+
+      - name: Smoke checks (no game data anywhere)
+        run: |
+          set -eu
+          rel="$WORK/release"
+          name="SoulCaliburIII_Recomp-$VERSION-linux.tar.gz"
+          python scripts/make_release.py --verify-zip "$rel/$name"
+          (cd "$rel" && sha256sum -c "$name.sha256")
+          t="$WORK/smoke/Jérôme Games"
+          rm -rf "$t" && mkdir -p "$t/user"
+          tar xzf "$rel/$name" -C "$t"
+          app="$t/SoulCaliburIII_Recomp"
+          head -c 1048576 /dev/zero > "$t/not_a_disc.iso"
+          if python3 -I -X utf8 "$app/source/scripts/sc3_build.py" --check --disc "$t/not_a_disc.iso" > "$t/check.txt" 2>&1; then
+            cat "$t/check.txt"; echo "::error::sc3_build --check accepted a file of zeros"; exit 1
+          fi
+          cat "$t/check.txt"
+          grep -q "is not an ISO9660 disc image" "$t/check.txt"
+          "$app/sc3-launcher" --version
+          if ! PS2X_USER_DIR="$t/user" "$app/sc3-launcher" --self-check "$t/not_a_disc.iso" --report "$t/self-check.txt"; then
+            cat "$t/self-check.txt"; echo "::error::the launcher's self-check failed"; exit 1
+          fi
+          cat "$t/self-check.txt"
+          grep -q "^version $VERSION$" "$t/self-check.txt"
+          readelf -d "$app/sc3-launcher" | grep NEEDED
+
+      - name: Keep the archive (the run's artifact; the build job attaches it to the draft)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoulCaliburIII_Recomp-${{ env.VERSION }}-linux
+          path: |
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-linux.tar.gz
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-linux.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   build:
     if: github.event_name != 'release'
+    needs: linux
     runs-on: windows-latest
     timeout-minutes: 150
     permissions:
@@ -140,6 +235,12 @@ jobs:
           python scripts/make_build_kit.py --out "$WORK/kit" --msys "$MSYS2_ROOT" --downloads "$WORK/downloads" \
             --work "$WORK/kit-work" $steps --only manifest
 
+      - name: The Linux release (the linux job's), so the notes and the draft carry it
+        uses: actions/download-artifact@v4
+        with:
+          name: SoulCaliburIII_Recomp-${{ env.VERSION }}-linux
+          path: ${{ runner.temp }}/sc3/release
+
       - name: Make the release (zip, .sha256, sources zip, notes from CHANGELOG.md)
         env:
           MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
@@ -191,6 +292,8 @@ jobs:
             ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}.zip.sha256
             ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-sources.zip
             ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-sources.zip.sha256
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-linux.tar.gz
+            ${{ runner.temp }}/sc3/release/SoulCaliburIII_Recomp-${{ env.VERSION }}-linux.tar.gz.sha256
             ${{ runner.temp }}/sc3/release/RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 14

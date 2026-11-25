@@ -4,13 +4,15 @@
 // SDL3 and OpenGL 3 backends; window.h).
 //
 // The release folder it expects (its own folder, or --release <dir>):
-//   SC3 Launcher.exe
+//   SC3 Launcher.exe (sc3-launcher on Linux)
 //   source\   the SoulCaliburIII_Recomp code (scripts\sc3_build.py, BozoEngine\...)
-//   kit\      the build kit (kit\python\python.exe, the compiler...)
+//   kit\      the build kit (kit\python\python.exe, the compiler...); on Linux only kit_manifest.json and deps\, the
+//             system's python3 and compiler doing the rest
 //   build\    sc3_build's work folder (made here)
-//   game\     the game folder the build stages (made here): sc3.exe, the disc's ELF, disc.iso, packs\
-// The player's settings: launcher.ini in the runner's user folder (%APPDATA%\SoulCaliburIII_Recomp, or PS2X_USER_DIR), next to
-// the game's video.ini, which the Settings tab writes in the runner's format.
+//   game\     the game folder the build stages (made here): sc3.exe (sc3), the disc's ELF, disc.iso, packs\
+// The player's settings: launcher.ini in the runner's user folder (%APPDATA%\SoulCaliburIII_Recomp,
+// ~/.local/share/soulcalibur3_recomp on Linux, or PS2X_USER_DIR), next to the game's video.ini, which the Settings tab
+// writes in the runner's format.
 //
 // --selftest <iso> --shots <dir>: the whole flow without a hand on it, a screenshot of each screen (see selftest()).
 
@@ -59,7 +61,13 @@ static const char *kReleasePagePrefix = "https://github.com/TheBozos/SoulCalibur
 // A release's files (the Update button): <prefix><tag>/SoulCaliburIII_Recomp-<version>.zip and its .sha256, the address
 // made here from the tag like the page's, never one read from the API's response.
 static const char *kReleaseDownloadPrefix = "https://github.com/TheBozos/SoulCaliburIII_Recomp/releases/download/";
+#ifdef _WIN32
 static std::string releaseZipName(const std::string &version) { return "SoulCaliburIII_Recomp-" + version + ".zip"; }
+static const wchar_t *kGameExeName = L"sc3.exe";
+#else
+static std::string releaseZipName(const std::string &version) { return "SoulCaliburIII_Recomp-" + version + "-linux.tar.gz"; }
+static const wchar_t *kGameExeName = L"sc3";
+#endif
 
 // ---- language ----
 
@@ -352,6 +360,7 @@ struct App
     Phase phase = Phase::Welcome;
     Tab tab = Tab::Play;
     std::string missingPart; // Incomplete: what is not there
+    bool missingPython = false; // Linux: no python3 on the PATH
 
     // The disc check (sc3_build.py --check).
     plat::Process checker;
@@ -425,12 +434,16 @@ struct App
         p.release = plat::str(r);
         p.source = plat::str(r / L"source");
         p.kit = plat::str(r / L"kit");
+#ifdef _WIN32
         p.python = plat::str(r / L"kit" / L"python" / L"python.exe");
+#else
+        p.python = plat::findProgram("python3");
+#endif
         p.script = plat::str(r / L"source" / L"scripts" / L"sc3_build.py");
         p.buildOut = plat::str(r / L"build");
         p.buildLogs = plat::str(r / L"build" / L"logs");
         p.game = plat::str(r / L"game");
-        p.gameExe = plat::str(r / L"game" / L"sc3.exe");
+        p.gameExe = plat::str(r / L"game" / kGameExeName);
         p.iso = plat::str(r / L"game" / L"disc.iso");
         p.releaseIni = plat::str(r / L"source" / L"release.ini");
         p.builtFrom = plat::str(r / L"game" / L"built_from.ini");
@@ -446,9 +459,18 @@ struct App
         video.load(p.videoIni);
 
         if (!exists(p.script))
-            missingPart = "source\\scripts\\sc3_build.py";
+            missingPart = plat::str(fs::path(L"source") / L"scripts" / L"sc3_build.py");
+#ifdef _WIN32
         else if (!exists(p.python) || !exists(plat::str(r / L"kit" / L"kit_manifest.json")))
-            missingPart = "kit\\";
+#else
+        else if (!exists(plat::str(r / L"kit" / L"kit_manifest.json")))
+#endif
+            missingPart = plat::str(fs::path(L"kit") / L"");
+        else if (p.python.empty())
+        {
+            missingPart = "python3";
+            missingPython = true;
+        }
         phase = !missingPart.empty() ? Phase::Incomplete : cfg.disc.empty() ? Phase::Welcome : Phase::Ready;
         readStamps();
         cleanUpdateLeftovers();
@@ -1502,9 +1524,14 @@ static void drawIncomplete(App &app)
 {
     heading(L("Some files are missing", "Des fichiers manquent"), ui::color::early);
     gap(4);
-    std::string text = std::string(L("The launcher did not find ", "Le lanceur ne trouve pas ")) + app.missingPart +
-                       L(" next to it. Unzip the whole download again, keeping its folders together.",
-                         " à côté de lui. Décompressez à nouveau tout le téléchargement, en gardant ses dossiers ensemble.");
+    std::string text = app.missingPython
+                           ? std::string(L("Python 3 is not installed. Install your distribution's python3 package, then start "
+                                           "the launcher again.",
+                                           "Python 3 n'est pas installé. Installez le paquet python3 de votre distribution, puis "
+                                           "relancez le lanceur."))
+                           : std::string(L("The launcher did not find ", "Le lanceur ne trouve pas ")) + app.missingPart +
+                                 L(" next to it. Unzip the whole download again, keeping its folders together.",
+                                   " à côté de lui. Décompressez à nouveau tout le téléchargement, en gardant ses dossiers ensemble.");
     ui::textWrapped(text.c_str(), 19, ui::color::ink);
     ui::text(app.p.release.c_str(), 15, ui::color::inkFaint);
 }
@@ -2026,7 +2053,7 @@ static int selfCheck(const std::string &release, const std::string &file, const 
         }
         if (released && app.sourceVersion != kVersion)
         {
-            say("FAIL source\\release.ini says " + app.sourceVersion + ", the launcher " + kVersion);
+            say("FAIL " + plat::str(fs::path(L"source") / L"release.ini") + " says " + app.sourceVersion + ", the launcher " + kVersion);
             ok = false;
         }
         if (app.missingPart.empty())
@@ -2161,7 +2188,11 @@ int main(int argc, char **argv)
         test.playSeconds = playSeconds;
         test.crashSeconds = crashSeconds;
         test.screensOnly = screensOnly;
+#ifdef _WIN32
         test.log = _wfopen((plat::path(test.shots) / L"selftest.log").c_str(), L"w");
+#else
+        test.log = std::fopen((plat::path(test.shots) / "selftest.log").c_str(), "w");
+#endif
         test.t0 = plat::now();
         test.say("release %s, user folder %s", app.p.release, app.p.user);
         test.build();

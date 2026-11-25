@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+### Added
+- A Linux download, `SoulCaliburIII_Recomp-<version>-linux.tar.gz`: the launcher for Linux (`sc3-launcher`), the code and
+  the SDL3 and Dear ImGui sources. It builds the game with your system's compiler, Python and FFmpeg; **Prepare the
+  game** names the packages to install for your distribution when one is missing, and the Update button installs the
+  next Linux release.
+
 ## [0.1.0] - 2026-11-25
 
 ### Changed

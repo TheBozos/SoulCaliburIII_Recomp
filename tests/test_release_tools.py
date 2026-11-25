@@ -225,8 +225,92 @@ class ReleaseTests(unittest.TestCase):
             path = Path(folder) / 'other.zip'
             with zipfile.ZipFile(path, 'w') as archive:
                 archive.writestr('TMB_Recomp_Bozo/SC3 Launcher.exe', b'x')
-            with zipfile.ZipFile(path) as archive, self.assertRaises(apply_update.UpdateError):
+            archive = apply_update.Archive(str(path))
+            with self.assertRaises(apply_update.UpdateError):
                 apply_update.checked_names(archive, '0.1.0')
+            archive.close()
+
+    def linux_release(self, folder, extra=()):
+        stage = Path(folder) / 'stage'
+        for name in make_release.LINUX_REQUIRED:
+            file = stage / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(b'\x7fELF launcher' if name == 'sc3-launcher' else b'version = 0.1.1\n')
+        (stage / 'sc3-launcher').chmod(0o755)
+        for name, data in extra:
+            (stage / name).parent.mkdir(parents=True, exist_ok=True)
+            (stage / name).write_bytes(data)
+        path = Path(folder) / 'SoulCaliburIII_Recomp-0.1.1-linux.tar.gz'
+        make_release.tar_dir(str(stage), str(path), 'SoulCaliburIII_Recomp', 1700000000)
+        return path
+
+    def test_linux_release_has_one_folder_the_launcher_and_no_other_elf(self):
+        with tempfile.TemporaryDirectory() as folder:
+            good = self.linux_release(folder)
+            self.assertEqual(make_release.verify_tar(str(good)), [])
+            with tarfile.open(good) as tf:
+                if sys.platform != 'win32':
+                    self.assertEqual(tf.getmember('SoulCaliburIII_Recomp/sc3-launcher').mode, 0o755)
+                self.assertEqual(tf.getmember('SoulCaliburIII_Recomp/README.txt').mode, 0o644)
+            bad = self.linux_release(folder, [('source/tool', b'\x7fELF other'), ('game/SLUS_212.16', b'x')])
+            problems = make_release.verify_tar(str(bad))
+            self.assertTrue(any('source/tool: an ELF file' in p for p in problems), problems)
+            self.assertTrue(any('SLUS_212.16' in p for p in problems), problems)
+
+    def test_linux_release_is_reproducible(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            self.assertEqual(self.linux_release(a).read_bytes(), self.linux_release(b).read_bytes())
+
+    def test_update_installs_a_linux_release_with_its_launcher_executable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self.linux_release(folder)
+            make_release.write_sha256(str(path))
+            install = Path(folder) / 'install'
+            (install / 'game').mkdir(parents=True)
+            (install / 'game/keep.txt').write_bytes(b'player')
+            out = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/apply_update.py'), '--zip', str(path),
+                                  '--sha256', str(path) + '.sha256', '--version', '0.1.1', '--install', str(install),
+                                  '--keep-zip'], stdout=subprocess.PIPE, universal_newlines=True)
+            self.assertEqual(out.returncode, 0, out.stdout)
+            self.assertIn('done 0.1.1', out.stdout)
+            self.assertTrue(os.access(install / 'sc3-launcher', os.X_OK) or sys.platform == 'win32')
+            self.assertEqual((install / 'game/keep.txt').read_bytes(), b'player')
+
+    def test_update_refuses_a_link_in_a_linux_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'linked.tar.gz'
+            with tarfile.open(path, 'w:gz') as tf:
+                link = tarfile.TarInfo('SoulCaliburIII_Recomp/source/escape')
+                link.type, link.linkname = tarfile.SYMTYPE, '/etc'
+                tf.addfile(link)
+            with self.assertRaises(apply_update.UpdateError):
+                apply_update.Archive(str(path))
+
+
+class LinuxBuildTests(unittest.TestCase):
+    def test_missing_tools_are_named_with_the_distribution_command(self):
+        with patch.object(sc3_build.shutil, 'which', lambda name, **_k: None if name == 'ninja' else '/usr/bin/' + name), \
+                patch.object(sc3_build.subprocess, 'run', lambda cmd, **_k: SimpleNamespace(
+                    returncode=1 if cmd[-1] in ('libswscale', 'x11', 'wayland-client') else 0)):
+            missing = sc3_build.linux_missing()
+        self.assertEqual(missing, ['ninja', 'FFmpeg (libswscale)', 'X11 or Wayland (x11 or wayland-client)'])
+        with patch.object(sc3_build, 'linux_family', lambda: 'fedora'):
+            self.assertIn('sudo dnf install', sc3_build.linux_missing_message(missing))
+        with patch.object(sc3_build, 'linux_family', lambda: None):
+            self.assertIn('sudo apt install', sc3_build.linux_missing_message(missing))
+
+    def test_a_linux_kit_gives_the_libraries_sources_and_keeps_the_system_toolchain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            kit = Path(folder) / 'kit'
+            (kit / 'deps').mkdir(parents=True)
+            (kit / 'kit_manifest.json').write_text('{"platform": "linux"}')
+            args = SimpleNamespace(out=str(Path(folder) / 'out'), game=None, toolchain=None, fetch_cache=None,
+                                   debug_info=None, kit=str(kit), no_kit=False)
+            build = sc3_build.Build(args)
+            self.assertEqual(build.kit, str(kit))
+            self.assertIsNone(args.toolchain)
+            self.assertIsNone(build.ffmpeg_root)
+            self.assertEqual(args.fetch_cache, str(kit / 'deps'))
 
 
 if __name__ == '__main__':

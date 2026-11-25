@@ -41,10 +41,21 @@ namespace ui
             std::snprintf(cfg.Name, sizeof(cfg.Name), "Exo 2");
             fonts.text = io.Fonts->AddFontFromMemoryTTF(const_cast<void *>(exo), static_cast<int>(size), S(20), &cfg);
         }
+#ifdef _WIN32
         const std::string windir = plat::getEnv("WINDIR").empty() ? "C:\\Windows" : plat::getEnv("WINDIR");
+        std::vector<std::string> monoFiles;
         for (const char *name : {"CascadiaMono.ttf", "CascadiaCode.ttf", "consola.ttf"})
+            monoFiles.push_back(windir + "\\Fonts\\" + name);
+#else
+        const std::vector<std::string> monoFiles = {
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf", "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf", "/usr/share/fonts/TTF/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansMono-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"};
+#endif
+        for (const std::string &file : monoFiles)
         {
-            const std::string file = windir + "\\Fonts\\" + name;
             std::error_code ec;
             if (std::filesystem::exists(plat::path(file), ec))
             {

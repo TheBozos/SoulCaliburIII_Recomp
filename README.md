@@ -92,18 +92,23 @@ How each layer of the game is answered:
 
 ## For players
 
-You build the game yourself, on your PC, from **your own disc**: nothing of the game is in the download. No
-release has been published yet.
+You build the game yourself, on your PC, from **your own disc**: nothing of the game is in the download. The
+[releases](https://github.com/TheBozos/SoulCaliburIII_Recomp/releases/latest) have a Windows zip and a Linux archive.
 
-**Windows.** A release zip (`scripts/make_release.py`) holds `SC3 Launcher.exe`, our code with BozoEngine's, and the
+**Windows.** `SoulCaliburIII_Recomp-<version>.zip` holds `SC3 Launcher.exe`, our code with BozoEngine's, and the
 build kit (compiler, CMake, Ninja, a static FFmpeg, Python). Unzip it outside `Program Files` with about 15 GB free,
 start the launcher, pick your USA or European disc image (`.iso`, or `.bin` with its `.cue`), click **Prepare the game**
 (about 20 minutes on 4 cores, most of it the packs), then **Play**. With the European disc, the launcher's settings
 choose the game's language (Windows' by default). Requires Windows 10 1903 or newer, a 64-bit CPU and
 OpenGL 3.3.
 
-**Linux.** With GCC, CMake 3.21+, Ninja, Python 3, pkg-config and FFmpeg's development libraries (`libavcodec`,
-`libavformat`, `libavutil`, `libswresample`, `libswscale`):
+**Linux.** `SoulCaliburIII_Recomp-<version>-linux.tar.gz` holds `sc3-launcher`, the same code and the SDL3 and Dear
+ImGui sources; the compiler, Python and FFmpeg are your system's. The build needs GCC, CMake 3.21+, Ninja, pkg-config,
+Python 3 and the development files of FFmpeg (`libavcodec`, `libavformat`, `libavutil`, `libswresample`, `libswscale`),
+X11 (with its extensions) or Wayland, OpenGL and PipeWire, PulseAudio or ALSA; **Prepare the game** names the packages
+to install for Debian, Ubuntu, Fedora, Arch and openSUSE when one is missing. Extract it anywhere with about 15 GB free
+and run `SoulCaliburIII_Recomp/sc3-launcher`; the disc picker uses your desktop's file dialog (xdg-desktop-portal) or
+zenity. From a clone instead:
 
 ```bash
 git clone --recurse-submodules https://github.com/TheBozos/SoulCaliburIII_Recomp.git
@@ -177,9 +182,10 @@ leaves the machine that built it. Clang targets (zig c++, llvm-mingw) build a bi
 `__builtin_longjmp` restores rbp from the frame address instead of the frame pointer, which breaks BozoEngine's stops.
 
 The release: `scripts/make_build_kit.py` (Windows, MSYS2 and the network) assembles the kit at the versions
-`scripts/build_kit_packages.json` pins; `launcher/` is `SC3 Launcher.exe`; `scripts/make_release.py` makes the zip
-from a commit and a `CHANGELOG.md` section; `.github/workflows/release.yml` runs it on a version tag and makes a draft
-release. `tests/test_release_tools.py` checks the build driver and release tools without game data (CI, Linux and
+`scripts/build_kit_packages.json` pins; `launcher/` is `SC3 Launcher.exe` and, on Linux, `sc3-launcher`; `scripts/make_release.py` makes the zip
+from a commit and a `CHANGELOG.md` section, and with `--linux` the Linux `.tar.gz` (on Linux, the system's GCC, CMake and
+Ninja, the launcher's libcurl and SDL3's X11, Wayland and audio development files); `.github/workflows/release.yml` runs
+both on a version tag (the Linux one on Ubuntu 22.04) and makes a draft release with the two. `tests/test_release_tools.py` checks the build driver and release tools without game data (CI, Linux and
 Windows).
 
 ### Running
