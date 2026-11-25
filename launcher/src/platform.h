@@ -1,7 +1,7 @@
 #pragma once
 
-// The launcher's operating-system layer (platform_win.cpp): everything that needs <windows.h>, kept out of the
-// ImGui and SDL translation units. Strings are UTF-8.
+// The launcher's operating-system layer (platform_win.cpp, platform_linux.cpp): everything that needs <windows.h> or
+// POSIX, kept out of the ImGui translation units. Strings are UTF-8.
 
 #include <atomic>
 #include <cstddef>
@@ -22,28 +22,32 @@ namespace plat
     std::string exeDirectory();
     // The command line's arguments (without the program), UTF-8.
     std::vector<std::string> arguments();
-    // The runner's user folder: PS2X_USER_DIR, else %APPDATA%\SoulCaliburIII_Recomp (created).
+    // The runner's user folder: PS2X_USER_DIR, else %APPDATA%\SoulCaliburIII_Recomp on Windows and
+    // $XDG_DATA_HOME/soulcalibur3_recomp (~/.local/share/...) on Linux, as the game resolves it (created).
     std::string userDirectory();
     std::string getEnv(const char *name);
     void setEnv(const char *name, const std::string &value);
-    // "fr" when Windows' display language is French, else "en".
+    // "fr" when the system's display language is French, else "en".
     std::string systemLanguage();
-    // Windows' display language among the European disc's (en, fr, de, es, it), else "en".
+    // The system's display language among the European disc's (en, fr, de, es, it), else "en".
     std::string systemGameLanguage();
+    // A program's full path, searched on the PATH; "" when absent.
+    std::string findProgram(const std::string &name);
 
-    // The native Open dialog for a disc image; "" when cancelled.
+    // The native Open dialog for a disc image (on Linux the desktop portal or zenity); "" when cancelled.
     std::string pickDiscImage(void *ownerWindow, const std::string &title, const std::string &filterName,
                               const std::string &allFilesName);
-    // Opens a file, folder or URL as Explorer would.
+    // Opens a file, folder or URL as Explorer (xdg-open) would.
     void open(const std::string &target);
     void showInFolder(const std::string &file);
 
-    // A resource of the launcher's exe (RCDATA), or nullptr.
+    // A resource of the launcher's exe (RCDATA on Windows, embedded at build time on Linux), or nullptr.
     const void *resource(const char *name, size_t &size);
 
     // A child process. With output: stdout and stderr through one pipe, read line by line by a thread; started with
-    // CREATE_NO_WINDOW and in a job object, so kill() ends it and everything it started (and so does the launcher
-    // exiting). Without output: a plain GUI process (the game), not tied to the launcher.
+    // CREATE_NO_WINDOW and in a job object on Windows, in its own process group on Linux, so kill() ends it and
+    // everything it started (and so does the launcher exiting). Without output: a plain GUI process (the game), not
+    // tied to the launcher.
     class Process
     {
     public:
@@ -62,7 +66,7 @@ namespace plat
         std::vector<std::string> takeLines();
         // Ends the process (and with output, its whole tree).
         void kill();
-        // Asks the process's top-level windows to close (WM_CLOSE), as the window's X would.
+        // Asks the process's top-level windows to close (WM_CLOSE; SIGTERM on Linux), as the window's X would.
         void requestClose();
         // Waits until its output pipe is drained (after it exited).
         void drain(int timeoutMs);
@@ -78,7 +82,8 @@ namespace plat
     std::vector<std::pair<std::string, uint64_t>> listFiles(const std::string &folder, const std::string &suffix);
     uint64_t freeBytes(const std::string &folder);
 
-    // An HTTP(S) GET through WinHTTP (the system's proxy settings and certificate store; nothing else linked): the
+    // An HTTP(S) GET through WinHTTP (the system's proxy settings and certificate store; nothing else linked), or the
+    // system's libcurl on Linux (loaded when first used, so the launcher starts without it): the
     // body (at most maxBytes) and the status code. False with error set when the server could not be reached.
     // Blocking, with short timeouts: call it from a thread.
     bool httpGet(const std::string &url, const std::string &userAgent, std::string &body, long &status,

@@ -122,6 +122,23 @@ namespace plat
         }
     }
 
+    std::string findProgram(const std::string &name)
+    {
+        std::wstring buffer(MAX_PATH, L'\0');
+        for (;;)
+        {
+            const DWORD n = SearchPathW(nullptr, widen(name).c_str(), L".exe", static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+            if (n == 0)
+                return {};
+            if (n < buffer.size())
+            {
+                buffer.resize(n);
+                return narrow(buffer);
+            }
+            buffer.resize(n);
+        }
+    }
+
     std::string pickDiscImage(void *ownerWindow, const std::string &title, const std::string &filterName,
                               const std::string &allFilesName)
     {
