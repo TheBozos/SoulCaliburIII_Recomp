@@ -27,3 +27,4 @@ mc1/
 !docs/branding/*.png
 *.log
 runs/
+__pycache__/
