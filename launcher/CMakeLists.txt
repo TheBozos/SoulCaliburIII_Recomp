@@ -4,21 +4,19 @@ project(SC3_Launcher LANGUAGES C CXX)
 # No C++ modules are used; keep GCC's module mapper out of relocatable kits with spaced/non-ASCII paths.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-# SC3 Launcher.exe: what a player double-clicks. It checks their disc image, runs scripts/sc3_build.py with the build kit
-# (kit\python), shows its progress, and starts the game. Its own small project (the game's CMake needs the disc): SDL3
-# and Dear ImGui at the releases BozoEngine pins (its runtime/CMakeLists.txt: the same archives and SHA-256), ImGui's own
-# SDL3 and OpenGL 3 backends, BozoEngine's PNG writer (the selftest's screenshots); built static, a GUI-subsystem exe
-# that needs no DLL. Windows only.
+# SC3 Launcher.exe (sc3-launcher on Linux): what a player double-clicks. It checks their disc image, runs
+# scripts/sc3_build.py with the build kit's Python (the system's python3 on Linux), shows its progress, and starts the
+# game. Its own small project (the game's CMake needs the disc): SDL3 and Dear ImGui at the releases BozoEngine pins
+# (its runtime/CMakeLists.txt: the same archives and SHA-256), ImGui's own SDL3 and OpenGL 3 backends, BozoEngine's PNG
+# writer (the selftest's screenshots). On Windows a static GUI-subsystem exe that needs no DLL; on Linux libstdc++ and
+# libgcc linked in, libcurl loaded when the update check runs.
 #
 #   cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
-#   cmake --build build/launcher        -> build/launcher/SC3 Launcher.exe
+#   cmake --build build/launcher        -> build/launcher/SC3 Launcher.exe, or build/launcher/sc3-launcher
 #
 # Offline (the build kit): -DFETCHCONTENT_SOURCE_DIR_SDL3=<kit>/deps/sdl3-src -DFETCHCONTENT_SOURCE_DIR_IMGUI=<kit>/deps/
 # imgui-src and -DLAUNCHER_FONT_DIR=<dir with Exo2[wght].ttf and OFL.txt>.
 
-if(NOT WIN32)
-    message(FATAL_ERROR "The launcher is Windows only (Linux players run scripts/sc3_build.py).")
-endif()
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
@@ -104,23 +102,35 @@ if(LAUNCHER_VERSION MATCHES "^v?([0-9]+)[.]([0-9]+)[.]([0-9]+)")
 endif()
 list(JOIN LAUNCHER_VERSION_NUMBERS "," LAUNCHER_FILEVERSION)
 
-set(LAUNCHER_ICON "${_icon}")
-set(LAUNCHER_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/launcher.manifest")
 set(LAUNCHER_EXO2 "${_font_dir}/exo2.ttf")
 set(LAUNCHER_OFL "${_font_dir}/OFL.txt")
-configure_file(launcher.rc.in "${CMAKE_BINARY_DIR}/launcher.rc" @ONLY)
-set_source_files_properties("${CMAKE_BINARY_DIR}/launcher.rc" PROPERTIES OBJECT_DEPENDS "${_icon};${LAUNCHER_EXO2};${LAUNCHER_MANIFEST}")
-enable_language(RC)
+set(LAUNCHER_SOURCES src/main.cpp src/ui.cpp src/window.cpp src/build_model.cpp src/config.cpp
+    "${LAUNCHER_BOZO_DIR}/runtime/app/png.cpp")
 
-add_executable(sc3_launcher WIN32
-    src/main.cpp src/ui.cpp src/window.cpp src/build_model.cpp src/config.cpp src/platform_win.cpp
-    "${LAUNCHER_BOZO_DIR}/runtime/app/png.cpp"
-    "${CMAKE_BINARY_DIR}/launcher.rc")
-set_target_properties(sc3_launcher PROPERTIES OUTPUT_NAME "SC3 Launcher")
-target_include_directories(sc3_launcher PRIVATE "${LAUNCHER_BOZO_DIR}/runtime/include")
-target_link_libraries(sc3_launcher PRIVATE launcher_imgui comdlg32 shell32 ole32 winhttp)
-target_compile_definitions(sc3_launcher PRIVATE SC3_VERSION="${LAUNCHER_VERSION}" SC3_COMMIT="${LAUNCHER_COMMIT}")
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    # No DLL besides Windows' own: libstdc++, libgcc and winpthread linked in; no debug information.
-    target_link_options(sc3_launcher PRIVATE -static -s)
+if(WIN32)
+    set(LAUNCHER_ICON "${_icon}")
+    set(LAUNCHER_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/launcher.manifest")
+    configure_file(launcher.rc.in "${CMAKE_BINARY_DIR}/launcher.rc" @ONLY)
+    set_source_files_properties("${CMAKE_BINARY_DIR}/launcher.rc" PROPERTIES OBJECT_DEPENDS "${_icon};${LAUNCHER_EXO2};${LAUNCHER_MANIFEST}")
+    enable_language(RC)
+
+    add_executable(sc3_launcher WIN32 ${LAUNCHER_SOURCES} src/platform_win.cpp "${CMAKE_BINARY_DIR}/launcher.rc")
+    set_target_properties(sc3_launcher PROPERTIES OUTPUT_NAME "SC3 Launcher")
+    target_link_libraries(sc3_launcher PRIVATE launcher_imgui comdlg32 shell32 ole32 winhttp)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # No DLL besides Windows' own: libstdc++, libgcc and winpthread linked in; no debug information.
+        target_link_options(sc3_launcher PRIVATE -static -s)
+    endif()
+else()
+    # The font and its licence assembled into the executable (.incbin), read back by plat::resource.
+    add_executable(sc3_launcher ${LAUNCHER_SOURCES} src/platform_linux.cpp)
+    set_target_properties(sc3_launcher PROPERTIES OUTPUT_NAME "sc3-launcher")
+    set_source_files_properties(src/platform_linux.cpp PROPERTIES
+        COMPILE_DEFINITIONS "SC3_EXO2_FILE=\"${LAUNCHER_EXO2}\";SC3_OFL_FILE=\"${LAUNCHER_OFL}\""
+        OBJECT_DEPENDS "${LAUNCHER_EXO2};${LAUNCHER_OFL}")
+    find_package(Threads REQUIRED)
+    target_link_libraries(sc3_launcher PRIVATE launcher_imgui Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_options(sc3_launcher PRIVATE -static-libstdc++ -static-libgcc -s)
 endif()
+target_include_directories(sc3_launcher PRIVATE "${LAUNCHER_BOZO_DIR}/runtime/include")
+target_compile_definitions(sc3_launcher PRIVATE SC3_VERSION="${LAUNCHER_VERSION}" SC3_COMMIT="${LAUNCHER_COMMIT}")
