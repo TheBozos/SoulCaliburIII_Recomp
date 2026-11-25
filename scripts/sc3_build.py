@@ -830,20 +830,21 @@ LINUX_MODULES = (('FFmpeg', ('libavformat', 'libavcodec', 'libswresample', 'libs
                  ('X11 or Wayland', ('x11|wayland-client',)),
                  ('OpenGL', ('gl|egl',)),
                  ('PipeWire, PulseAudio or ALSA', ('libpipewire-0.3|libpulse|alsa',)))
+LINUX_X11_EXTENSIONS = ('xext', 'xcursor', 'xi', 'xfixes', 'xrandr', 'xscrnsaver', 'xtst')
 LINUX_PACKAGES = {
     'debian': 'sudo apt install build-essential cmake ninja-build pkg-config python3 libavformat-dev libavcodec-dev '
               'libswresample-dev libswscale-dev libavutil-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev '
-              'libxi-dev libxss-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev '
+              'libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libegl-dev libgl-dev '
               'libpipewire-0.3-dev libpulse-dev libasound2-dev libudev-dev',
     'fedora': 'sudo dnf install gcc-c++ cmake ninja-build pkgconf python3 ffmpeg-free-devel libX11-devel libXext-devel '
-              'libXrandr-devel libXcursor-devel libXi-devel libXScrnSaver-devel libxkbcommon-devel wayland-devel '
+              'libXrandr-devel libXcursor-devel libXi-devel libXScrnSaver-devel libXtst-devel libXfixes-devel libxkbcommon-devel wayland-devel '
               'libdecor-devel mesa-libEGL-devel mesa-libGL-devel pipewire-devel pulseaudio-libs-devel alsa-lib-devel '
               'systemd-devel',
     'arch': 'sudo pacman -S --needed base-devel cmake ninja pkgconf python ffmpeg libx11 libxext libxrandr libxcursor '
-            'libxi libxss libxkbcommon wayland libdecor mesa libpipewire libpulse alsa-lib',
+            'libxi libxss libxtst libxfixes libxkbcommon wayland libdecor mesa libpipewire libpulse alsa-lib',
     'suse': 'sudo zypper install gcc-c++ cmake ninja pkg-config python3 ffmpeg-7-libavformat-devel '
             'ffmpeg-7-libavcodec-devel ffmpeg-7-libswresample-devel ffmpeg-7-libswscale-devel ffmpeg-7-libavutil-devel '
-            'libX11-devel libXext-devel libXrandr-devel libXcursor-devel libXi-devel libXss-devel libxkbcommon-devel '
+            'libX11-devel libXext-devel libXrandr-devel libXcursor-devel libXi-devel libXss-devel libXtst-devel libXfixes-devel libxkbcommon-devel '
             'wayland-devel libdecor-devel Mesa-libEGL-devel Mesa-libGL-devel pipewire-devel libpulse-devel '
             'alsa-devel systemd-devel',
 }
@@ -876,6 +877,10 @@ def linux_missing(toolchain=None):
                 subprocess.run(['pkg-config', '--exists', alt]).returncode == 0 for alt in m.split('|'))]
             if lacking:
                 missing.append('%s (%s)' % (what, ', '.join(m.replace('|', ' or ') for m in lacking)))
+        if subprocess.run(['pkg-config', '--exists', 'x11']).returncode == 0:
+            lacking = [m for m in LINUX_X11_EXTENSIONS if subprocess.run(['pkg-config', '--exists', m]).returncode != 0]
+            if lacking:
+                missing.append('X11 extensions (%s)' % ', '.join(lacking))
     return missing
 
 
