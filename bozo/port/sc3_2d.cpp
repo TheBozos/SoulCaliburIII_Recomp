@@ -2593,7 +2593,7 @@ namespace sc3
         // only, 2 0x32001 Z only, 3 0x30000 both; 0 or other: nothing); RGBA from 0x11AAF8(colour, 255) with alpha 0.
         // Full screen (0x6C00, 0x7200, 0x9400, 0x8E00): the prebuilt list 0x5BEE80 (XYOFFSET_1 0, ten columns 0..640 x 0..448,
         // XYOFFSET_1 back, and its NLOOP 2 A+D tag's second write the TEST after). Else the rectangle moved into the current
-        // XYOFFSET_1 (shadow 0x470FA8 / 0x470FAC), clamped to 0..0xFFFF.
+        // XYOFFSET_2 (shadow 0x470FA8 / 0x470FAC), clamped to 0..0xFFFF.
         void effectRect(EffectBuild &b, uint32_t mode, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float colour[4])
         {
             uint64_t test;

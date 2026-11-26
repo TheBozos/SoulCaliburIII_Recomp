@@ -217,7 +217,7 @@ FinishCount            0x0046E60C 0x00473E0C
 AlphaTable             0x0046EFD8 0x004747D8
 EnvState               0x00470BF0 0x004763F0
 EnvSlots               0x00470BF4 0x004763F4  # pointer: the environment slots (16 bytes each, +0x1510)
-XyoffsetShadow         0x00470F80 0x00476780  # +0x28 / +0x2C: XYOFFSET_1 as the game last wrote it
+XyoffsetShadow         0x00470F80 0x00476780  # +0x20 / +0x24: XYOFFSET_1, +0x28 / +0x2C: XYOFFSET_2, as 0x12CB40 last wrote them
 KickedFrameNumber      0x0047100C 0x0047680C
 ElfTextures[]          0x00473E60 0x00479660  # texture files inside the ELF the 2D pack converts (the font at 0x4763B0, the menu icons at 0x4AF170)
 ElfTextures[]          0x004742D0 0x00479AD0
