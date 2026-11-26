@@ -93,7 +93,7 @@ disc, never read from packets at run time.
 - **Materials** (`sc3_material.cpp`). The register values the builders compute become `Material` fields: blend from
   ALPHA, depth from TEST and ZBUF, alpha test, fog, colour mask, Q. No SC3 draw has a depth write without a test
   (counted: 0 of 2.1 M mesh draws in World Competition).
-  A sprite's edges go to the bounds of the pixels the GS fills (centres in [x0, x1)), so sprites that meet on a half
+  A sprite's edges go to the bounds of the pixels the GS fills (integer coordinates in [x0, x1)), so sprites that meet on a half
   pixel, as Kunpaetku Shrine Ruin's 64-pixel backdrop columns do, leave no gap when the picture is drawn larger.
 
 Checked against the PS2Recomp build (`reference/ab`): the route held at the same game frames on both builds, main's

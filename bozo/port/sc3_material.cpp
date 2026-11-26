@@ -80,7 +80,7 @@ namespace sc3::draw
             out.push_back(c);
         }
 
-        // The GS fills the pixels whose centre lies in [x0, x1); the Renderer's pixel i spans i - 0.5 to i + 0.5.
+        // The GS fills the pixels whose integer coordinate lies in [x0, x1); the Renderer centres pixel i on it (i - 0.5 to i + 0.5).
         float coveredEdge(float edge) { return std::ceil(edge) - 0.5f; }
 
         void toCoveredEdges(float &a, float &b, float &ta, float &tb)
