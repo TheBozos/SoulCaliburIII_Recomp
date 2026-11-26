@@ -228,6 +228,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             cases = [('SoulCaliburIII_Recomp/source/hidden.dat', b'\x7fELF' + b'\0' * 100, 'an ELF file'),
                      ('SoulCaliburIII_Recomp/game/SLUS_212.16', b'x', 'named like a file of the game'),
+                     ('SoulCaliburIII_Recomp/source/SCKA_200.59', b'x', 'named like a file of the game'),
                      ('SoulCaliburIII_Recomp/source/packs/sc3_meshes.pack', b'x', 'named like a file of the game'),
                      ('SoulCaliburIII_Recomp/source/PS2Recomp/runtime.cpp', b'x', 'PS2Recomp')]
             for name, data, problem in cases:
