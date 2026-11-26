@@ -181,11 +181,11 @@ def clamp_future_mtimes(roots, now=None):
             if linked(e) or e.name == '.git':
                 continue
             try:
+                if e.is_dir(follow_symlinks=False):
+                    pending.append(e.path)
                 if e.stat(follow_symlinks=False).st_mtime > now:
                     os.utime(e.path, (now, now))
                     changed += 1
-                if e.is_dir(follow_symlinks=False):
-                    pending.append(e.path)
             except OSError:
                 continue
     return changed
