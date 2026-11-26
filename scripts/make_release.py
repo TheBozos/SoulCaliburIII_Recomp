@@ -332,10 +332,6 @@ def zip_dir(folder, zip_path, top, date_time, compress=True):
     os.replace(tmp, zip_path)
 
 
-def zip_time(epoch):
-    return time.gmtime(max(epoch - 86400, 315532800 + 86400))[:6]  # a zip cannot hold dates before 1980
-
-
 def write_sha256(path):
     digest = sha256_file(path)
     with open(path + '.sha256', 'w', newline='\n') as f:
@@ -390,9 +386,8 @@ class Release:
         return tag[1:] if tag[:1] in 'vV' else tag
 
     def zip_time(self):
-        """A zip's dates have no time zone: unzippers read them as local time, up to 14 hours either side of UTC.
-        A day before the commit, they stay in everyone's past (a future date makes CMake regenerate forever)."""
-        return zip_time(self.commit_date)
+        t = time.gmtime(max(self.commit_date, 315532800 + 86400))  # a zip cannot hold dates before 1980
+        return t[:6]
 
     # -- export
 
