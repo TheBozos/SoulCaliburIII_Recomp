@@ -142,6 +142,20 @@ class BuildTests(unittest.TestCase):
                 self.assertTrue(build.wanted('SCES_533.12'))
                 self.assertFalse(build.wanted('SLUS_212.16'))
 
+    def test_verify_takes_the_korean_disc_and_its_recomp_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.disc_folder(folder, 'SCKA_200.59')
+            digest = sc3_build.hashlib.sha1(b'elf').hexdigest()
+            releases = dict(sc3_build.RELEASES, **{'SCKA_200.59': (digest,) + sc3_build.RELEASES['SCKA_200.59'][1:]})
+            with patch.object(sc3_build, 'RELEASES', releases), redirect_stdout(io.StringIO()):
+                self.assertEqual(build.step_verify(), 'SCKA_200.59')
+                self.assertEqual(build.boot(), 'SCKA_200.59')
+                self.assertEqual(build.elf(), str(Path(folder) / 'work' / 'SCKA_200.59'))
+                self.assertEqual(build.symbol_map(), str(ROOT / 'recomp' / 'kor' / 'sc3_symbols.txt'))
+                self.assertTrue(build.wanted('SCKA_200.59'))
+                self.assertFalse(build.wanted('SLUS_212.16'))
+                self.assertFalse(build.wanted('SCES_533.12'))
+
     def test_verify_names_the_disc_a_damaged_copy_should_be(self):
         with tempfile.TemporaryDirectory() as folder:
             build = self.disc_folder(folder, 'SCES_533.12')
@@ -158,6 +172,7 @@ class BuildTests(unittest.TestCase):
             self.assertIn('boots SLES_533.70', str(raised.exception))
             self.assertIn('SLUS-21216', str(raised.exception))
             self.assertIn('SCES-53312', str(raised.exception))
+            self.assertIn('SCKA-20059', str(raised.exception))
 
     def test_a_work_folder_without_a_verify_record_builds_the_extracted_disc(self):
         with tempfile.TemporaryDirectory() as folder:

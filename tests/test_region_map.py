@@ -175,8 +175,28 @@ class RegionMapTest(unittest.TestCase):
         table = self.write_table('Inside 0x0010001C 0x00100020 reviewed=pal  # read\n')
         self.assertEqual(self.call(region.addresses, table, self.map)[0], 0)
 
+    def test_addresses_fill_another_column_beside_the_pal_one(self):
+        table = self.write_table('F2 0x00100028 0x00000001  # a note\nInside 0x0010001C 0x00100020 reviewed=pal\n')
+        code, printed = self.call(region.addresses, table, self.map, '--column', 'kor', '--write')
+        self.assertEqual(code, 1)
+        self.assertIn('which changed: read it and mark the row reviewed=kor', printed)
+        table = self.write_table('F2 0x00100028 0x00000001  # a note\n'
+                                 'Inside 0x0010001C 0x00100020 0x00100024 reviewed=pal,kor\n')
+        self.assertEqual(self.call(region.addresses, table, self.map, '--column', 'kor', '--write')[0], 0)
+        self.assertEqual(table.read_text().splitlines()[1:], ['F2     0x00100028 0x00000001 0x0010002C  # a note',
+                                                              'Inside 0x0010001C 0x00100020 0x00100024 reviewed=pal,kor'])
+        self.assertEqual(self.call(region.addresses, table, self.map)[0], 1)
+
+    def test_a_column_left_empty_reads_as_none(self):
+        table = self.write_table('F2 0x00100028 - 0x0010002C\nG 0x00100000 reviewed=pal\n')
+        rows = region.Addresses(table).rows
+        self.assertEqual([(r['ntsc'], r['pal'], r['kor']) for r in rows],
+                         [(0x100028, None, 0x10002C), (0x100000, None, None)])
+        self.assertEqual(rows[1]['reviewed'], {'pal'})
+
     def test_header_names_the_columns_addresses_and_the_calls(self):
-        table = self.write_table('F2 0x00100028 0x0010002C\nData[] 0x00110000 0x00110010\nData[] 0x00110008 0x00110018\n')
+        table = self.write_table('F2 0x00100028 0x0010002C 0x0010002C\nData[] 0x00110000 0x00110010 0x00110010\n'
+                                 'Data[] 0x00110008 0x00110018 0x00110018\n')
         port = self.folder / 'port'
         port.mkdir()
         (port / 'a.cpp').write_text('fn::F2(r, c, t);\n')
@@ -184,12 +204,14 @@ class RegionMapTest(unittest.TestCase):
         symbols.write_text('f2 0x10002c\n')
         out = self.folder / 'sc3_region.h'
         for column, expected in (('ntsc', ('F2 = 0x00100028u;', 'Data[] = {0x00110000u, 0x00110008u};', '&::func_0x100028;')),
-                                 ('pal', ('F2 = 0x0010002Cu;', 'Data[] = {0x00110010u, 0x00110018u};', '&::f2_0x10002c;'))):
-            code, _ = self.call(region.header, out, '--title', 'T', '--elf', 'SCES_533.12', '--table', table, '--column',
+                                 ('pal', ('F2 = 0x0010002Cu;', 'Data[] = {0x00110010u, 0x00110018u};', '&::f2_0x10002c;')),
+                                 ('kor', ('F2 = 0x0010002Cu;', 'Data[] = {0x00110010u, 0x00110018u};', '&::f2_0x10002c;'))):
+            elf = 'SCKA_200.59' if column == 'kor' else 'SCES_533.12'
+            code, _ = self.call(region.header, out, '--title', 'T', '--elf', elf, '--table', table, '--column',
                                column, '--symbols', symbols, '--sources', port)
             self.assertEqual(code, 0)
             text = out.read_text()
-            for line in expected + ('kSerial = "SCES-53312";',):
+            for line in expected + ('kSerial = "%s";' % elf.replace('_', '-').replace('.', ''),):
                 self.assertIn(line, text)
 
     def test_header_refuses_a_call_the_table_does_not_name(self):
@@ -213,6 +235,16 @@ class CommittedTableTest(unittest.TestCase):
         with redirect_stdout(StringIO()) as printed:
             code = region.addresses([str(ROOT / 'bozo/port/sc3_addresses.txt'), str(ROOT / 'recomp/pal/address_map.txt')])
         self.assertEqual(code, 0, printed.getvalue())
+
+    def test_the_kor_column_is_the_maps(self):
+        with redirect_stdout(StringIO()) as printed:
+            code = region.addresses([str(ROOT / 'bozo/port/sc3_addresses.txt'), str(ROOT / 'recomp/kor/address_map.txt'),
+                                     '--column', 'kor'])
+        self.assertEqual(code, 0, printed.getvalue())
+
+    def test_every_row_has_an_address_in_every_column(self):
+        rows = region.Addresses(ROOT / 'bozo/port/sc3_addresses.txt').rows
+        self.assertEqual([r['name'] for r in rows if None in (r['ntsc'], r['pal'], r['kor'])], [])
 
 
 if __name__ == '__main__':
