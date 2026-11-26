@@ -1,253 +1,253 @@
 # The game's addresses the port names (sc3::addr::Name, sc3::fn::Name for a call): its address in SLUS_212.16, then
-# in SCES_533.12, `reviewed=<column>,...` for the ones read by hand, then a note. A `name[]` row per element of an array.
-# scripts/sc3_region_map.py addresses fills and checks the SCES_533.12 column from recomp/pal/address_map.txt; an
-# address inside a function PAL changed has to be read by hand and marked reviewed=pal. cmake/bozo.cmake makes
-# sc3_region.h from the build's column.
-GameStart              0x00100008 0x00100008
-MatrixMul              0x00101058 0x00101058
-ColourLerp             0x00102FA0 0x00102FA0
-TextureCall            0x00104DCC 0x00104DCC
-AnimatedTextureCallOt  0x00104E34 0x00104E34
-AnimatedTextureCall    0x00104E48 0x00104E48
-TextureCallOt          0x00104E94 0x00104E94
-RawPartTail            0x00109990 0x00109990
-RawPart                0x0010A178 0x0010A178
-ChainPart              0x0010A4E8 0x0010A4E8
-StrandBones            0x0010B330 0x0010B338
-StrandPart             0x0010B3F0 0x0010B3F8
-StrandLink[]           0x0010B6C8 0x0010B6D0  # 0x10B4D8's returns from OtInsertFixed, one per triangle
-StrandLink[]           0x0010B760 0x0010B768
-ClipEmit               0x0010B7E0 0x0010B7E8
-Clipper                0x0010B970 0x0010B978
-DmaInit                0x0010C890 0x0010C898
-ChannelDriver[]        0x0010C9D0 0x0010C9D8  # VIF0, VIF1 and GIF: wait, sends and stops of the driver
-ChannelDriver[]        0x0010CA00 0x0010CA08
-ChannelDriver[]        0x0010CA78 0x0010CA80
-ChannelDriver[]        0x0010CAE0 0x0010CAE8
-ChannelDriver[]        0x0010CB20 0x0010CB28
-ChannelDriver[]        0x0010CB50 0x0010CB58
-ChannelDriver[]        0x0010CBC8 0x0010CBD0
-ChannelDriver[]        0x0010CC40 0x0010CC48
-ChannelDriver[]        0x0010CCA8 0x0010CCB0
-ChannelDriver[]        0x0010CCE0 0x0010CCE8
-ChannelDriver[]        0x0010CD48 0x0010CD50
-ChannelDriver[]        0x0010CD88 0x0010CD90
-ChannelDriver[]        0x0010CDB8 0x0010CDC0
-ChannelDriver[]        0x0010CE30 0x0010CE38
-ChannelDriver[]        0x0010CE98 0x0010CEA0
-ChannelDriver[]        0x0010CED0 0x0010CED8
-FromScratchpad         0x0010CF10 0x0010CF18
-FromScratchpadStop     0x0010CF88 0x0010CF90
-ToScratchpadWait       0x0010CFC8 0x0010CFD0
-ToScratchpad           0x0010CFF8 0x0010D000
-Inserts[]              0x0010D2F0 0x0010D2F8
-SetLayer               0x0010D718 0x0010D720
-OtInsertDepth          0x0010D9A0 0x0010D9A8
-CloseDepth             0x0010D9A0 0x0010D9A8
-StripInserts[]         0x0010D9A0 0x0010D9A8
-Inserts[]              0x0010D9A0 0x0010D9A8
-CloseAtEnd             0x0010DB88 0x0010DB90
-OtInsertFixed          0x0010DC90 0x0010DC98
-CloseFixed             0x0010DC90 0x0010DC98
-Inserts[]              0x0010DC90 0x0010DC98
-Inserts[]              0x0010DDF8 0x0010DE00
-InsertText             0x0010DF30 0x0010DF38
-Inserts[]              0x0010DF30 0x0010DF38
-InsertLayer            0x0010E068 0x0010E070
-Inserts[]              0x0010E068 0x0010E070
-InsertList             0x0010E1C8 0x0010E1D0
-Inserts[]              0x0010E1C8 0x0010E1D0
-CloseLayerEnd          0x0010E1F8 0x0010E200
-Inserts[]              0x0010E1F8 0x0010E200
-Inserts[]              0x0010E368 0x0010E370
-OtWalk                 0x0010E4B8 0x0010E4C0
-OtWalkByGroup          0x0010E5C8 0x0010E5D0
-FrameClockRestart      0x0010E910 0x0010E918
-FrameClockSet          0x0010E920 0x0010E928
-FrameKick              0x0010F098 0x0010F0A0
-Begin                  0x0010F4B8 0x0010F4C0
-GifListAppend          0x0010F808 0x0010F810
-GifPacketClose         0x0010F808 0x0010F810
-PacketFlush            0x0010F8B8 0x0010F8C0
-SyncPoint              0x0010F9D0 0x0010F9D8
-ScreenSprites          0x00110258 0x00110260
-ScreenObjects          0x001107E0 0x001107E8
-StripInserts[]         0x00110D78 0x00110D80
-Objects                0x00110E50 0x00110E58
-Billboards             0x00112148 0x00112150
-StripInserts[]         0x00113250 0x00113258
-StripInserts[]         0x001132A8 0x001132B0
-Inserts[]              0x001132A8 0x001132B0
-Strips                 0x001134A0 0x001134A8
-ScreenStrips           0x00114B50 0x00114B58
-UploadItem             0x00115600 0x00115608
-FileUpload             0x001177E0 0x001177E8
-FileRelocateReturn     0x00117A80 0x00117A88
-FilePixels             0x00118B68 0x00118B70  # the pointer of a file's upload to those pixels (pixels, file, call, page)
-FileRelocate           0x00118E18 0x00118E20
-PageCopy               0x001191D0 0x001191D8
-PageCopyCbp            0x00119248 0x00119250
-PageCopyClut           0x00119318 0x00119320
-ColourBytes            0x0011AAF8 0x0011AB00
-TextFormat             0x0011CBC8 0x0011CBD0
-Text                   0x0011EA80 0x0011EA88
-TextFormatReturn       0x0011ED0C 0x0011ED14  # where 0x11EA80 returns from it
-FontUpload             0x0011FCF0 0x0011FCF8
-DefaultDepth           0x0011FF98 0x0011FFA0
-Inserts[]              0x00120978 0x00120980  # where 2D packets join the frame: the 2D insertion dispatcher (by InsertMode), fixed OT buckets, the text layers' buckets, the in-order GIF list
-ShadedLine             0x001220C0 0x001220C8
-Line                   0x001223D0 0x001223D8
-Quad                   0x00123340 0x00123348
-Triangle               0x00124C80 0x00124C88
-RegisterPacket         0x001276E8 0x001276F0
-GsDrainWait            0x00127778 0x00127780
-SetDisplay             0x00127908 0x00127910
-SetDisplayFields       0x00127980 0x00127988
-IconsUpload            0x00128080 0x00128088
-Icon                   0x001280F8 0x00128100
-EffectInline           0x0012C690 0x0012C698
-EffectLayer            0x0012C7E0 0x0012C7E8
-ScreenOffset           0x0012CB40 0x0012CB48  # (x, y, mode): XYOFFSET_2 (mode > 0 with bit 1 the GIF list, 0 the layer, < 0 the table); mode > 0 with bit 0 XYOFFSET_1 (the VIF1 list, bit 0x4000 the GIF list too)
-VblankHandler          0x0012CF38 0x0012CF40
-Lines                  0x0012D0D8 0x0012D0E0
-FrameClock             0x0012D0E8 0x0012D0F0
-MovieFrameWaitReturn   0x0012E654 0x0012E514 reviewed=pal  # PAL: main loop: the return from 0x3AE238 (PAL 0x3B37D0), the same sb 0xABD before it
-FrameEndReturn         0x0012EA90 0x0012E950 reviewed=pal  # PAL: main loop: the return from 0x148098 (PAL 0x148180), the same sb 0xABD before it
-Copy                   0x0012FE98 0x0012FD78
-Light                  0x00135C68 0x00135B88
-Roll                   0x00135F78 0x00135E98
-LabelsUpload           0x00138860 0x00138780
-Labels                 0x001388E8 0x00138808
-DepthBuffer            0x0013AB70 0x0013AAA8  # (page, a1, link, flag): 0x13AA98's ZBUF_2 (flag >= 0, ZMSK when 0) or ZBUF_1 (ZMSK when flag is even) packet, linked by link
-StoreImage             0x0013BDF0 0x0013BD28
-DisplayCopy            0x00141C80 0x00141D68
-EnvSlot                0x00144198 0x00144280
-ElapsedLines           0x00148098 0x00148180
-LinesSinceMark         0x001480D0 0x001481B8
-Relocate               0x0014A7D8 0x0014A938
-FileRequest            0x00150418 0x00150568
-SunFlare               0x00163650 0x00163730  # reads an 8 x 8 block of Z behind the sun
-GlowBufferBuild        0x001705B0 0x00170658
-GlowLayerEnd           0x001725C0 0x00172678
-GlowBufferDraw         0x00172E90 0x00172F58
-ShadowDarken           0x001F6C48 0x001F73E0
-ShadowSetup            0x001F70E0 0x001F7878
-ShadowResolve          0x001F7530 0x001F7CC8
-ShadowVolumes          0x001F8598 0x001F8D70 reviewed=pal  # PAL: its own body only relocated; the function before it in the same block changed
-MovieCopy              0x00217E28 0x002190E0 reviewed=pal  # the movie task's copy of a picture into a texture file's pixels (handle, frame, pixels, flags); PAL: the same prologue; PAL adds a block on its early return
-MovieTaskEnd           0x00218600 0x00219918 reviewed=pal  # PAL: the same prologue and body
-MwPlyDecoderSettings[] 0x003A8A98 0x003AE030
-MwPlyCreate            0x003AA698 0x003AFC30
-MwPlyDestroy           0x003AAC38 0x003B01D0
-MwPlyGetCurFrm         0x003AB630 0x003B0BC8
-MwPlyRelCurFrm         0x003ABF50 0x003B14E8
-MwPlyIsNextFrmReady    0x003AC008 0x003B15A0
-MwPlyIsPause           0x003AD300 0x003B2898
-MwPlyStarts[]          0x003AD4B0 0x003B2A48
-MwPlyStarts[]          0x003AD5E8 0x003B2B80
-MwPlyStarts[]          0x003AD6E8 0x003B2C80
-MwPlyStop              0x003AD870 0x003B2E08
-MwPlyPause             0x003AD8F0 0x003B2E88
-MwPlyStarts[]          0x003ADA20 0x003B2FB8
-MwPlyStartAfs          0x003ADA20 0x003B2FB8
-MwPlyStarts[]          0x003ADBD0 0x003B3168
-CriFromScratchpad      0x003AE058 0x003B35F0
-CriToScratchpad        0x003AE130 0x003B36C8
-MoviePlayStat          0x003AE988 0x003B3F20
-MwPlyGetStat           0x003AE9F8 0x003B3F90
-MwPlyDecoderSettings[] 0x003AEF20 0x003B44B8  # set on a decoder the game never gets: its volume, an output setting, a memory area, a frame's information
-MwPlyDecoderSettings[] 0x003B0178 0x003B5710
-MwPlyStarts[]          0x003B1328 0x003B68C0
-MwPlyStarts[]          0x003B1428 0x003B69C0
-MwPlyStarts[]          0x003B1698 0x003B6C30
-MwPlyStartAfsLp        0x003B1698 0x003B6C30
-MwPlyStarts[]          0x003B17E0 0x003B6D78
-MwPlyStarts[]          0x003B2DF0 0x003B8388
-MwPlyDecoderSettings[] 0x003B3AD0 0x003B9068
-AdxmVsyncSleep         0x003F0F10 0x003F64B0
-AdxmVsyncSleepReturn   0x003F0F60 0x003F6500
-GsExecStoreImage       0x00420370 0x00425860
-PadSetCallback         0x00422F20 0x00428410
-CdRead                 0x00424E28 0x0042A318
-InitSysRest            0x00440610 0x00445AD0  # the guest part of _InitSys
-InitSys                0x00440860 0x00445D20
-OtGroups               0x00467488 0x0046CC88  # 64 bits: the 128-bucket groups with packets
-BucketMask             0x00467488 0x0046CC88
-OtLayerBase            0x00467490 0x0046CC90  # bucket offset of the current layer
-BucketMaskBase         0x00467490 0x0046CC90
-Signals                0x00467494 0x0046CC94
-FrameLists             0x004674C0 0x0046CCC0
-StripTable             0x00467510 0x0046CD10
-StripInsertion         0x00467520 0x0046CD20
-ScreenTex1             0x00467528 0x0046CD28  # TEX1_2 by an entry's +0x4B (the item's +0x1D & 1)
-ObjectSt               0x00467580 0x0046CD80  # the ST rows of a page's whole texture (0x10FE50 scales them)
-StripColourMax         0x00467600 0x0046CE00
-ScreenSpriteAspect     0x00467610 0x0046CE10
-ScreenVector           0x00467620 0x0046CE20  # the 2D sprites' screen vector; Wide, Aspect, AspectWide: the other screen shapes'
-ScreenVectorWide       0x00467630 0x0046CE30
-ScreenVectorAspect     0x00467640 0x0046CE40
-ScreenVectorAspectWide 0x00467650 0x0046CE50
-StripClip              0x00467690 0x0046CE90
-Accents                0x00467848 0x0046D048  # pointer: the accent drawn over codes 0xC0 and up
-TextGlobals            0x00468400 0x0046DC00  # the text state and the formatter's tables around it, 0xC00 bytes
-FontKerning            0x004684A8 0x0046DCA8  # per font: two bytes a code (offset * 16, advance)
-TextState              0x00468540 0x0046DD40
-TextAlphas             0x004685C0 0x0046DDC0  # ALPHA_2 by the state's byte 5
-FontSt                 0x00468648 0x0046DE48  # per font: a glyph's two ST words, 16 bytes a code
-GlyphShift             0x00468A60 0x0046E260  # a byte a code: > 0 raised, < 0 lowered by the state's offset
-InsertMode             0x00468CB0 0x0046E4B0  # 0x120978's mode
-IconReady              0x00468D58 0x0046E558
-IconDepth              0x00468D5C 0x0046E55C
-IconUpload             0x00468D60 0x0046E560
-EffectSlot             0x00469210 0x0046EA10  # the GIF list slot 0x12C690 left for 0x12C7E0 (0: none)
-ScreenMode             0x00469230 0x0046EA30  # pointer: +0x50 non-zero, widths scaled
-EffectGlobals          0x00469234 0x0046EA34  # pointer: +0x10 / +0x108 the TEST left after, +0x70 slot or inline
-LineMarks              0x00469234 0x0046EA34
-Display                0x00469234 0x0046EA34
-FrameClockHigh         0x00469248 0x0046EA48
-EffectCamera           0x004696C0 0x0046EEC0  # 0x12B7D0's a1: the camera / light holder
-View                   0x0046DA88 0x00473288  # +0x460 the 2D view matrix
-Game                   0x0046DB10 0x00473310
-FinishFlag             0x0046E5CE 0x00473DCE
-InlineByte             0x0046E5D1 0x00473DD1  # set: 0x12C690 builds inline even when +0x70 asks for a slot
-NoGsPackets            0x0046E5DB 0x00473DDB
-NoPacketsByte          0x0046E5DB 0x00473DDB  # set: the layer builds nothing
-OverBudget             0x0046E5DC 0x00473DDC
-FrameSkipped           0x0046E5DD 0x00473DDD
-FrameNumber            0x0046E608 0x00473E08
-FinishCount            0x0046E60C 0x00473E0C
-AlphaTable             0x0046EFD8 0x004747D8
-EnvState               0x00470BF0 0x004763F0
-EnvSlots               0x00470BF4 0x004763F4  # pointer: the environment slots (16 bytes each, +0x1510)
-XyoffsetShadow         0x00470F80 0x00476780  # +0x20 / +0x24: XYOFFSET_1, +0x28 / +0x2C: XYOFFSET_2, as 0x12CB40 last wrote them
-KickedFrameNumber      0x0047100C 0x0047680C
-ElfTextures[]          0x00473E60 0x00479660  # texture files inside the ELF the 2D pack converts (the font at 0x4763B0, the menu icons at 0x4AF170)
-ElfTextures[]          0x004742D0 0x00479AD0
-ElfTextures[]          0x00474630 0x00479E30
-ElfTextures[]          0x004749E0 0x0047A1E0
-ElfTextures[]          0x00474DF0 0x0047A5F0
-ElfTextures[]          0x00475200 0x0047AA00
-ElfTextures[]          0x00475610 0x0047AE10
-ElfTextures[]          0x00475970 0x0047B170
-ElfTextures[]          0x00475DE0 0x0047B5E0
-ElfTextures[]          0x004763B0 0x0047BBB0
-FontFile               0x004763B0 0x0047BBB0
-ElfTextures[]          0x004AF170 0x004B4970
-IconFile               0x004AF170 0x004B4970
-ShadowFighter1         0x004B487C 0x004BA07C
-Fighter1Light          0x004B6954 0x004BC154  # a float the shadow pass compares with -1 to pick the light slot: ShadowFighter1 + 0x20D8
-ShadowFighter2         0x004D1FFC 0x004D77FC
-Fighter2Light          0x004D40D4 0x004D98D4  # the same field: ShadowFighter2 + 0x20D8
-ShadowWanted           0x004F8402 0x004FDC02
-ShadowFlags            0x004F8403 0x004FDC03
-MwPlySlots             0x0054D6C4 0x0054E714
-PadCallback            0x00576DD8 0x00577E18
-ObjectDepthClamp       0x0058A530 0x0058B5B0
-StripDepthMin          0x0058A560 0x0058B5E0
-Renderer               0x005BE700 0x005BC780  # +0 frame not built, +0x2c heap qwords used, +0x30 heap cursor, +0x54 the OT
-GifListCursor          0x005BE708 0x005BC788  # 0x10DB68: list address = *(+8) + (p - *(0x70000000))
-FontDescs              0x005BE840 0x005BC8C0  # 28 bytes a font
-TextTex2               0x005BE8E8 0x005BC968  # TEX2_2 by font * 16 + colour
-IconSt                 0x005BECA0 0x005BCD20
-TwoD                   0x005BEDD0 0x005BCE50  # +0x4c the 2D texture file, +0x68 the 2D depth
-FillList               0x005BEE80 0x005BCF00  # 0x13CCA8's prebuilt full-screen sprites (15 quadwords)
+# in SCES_533.12 and in SCKA_200.59, `reviewed=<column>,...` for the ones read by hand, then a note. A `name[]` row per
+# element of an array. scripts/sc3_region_map.py addresses fills and checks a column from its map
+# (recomp/pal/address_map.txt, recomp/kor/address_map.txt with --column kor); an address inside a function that release
+# changed has to be read by hand and marked reviewed=<column>. cmake/bozo.cmake makes sc3_region.h from the build's column.
+GameStart              0x00100008 0x00100008 0x00100008
+MatrixMul              0x00101058 0x00101058 0x00101058
+ColourLerp             0x00102FA0 0x00102FA0 0x00102FA0
+TextureCall            0x00104DCC 0x00104DCC 0x00104DCC
+AnimatedTextureCallOt  0x00104E34 0x00104E34 0x00104E34
+AnimatedTextureCall    0x00104E48 0x00104E48 0x00104E48
+TextureCallOt          0x00104E94 0x00104E94 0x00104E94
+RawPartTail            0x00109990 0x00109990 0x00109990
+RawPart                0x0010A178 0x0010A178 0x0010A178
+ChainPart              0x0010A4E8 0x0010A4E8 0x0010A4E8
+StrandBones            0x0010B330 0x0010B338 0x0010B338
+StrandPart             0x0010B3F0 0x0010B3F8 0x0010B3F8
+StrandLink[]           0x0010B6C8 0x0010B6D0 0x0010B6D0  # 0x10B4D8's returns from OtInsertFixed, one per triangle
+StrandLink[]           0x0010B760 0x0010B768 0x0010B768
+ClipEmit               0x0010B7E0 0x0010B7E8 0x0010B7E8
+Clipper                0x0010B970 0x0010B978 0x0010B978
+DmaInit                0x0010C890 0x0010C898 0x0010C898
+ChannelDriver[]        0x0010C9D0 0x0010C9D8 0x0010C9D8  # VIF0, VIF1 and GIF: wait, sends and stops of the driver
+ChannelDriver[]        0x0010CA00 0x0010CA08 0x0010CA08
+ChannelDriver[]        0x0010CA78 0x0010CA80 0x0010CA80
+ChannelDriver[]        0x0010CAE0 0x0010CAE8 0x0010CAE8
+ChannelDriver[]        0x0010CB20 0x0010CB28 0x0010CB28
+ChannelDriver[]        0x0010CB50 0x0010CB58 0x0010CB58
+ChannelDriver[]        0x0010CBC8 0x0010CBD0 0x0010CBD0
+ChannelDriver[]        0x0010CC40 0x0010CC48 0x0010CC48
+ChannelDriver[]        0x0010CCA8 0x0010CCB0 0x0010CCB0
+ChannelDriver[]        0x0010CCE0 0x0010CCE8 0x0010CCE8
+ChannelDriver[]        0x0010CD48 0x0010CD50 0x0010CD50
+ChannelDriver[]        0x0010CD88 0x0010CD90 0x0010CD90
+ChannelDriver[]        0x0010CDB8 0x0010CDC0 0x0010CDC0
+ChannelDriver[]        0x0010CE30 0x0010CE38 0x0010CE38
+ChannelDriver[]        0x0010CE98 0x0010CEA0 0x0010CEA0
+ChannelDriver[]        0x0010CED0 0x0010CED8 0x0010CED8
+FromScratchpad         0x0010CF10 0x0010CF18 0x0010CF18
+FromScratchpadStop     0x0010CF88 0x0010CF90 0x0010CF90
+ToScratchpadWait       0x0010CFC8 0x0010CFD0 0x0010CFD0
+ToScratchpad           0x0010CFF8 0x0010D000 0x0010D000
+Inserts[]              0x0010D2F0 0x0010D2F8 0x0010D2F8
+SetLayer               0x0010D718 0x0010D720 0x0010D720
+OtInsertDepth          0x0010D9A0 0x0010D9A8 0x0010D9A8
+CloseDepth             0x0010D9A0 0x0010D9A8 0x0010D9A8
+StripInserts[]         0x0010D9A0 0x0010D9A8 0x0010D9A8
+Inserts[]              0x0010D9A0 0x0010D9A8 0x0010D9A8
+CloseAtEnd             0x0010DB88 0x0010DB90 0x0010DB90
+OtInsertFixed          0x0010DC90 0x0010DC98 0x0010DC98
+CloseFixed             0x0010DC90 0x0010DC98 0x0010DC98
+Inserts[]              0x0010DC90 0x0010DC98 0x0010DC98
+Inserts[]              0x0010DDF8 0x0010DE00 0x0010DE00
+InsertText             0x0010DF30 0x0010DF38 0x0010DF38
+Inserts[]              0x0010DF30 0x0010DF38 0x0010DF38
+InsertLayer            0x0010E068 0x0010E070 0x0010E070
+Inserts[]              0x0010E068 0x0010E070 0x0010E070
+InsertList             0x0010E1C8 0x0010E1D0 0x0010E1D0
+Inserts[]              0x0010E1C8 0x0010E1D0 0x0010E1D0
+CloseLayerEnd          0x0010E1F8 0x0010E200 0x0010E200
+Inserts[]              0x0010E1F8 0x0010E200 0x0010E200
+Inserts[]              0x0010E368 0x0010E370 0x0010E370
+OtWalk                 0x0010E4B8 0x0010E4C0 0x0010E4C0
+OtWalkByGroup          0x0010E5C8 0x0010E5D0 0x0010E5D0
+FrameClockRestart      0x0010E910 0x0010E918 0x0010E918
+FrameClockSet          0x0010E920 0x0010E928 0x0010E928
+FrameKick              0x0010F098 0x0010F0A0 0x0010F0A0
+Begin                  0x0010F4B8 0x0010F4C0 0x0010F4C0
+GifListAppend          0x0010F808 0x0010F810 0x0010F810
+GifPacketClose         0x0010F808 0x0010F810 0x0010F810
+PacketFlush            0x0010F8B8 0x0010F8C0 0x0010F8C0
+SyncPoint              0x0010F9D0 0x0010F9D8 0x0010F9D8
+ScreenSprites          0x00110258 0x00110260 0x00110260
+ScreenObjects          0x001107E0 0x001107E8 0x001107E8
+StripInserts[]         0x00110D78 0x00110D80 0x00110D80
+Objects                0x00110E50 0x00110E58 0x00110E58
+Billboards             0x00112148 0x00112150 0x00112150
+StripInserts[]         0x00113250 0x00113258 0x00113258
+StripInserts[]         0x001132A8 0x001132B0 0x001132B0
+Inserts[]              0x001132A8 0x001132B0 0x001132B0
+Strips                 0x001134A0 0x001134A8 0x001134A8
+ScreenStrips           0x00114B50 0x00114B58 0x00114B58
+UploadItem             0x00115600 0x00115608 0x00115608
+FileUpload             0x001177E0 0x001177E8 0x001177E8
+FileRelocateReturn     0x00117A80 0x00117A88 0x00117A88
+FilePixels             0x00118B68 0x00118B70 0x00118B70  # the pointer of a file's upload to those pixels (pixels, file, call, page)
+FileRelocate           0x00118E18 0x00118E20 0x00118E20
+PageCopy               0x001191D0 0x001191D8 0x001191D8
+PageCopyCbp            0x00119248 0x00119250 0x00119250
+PageCopyClut           0x00119318 0x00119320 0x00119320
+ColourBytes            0x0011AAF8 0x0011AB00 0x0011AB00
+TextFormat             0x0011CBC8 0x0011CBD0 0x0011CBD0
+Text                   0x0011EA80 0x0011EA88 0x0011EA88
+TextFormatReturn       0x0011ED0C 0x0011ED14 0x0011ED14  # where 0x11EA80 returns from it
+FontUpload             0x0011FCF0 0x0011FCF8 0x0011FCF8
+DefaultDepth           0x0011FF98 0x0011FFA0 0x0011FFA0
+Inserts[]              0x00120978 0x00120980 0x00120980  # where 2D packets join the frame: the 2D insertion dispatcher (by InsertMode), fixed OT buckets, the text layers' buckets, the in-order GIF list
+ShadedLine             0x001220C0 0x001220C8 0x001220C8
+Line                   0x001223D0 0x001223D8 0x001223D8
+Quad                   0x00123340 0x00123348 0x00123348
+Triangle               0x00124C80 0x00124C88 0x00124C88
+RegisterPacket         0x001276E8 0x001276F0 0x001276F0
+GsDrainWait            0x00127778 0x00127780 0x00127780
+SetDisplay             0x00127908 0x00127910 0x00127910
+SetDisplayFields       0x00127980 0x00127988 0x00127988
+IconsUpload            0x00128080 0x00128088 0x00128048
+Icon                   0x001280F8 0x00128100 0x001280C0
+EffectInline           0x0012C690 0x0012C698 0x0012C658
+EffectLayer            0x0012C7E0 0x0012C7E8 0x0012C7A8
+ScreenOffset           0x0012CB40 0x0012CB48 0x0012CB08  # (x, y, mode): XYOFFSET_2 (mode > 0 with bit 1 the GIF list, 0 the layer, < 0 the table); mode > 0 with bit 0 XYOFFSET_1 (the VIF1 list, bit 0x4000 the GIF list too)
+VblankHandler          0x0012CF38 0x0012CF40 0x0012CF00
+Lines                  0x0012D0D8 0x0012D0E0 0x0012D0A0
+FrameClock             0x0012D0E8 0x0012D0F0 0x0012D0B0
+MovieFrameWaitReturn   0x0012E654 0x0012E514 0x0012E61C reviewed=pal,kor  # PAL: main loop: the return from 0x3AE238 (PAL 0x3B37D0), the same sb 0xABD before it; KOR: the return from 0x3B3908
+FrameEndReturn         0x0012EA90 0x0012E950 0x0012EA58 reviewed=pal,kor  # PAL: main loop: the return from 0x148098 (PAL 0x148180), the same sb 0xABD before it; KOR: the return from 0x1483B0
+Copy                   0x0012FE98 0x0012FD78 0x0012FE78
+Light                  0x00135C68 0x00135B88 0x00135C80
+Roll                   0x00135F78 0x00135E98 0x00135F90
+LabelsUpload           0x00138860 0x00138780 0x00138950
+Labels                 0x001388E8 0x00138808 0x001389D8
+DepthBuffer            0x0013AB70 0x0013AAA8 0x0013ACE0  # (page, a1, link, flag): 0x13AA98's ZBUF_2 (flag >= 0, ZMSK when 0) or ZBUF_1 (ZMSK when flag is even) packet, linked by link
+StoreImage             0x0013BDF0 0x0013BD28 0x0013BF60
+DisplayCopy            0x00141C80 0x00141D68 0x00141F98
+EnvSlot                0x00144198 0x00144280 0x001444B0
+ElapsedLines           0x00148098 0x00148180 0x001483B0
+LinesSinceMark         0x001480D0 0x001481B8 0x001483E8
+Relocate               0x0014A7D8 0x0014A938 0x0014AAD8
+FileRequest            0x00150418 0x00150568 0x00150708
+SunFlare               0x00163650 0x00163730 0x001638D0  # reads an 8 x 8 block of Z behind the sun
+GlowBufferBuild        0x001705B0 0x00170658 0x001707F8
+GlowLayerEnd           0x001725C0 0x00172678 0x00172818
+GlowBufferDraw         0x00172E90 0x00172F58 0x001730F8
+ShadowDarken           0x001F6C48 0x001F73E0 0x001F7500
+ShadowSetup            0x001F70E0 0x001F7878 0x001F7998
+ShadowResolve          0x001F7530 0x001F7CC8 0x001F7DE8
+ShadowVolumes          0x001F8598 0x001F8D70 0x001F8E90 reviewed=pal,kor  # PAL: its own body only relocated; the function before it in the same block changed; KOR: the same, its body relocated word for word
+MovieCopy              0x00217E28 0x002190E0 0x00218BD0 reviewed=pal  # the movie task's copy of a picture into a texture file's pixels (handle, frame, pixels, flags); PAL: the same prologue; PAL adds a block on its early return
+MovieTaskEnd           0x00218600 0x00219918 0x002193A8 reviewed=pal  # PAL: the same prologue and body
+MwPlyDecoderSettings[] 0x003A8A98 0x003AE030 0x003AE168
+MwPlyCreate            0x003AA698 0x003AFC30 0x003AFD68
+MwPlyDestroy           0x003AAC38 0x003B01D0 0x003B0308
+MwPlyGetCurFrm         0x003AB630 0x003B0BC8 0x003B0D00
+MwPlyRelCurFrm         0x003ABF50 0x003B14E8 0x003B1620
+MwPlyIsNextFrmReady    0x003AC008 0x003B15A0 0x003B16D8
+MwPlyIsPause           0x003AD300 0x003B2898 0x003B29D0
+MwPlyStarts[]          0x003AD4B0 0x003B2A48 0x003B2B80
+MwPlyStarts[]          0x003AD5E8 0x003B2B80 0x003B2CB8
+MwPlyStarts[]          0x003AD6E8 0x003B2C80 0x003B2DB8
+MwPlyStop              0x003AD870 0x003B2E08 0x003B2F40
+MwPlyPause             0x003AD8F0 0x003B2E88 0x003B2FC0
+MwPlyStarts[]          0x003ADA20 0x003B2FB8 0x003B30F0
+MwPlyStartAfs          0x003ADA20 0x003B2FB8 0x003B30F0
+MwPlyStarts[]          0x003ADBD0 0x003B3168 0x003B32A0
+CriFromScratchpad      0x003AE058 0x003B35F0 0x003B3728
+CriToScratchpad        0x003AE130 0x003B36C8 0x003B3800
+MoviePlayStat          0x003AE988 0x003B3F20 0x003B4058
+MwPlyGetStat           0x003AE9F8 0x003B3F90 0x003B40C8
+MwPlyDecoderSettings[] 0x003AEF20 0x003B44B8 0x003B45F0  # set on a decoder the game never gets: its volume, an output setting, a memory area, a frame's information
+MwPlyDecoderSettings[] 0x003B0178 0x003B5710 0x003B5848
+MwPlyStarts[]          0x003B1328 0x003B68C0 0x003B69F8
+MwPlyStarts[]          0x003B1428 0x003B69C0 0x003B6AF8
+MwPlyStarts[]          0x003B1698 0x003B6C30 0x003B6D68
+MwPlyStartAfsLp        0x003B1698 0x003B6C30 0x003B6D68
+MwPlyStarts[]          0x003B17E0 0x003B6D78 0x003B6EB0
+MwPlyStarts[]          0x003B2DF0 0x003B8388 0x003B84C0
+MwPlyDecoderSettings[] 0x003B3AD0 0x003B9068 0x003B91A0
+AdxmVsyncSleep         0x003F0F10 0x003F64B0 0x003F65E0
+AdxmVsyncSleepReturn   0x003F0F60 0x003F6500 0x003F6630
+GsExecStoreImage       0x00420370 0x00425860 0x00425990
+PadSetCallback         0x00422F20 0x00428410 0x00428540
+CdRead                 0x00424E28 0x0042A318 0x0042A448
+InitSysRest            0x00440610 0x00445AD0 0x00445C10  # the guest part of _InitSys
+InitSys                0x00440860 0x00445D20 0x00445E60
+OtGroups               0x00467488 0x0046CC88 0x0046CA88  # 64 bits: the 128-bucket groups with packets
+BucketMask             0x00467488 0x0046CC88 0x0046CA88
+OtLayerBase            0x00467490 0x0046CC90 0x0046CA90  # bucket offset of the current layer
+BucketMaskBase         0x00467490 0x0046CC90 0x0046CA90
+Signals                0x00467494 0x0046CC94 0x0046CA94
+FrameLists             0x004674C0 0x0046CCC0 0x0046CAC0
+StripTable             0x00467510 0x0046CD10 0x0046CB10
+StripInsertion         0x00467520 0x0046CD20 0x0046CB20
+ScreenTex1             0x00467528 0x0046CD28 0x0046CB28  # TEX1_2 by an entry's +0x4B (the item's +0x1D & 1)
+ObjectSt               0x00467580 0x0046CD80 0x0046CB80  # the ST rows of a page's whole texture (0x10FE50 scales them)
+StripColourMax         0x00467600 0x0046CE00 0x0046CC00
+ScreenSpriteAspect     0x00467610 0x0046CE10 0x0046CC10
+ScreenVector           0x00467620 0x0046CE20 0x0046CC20  # the 2D sprites' screen vector; Wide, Aspect, AspectWide: the other screen shapes'
+ScreenVectorWide       0x00467630 0x0046CE30 0x0046CC30
+ScreenVectorAspect     0x00467640 0x0046CE40 0x0046CC40
+ScreenVectorAspectWide 0x00467650 0x0046CE50 0x0046CC50
+StripClip              0x00467690 0x0046CE90 0x0046CC90
+Accents                0x00467848 0x0046D048 0x0046CE48  # pointer: the accent drawn over codes 0xC0 and up
+TextGlobals            0x00468400 0x0046DC00 0x0046DA00  # the text state and the formatter's tables around it, 0xC00 bytes
+FontKerning            0x004684A8 0x0046DCA8 0x0046DAA8  # per font: two bytes a code (offset * 16, advance)
+TextState              0x00468540 0x0046DD40 0x0046DB40
+TextAlphas             0x004685C0 0x0046DDC0 0x0046DBC0  # ALPHA_2 by the state's byte 5
+FontSt                 0x00468648 0x0046DE48 0x0046DC48  # per font: a glyph's two ST words, 16 bytes a code
+GlyphShift             0x00468A60 0x0046E260 0x0046E060  # a byte a code: > 0 raised, < 0 lowered by the state's offset
+InsertMode             0x00468CB0 0x0046E4B0 0x0046E2B0  # 0x120978's mode
+IconReady              0x00468D58 0x0046E558 0x0046E358
+IconDepth              0x00468D5C 0x0046E55C 0x0046E35C
+IconUpload             0x00468D60 0x0046E560 0x0046E360
+EffectSlot             0x00469210 0x0046EA10 0x0046E810  # the GIF list slot 0x12C690 left for 0x12C7E0 (0: none)
+ScreenMode             0x00469230 0x0046EA30 0x0046E830  # pointer: +0x50 non-zero, widths scaled
+EffectGlobals          0x00469234 0x0046EA34 0x0046E834  # pointer: +0x10 / +0x108 the TEST left after, +0x70 slot or inline
+LineMarks              0x00469234 0x0046EA34 0x0046E834
+Display                0x00469234 0x0046EA34 0x0046E834
+FrameClockHigh         0x00469248 0x0046EA48 0x0046E848
+EffectCamera           0x004696C0 0x0046EEC0 0x0046ECC0  # 0x12B7D0's a1: the camera / light holder
+View                   0x0046DA88 0x00473288 0x00473088  # +0x460 the 2D view matrix
+Game                   0x0046DB10 0x00473310 0x00473110
+FinishFlag             0x0046E5CE 0x00473DCE 0x00473BCE
+InlineByte             0x0046E5D1 0x00473DD1 0x00473BD1  # set: 0x12C690 builds inline even when +0x70 asks for a slot
+NoGsPackets            0x0046E5DB 0x00473DDB 0x00473BDB
+NoPacketsByte          0x0046E5DB 0x00473DDB 0x00473BDB  # set: the layer builds nothing
+OverBudget             0x0046E5DC 0x00473DDC 0x00473BDC
+FrameSkipped           0x0046E5DD 0x00473DDD 0x00473BDD
+FrameNumber            0x0046E608 0x00473E08 0x00473C08
+FinishCount            0x0046E60C 0x00473E0C 0x00473C0C
+AlphaTable             0x0046EFD8 0x004747D8 0x004749D0
+EnvState               0x00470BF0 0x004763F0 0x004767B0
+EnvSlots               0x00470BF4 0x004763F4 0x004767B4  # pointer: the environment slots (16 bytes each, +0x1510)
+XyoffsetShadow         0x00470F80 0x00476780 0x00476B40  # +0x20 / +0x24: XYOFFSET_1, +0x28 / +0x2C: XYOFFSET_2, as 0x12CB40 last wrote them
+KickedFrameNumber      0x0047100C 0x0047680C 0x00476BCC
+ElfTextures[]          0x00473E60 0x00479660 0x00479A20  # texture files inside the ELF the 2D pack converts (the font at 0x4763B0, the menu icons at 0x4AF170)
+ElfTextures[]          0x004742D0 0x00479AD0 0x00479E90
+ElfTextures[]          0x00474630 0x00479E30 0x0047A1F0
+ElfTextures[]          0x004749E0 0x0047A1E0 0x0047A5A0
+ElfTextures[]          0x00474DF0 0x0047A5F0 0x0047A9B0
+ElfTextures[]          0x00475200 0x0047AA00 0x0047ADC0
+ElfTextures[]          0x00475610 0x0047AE10 0x0047B1D0
+ElfTextures[]          0x00475970 0x0047B170 0x0047B530
+ElfTextures[]          0x00475DE0 0x0047B5E0 0x0047B9A0
+ElfTextures[]          0x004763B0 0x0047BBB0 0x0047BF70
+FontFile               0x004763B0 0x0047BBB0 0x0047BF70
+ElfTextures[]          0x004AF170 0x004B4970 0x004B4D30
+IconFile               0x004AF170 0x004B4970 0x004B4D30
+ShadowFighter1         0x004B487C 0x004BA07C 0x004BA43C
+Fighter1Light          0x004B6954 0x004BC154 0x004BC514  # a float the shadow pass compares with -1 to pick the light slot: ShadowFighter1 + 0x20D8
+ShadowFighter2         0x004D1FFC 0x004D77FC 0x004D7BBC
+Fighter2Light          0x004D40D4 0x004D98D4 0x004D9C94  # the same field: ShadowFighter2 + 0x20D8
+ShadowWanted           0x004F8402 0x004FDC02 0x004FDFC2
+ShadowFlags            0x004F8403 0x004FDC03 0x004FDFC3
+MwPlySlots             0x0054D6C4 0x0054E714 0x0054E9D4
+PadCallback            0x00576DD8 0x00577E18 0x005780D8
+ObjectDepthClamp       0x0058A530 0x0058B5B0 0x0058B830
+StripDepthMin          0x0058A560 0x0058B5E0 0x0058B860
+Renderer               0x005BE700 0x005BC780 0x005BC580  # +0 frame not built, +0x2c heap qwords used, +0x30 heap cursor, +0x54 the OT
+GifListCursor          0x005BE708 0x005BC788 0x005BC588  # 0x10DB68: list address = *(+8) + (p - *(0x70000000))
+FontDescs              0x005BE840 0x005BC8C0 0x005BC6C0  # 28 bytes a font
+TextTex2               0x005BE8E8 0x005BC968 0x005BC768  # TEX2_2 by font * 16 + colour
+IconSt                 0x005BECA0 0x005BCD20 0x005BCB20
+TwoD                   0x005BEDD0 0x005BCE50 0x005BCC50  # +0x4c the 2D texture file, +0x68 the 2D depth
+FillList               0x005BEE80 0x005BCF00 0x005BCD00  # 0x13CCA8's prebuilt full-screen sprites (15 quadwords)

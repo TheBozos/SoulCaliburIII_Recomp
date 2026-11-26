@@ -1,12 +1,13 @@
-"""sc3_region_map: where an address of the NTSC executable (SLUS_212.16) lives in another release's (SCES_533.12).
+"""sc3_region_map: where an address of the NTSC executable (SLUS_212.16) lives in another release's (SCES_533.12,
+SCKA_200.59).
 
-    python scripts/sc3_region_map.py build <SLUS_212.16> <SCES_533.12> <out.map>
+    python scripts/sc3_region_map.py build <SLUS_212.16> <SCES_533.12 or SCKA_200.59> <out.map>
     python scripts/sc3_region_map.py translate <map> <address>...
     python scripts/sc3_region_map.py symbols <map> <ntsc "name 0xADDR" list> <out>
-    python scripts/sc3_region_map.py patches <map> <ntsc patches> <SLUS_212.16> <SCES_533.12> <reviewed> <out>
-    python scripts/sc3_region_map.py addresses <bozo/port/sc3_addresses.txt> <map> [--column pal] [--write]
+    python scripts/sc3_region_map.py patches <map> <ntsc patches> <SLUS_212.16> <its other ELF> <reviewed> <out>
+    python scripts/sc3_region_map.py addresses <bozo/port/sc3_addresses.txt> <map> [--column pal|kor] [--write]
     python scripts/sc3_region_map.py header <sc3_region.h> --title <title> --elf <boot ELF> --table <sc3_addresses.txt>
-                                     [--column ntsc|pal] [--symbols <symbol map>] [--sources <folder>...]
+                                     [--column ntsc|pal|kor] [--symbols <symbol map>] [--sources <folder>...]
 
 build lines the two executables up and writes the ranges that moved as a block:
   code     function by function (a jal target to the next): bodies equal once every relocated field is masked (jump
@@ -391,7 +392,7 @@ class Addresses:
     array), its address in each release (COLUMNS, `-` for none yet), `reviewed=<column>,...` for the ones read by hand,
     then `# note`."""
 
-    COLUMNS = ('ntsc', 'pal')
+    COLUMNS = ('ntsc', 'pal', 'kor')
 
     def __init__(self, path):
         self.path = Path(path)
@@ -425,6 +426,8 @@ class Addresses:
         width = max(len(r['name']) for r in self.rows)
         for r in self.rows:
             cells = ['0x%08X' % r[c] if r[c] is not None else '-' for c in self.COLUMNS]
+            while len(cells) > 1 and cells[-1] == '-':
+                cells.pop()
             reviewed = [c for c in self.COLUMNS if c in r['reviewed']]
             text = '%-*s %s' % (width, r['name'], ' '.join('%-10s' % c for c in cells).rstrip())
             if reviewed:

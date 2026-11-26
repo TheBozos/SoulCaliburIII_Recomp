@@ -1,0 +1,5 @@
+# The lines of recomp/sc3_patches.txt sc3_region_map.py cannot carry to SCKA_200.59 itself, read in the Korean code:
+# <SLUS_212.16 address> <SCKA_200.59 address> <expected word> <replacement>.
+# Main loop's end: the Korean release keeps the frame clock's count in $4, NTSC in $5; frameClockSet (sc3_clock.cpp) reads $5.
+0x12ef38 0x12ef0c 0x8fa4002c 0x8fa5002c
+0x12ef38 0x12ef1c 0xac640000 0x0c043a4a
