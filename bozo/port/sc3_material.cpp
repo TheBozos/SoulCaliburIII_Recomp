@@ -80,6 +80,23 @@ namespace sc3::draw
             out.push_back(c);
         }
 
+        // The GS fills the pixels whose integer coordinate lies in [x0, x1); the Renderer centres pixel i on it (i - 0.5 to i + 0.5).
+        float coveredEdge(float edge) { return std::ceil(edge) - 0.5f; }
+
+        void toCoveredEdges(float &a, float &b, float &ta, float &tb)
+        {
+            const float a1 = coveredEdge(a), b1 = coveredEdge(b);
+            if (a != b)
+            {
+                const float slope = (tb - ta) / (b - a);
+                const float ta1 = ta + (a1 - a) * slope;
+                tb += (b1 - b) * slope;
+                ta = ta1;
+            }
+            a = a1;
+            b = b1;
+        }
+
         void sprites(const GsVertex *in, uint32_t count, const Mapping &map, std::vector<Vertex> &out)
         {
             for (uint32_t i = 0; i + 1u < count; i += 2u)
@@ -87,6 +104,8 @@ namespace sc3::draw
                 const GsVertex &p = in[i], &q = in[i + 1u];
                 const uint32_t rgba = q.rgba, z = q.z;
                 Vertex a = toVertex(p, map, rgba, z), d = toVertex(q, map, rgba, z);
+                toCoveredEdges(a.x, d.x, a.u, d.u);
+                toCoveredEdges(a.y, d.y, a.v, d.v);
                 Vertex b = a, c = a;
                 b.x = d.x;
                 b.u = d.u;
