@@ -19,8 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   over the CHARACTERS list, the "All" list over the edit list), and the character stands in the arch instead of the
   middle of the screen (#26). The character select's weapon preview sits above its panel again (#27).
 - **Prepare the game** no longer stops at "Preparing the recompiler" with `build.ninja still dirty after 100 tries` when
-  the download was unzipped behind UTC soon after its release: the build sets files dated in the future to now, and the
-  zip's dates now stay in the past in every time zone.
+  the download was unzipped behind UTC soon after its release: the build sets files dated in the future to now.
 
 ## [0.1.1] - 2026-11-25
 

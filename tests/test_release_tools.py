@@ -1,5 +1,4 @@
 """The release tools (scripts/sc3_build.py, make_release.py, apply_update.py) without game data."""
-import calendar
 import io
 import os
 import subprocess
@@ -231,12 +230,6 @@ class BuildTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
-    def test_release_zip_dates_are_past_in_every_time_zone(self):
-        commit = calendar.timegm((2026, 11, 20, 18, 30, 0))
-        wall = calendar.timegm(make_release.zip_time(commit) + (0, 0, 0))
-        self.assertLessEqual(wall + 14 * 3600, commit)
-        self.assertEqual(make_release.zip_time(0)[:3], (1980, 1, 2))
-
     def test_source_export_drains_archive_padding_before_waiting(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
