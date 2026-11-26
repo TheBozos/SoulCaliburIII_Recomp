@@ -1,6 +1,6 @@
 # Recompilation notes
 
-How *Soulcalibur III* (SLUS-21216, and the European SCES-53312) runs on BozoEngine: how the stripped ELF is bound, what SC3's port code answers
+How *Soulcalibur III* (SLUS-21216, the European SCES-53312 and the Korean SCKA-20059) runs on BozoEngine: how the stripped ELF is bound, what SC3's port code answers
 and why, how each piece was checked, and what is still open. Build steps are in the [README](README.md). The earlier
 PS2Recomp build is summarised at the end.
 
@@ -172,6 +172,27 @@ moved by varying amounts. The port names the game's addresses, and each disc has
 - Open: PAL's movie copy (0x217E28 in NTSC terms) does more on its early return (a call to 0x128B38's PAL twin, a
   field +0x4C set); the port's override skips the copy when it shows movie pictures itself, PAL's addition with it.
   Nothing missing was seen on the opening movie.
+
+## The Korean release (SCKA_200.59)
+
+The Korean disc (v1.00, NTSC) has the USA disc's files; its ELF's `.text` is 0x5630 bytes longer, its sections laid out
+like PAL's (the same `.bss` size). The game is NTSC: 60 frames a second, no field-rate choice, and its menus and text
+are Korean whatever the console language, so `SC3_LANGUAGE` is not passed to it.
+
+- `scripts/sc3_region_map.py build SLUS_212.16 SCKA_200.59 recomp/kor/address_map.txt`: 628 of 8,715 functions differ
+  beyond their place. The port's address table has a third column for it (`addresses --column kor`); three rows sit in
+  functions Korea changed and are marked `reviewed=kor`: the main loop's two returns (the same `sb 0xABD` before the
+  calls to 0x3B3908 and 0x1483B0) and ShadowVolumes (its body relocated word for word). PAL's additions to the movie
+  copy are not in it: MovieCopy and MovieTaskEnd are in functions the map finds unchanged.
+- `recomp/kor/sc3_symbols.txt` is `bozo_symbolmap.py match` on SCKA_200.59 with three lines carried by hand: the match
+  puts sceReadlink three words into its prologue (0x444444, the map's 0x444438) and names neither vfprintf nor
+  _vfprintf_r (0x435368, 0x4353E0: SCES_533.12's relocated by 0x130). All 733 names of `recomp/sc3_symbols.txt` land,
+  through the map, where that file has them. Of the patches, all but the main loop's clock store carry over; that one
+  is read by hand (`recomp/kor/sc3_patches_reviewed.txt`: Korea keeps the count in `$4`, as PAL).
+- The 2D pack reads the ELF's texture files at the Korean column's ElfTextures. The Korean menus and text draw with no
+  change to the port: on the route (booted with a card, 11,700 frames headless) 0 mesh parts lost, 0 2D pages dropped,
+  and the same one lost icon draw (0x1280F8, no cause counted) as the USA disc on the same route.
+- Saves go to `BKSCKA-20059SC3`; a save state is tagged with `SCKA-20059`, so it does not load into another disc's build.
 
 ## Checks and how they are run
 

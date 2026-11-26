@@ -4,7 +4,7 @@
 
 # SoulCaliburIII_Recomp
 
-**A native Linux and Windows port of *Soulcalibur III* (NTSC-U `SLUS-21216`, PAL `SCES-53312`), made by statically recompiling the game's PlayStation 2 code to C++ on BozoEngine.**<br>
+**A native Linux and Windows port of *Soulcalibur III* (NTSC-U `SLUS-21216`, PAL `SCES-53312`, Korea `SCKA-20059`), made by statically recompiling the game's PlayStation 2 code to C++ on BozoEngine.**<br>
 The game's own MIPS R5900 code runs as a PC program. Its 2D, meshes, textures, effects, sound and movies go through
 native PC services. There is no GS, VIF, VU, DMAC, IOP or SPU2 model in the build, and no interpreter.
 
@@ -21,13 +21,15 @@ native PC services. There is no GS, VIF, VU, DMAC, IOP or SPU2 model in the buil
 
 > [!IMPORTANT]
 > No game files are included: no ELF, IRX modules, AFS archives, or code generated from them.
-> You need **your own copy** of the North American release, PS2 ID **`SLUS-21216`**, or of the European one, **`SCES-53312`**
-> ("Europe, Australia", v2.00, English, French, German, Spanish, Italian). The port is built against those discs' executables:
+> You need **your own copy** of the North American release, PS2 ID **`SLUS-21216`**, of the European one, **`SCES-53312`**
+> ("Europe, Australia", v2.00, English, French, German, Spanish, Italian), or of the Korean one, **`SCKA-20059`**
+> (v1.00, Korean). The port is built against those discs' executables:
 >
 > | File | SHA-1 |
 > |---|---|
 > | `SLUS_212.16` | `9bbb67a70137052931bc245855eedeee6bbe5b49` |
 > | `SCES_533.12` | `8c79c1db3395e72ada118860433de6638ccf9401` |
+> | `SCKA_200.59` | `b9f3958b154d468105d3351e62057634645cec2a` |
 
 ## Status
 
@@ -48,6 +50,7 @@ What has been run, on Linux unless said:
 | Frame rate in a window, development PC (Ryzen 7 7800X3D) | 59.5 to 60.0 game frames a second, held by the frame pacer |
 | Windows 11 (VM, 4 cores, Mesa llvmpipe, no GPU) | Built natively with the kit and cross-built from Linux; route, boot and stills agree with Linux (headless game state equal on every frame); 53-56 frames/s in menus, 28-51 in fights on the software renderer |
 | The European disc (SCES-53312) | In a window: the PAL50 / PAL60 choice, 50 and 60 game frames a second; logos, the opening movie, title, Mode Select; a Tales of Souls fight to Game Over and its save (PAL60); Practice, Free Training and attacks, booted with that card in (PAL50; the load itself not watched); French and German menus. 0 device registers touched |
+| The Korean disc (SCKA-20059) | In a window at 60 game frames a second: logos, the opening movie (1051 pictures at 30.00/s), title, Mode Select and the menus in Korean; a Tales of Souls story, its fight to Game Over and its save; booted again with that card, the save loaded and the route (Practice, Free Training, attacks, pause). 0 device registers touched |
 | Memory cards | BozoEngine's libmc on host card folders (`mc0/`, `mc1/`); a save and reload has not been checked on this build |
 
 How each layer of the game is answered:
@@ -97,7 +100,7 @@ You build the game yourself, on your PC, from **your own disc**: nothing of the 
 
 **Windows.** `SoulCaliburIII_Recomp-<version>.zip` holds `SC3 Launcher.exe`, our code with BozoEngine's, and the
 build kit (compiler, CMake, Ninja, a static FFmpeg, Python). Unzip it outside `Program Files` with about 15 GB free,
-start the launcher, pick your USA or European disc image (`.iso`, or `.bin` with its `.cue`), click **Prepare the game**
+start the launcher, pick your USA, European or Korean disc image (`.iso`, or `.bin` with its `.cue`), click **Prepare the game**
 (about 20 minutes on 4 cores, most of it the packs), then **Play**. With the European disc, the launcher's settings
 choose the game's language (Windows' by default). Requires Windows 10 1903 or newer, a 64-bit CPU and
 OpenGL 3.3.
@@ -117,7 +120,7 @@ python3 scripts/sc3_build.py --disc "/path/to/Soulcalibur III (USA).iso" --out ~
 ~/sc3-build/SC3/play_sc3.sh
 ```
 
-`sc3_build.py` checks the disc (the boot ELF's SHA-1: `SLUS_212.16` or `SCES_533.12`), extracts what the build reads (the
+`sc3_build.py` checks the disc (the boot ELF's SHA-1: `SLUS_212.16`, `SCES_533.12` or `SCKA_200.59`), extracts what the build reads (the
 ELF, `ROOT.OLK`, three sound modules), builds BozoEngine's recompiler, generates the code, converts the packs, compiles
 `sc3` and stages a game folder: `sc3`, the ELF, `sc3_symbols.txt`, `packs/`, `disc.iso` (a hard link to your image when it can) and
 `play_sc3.sh` (`Play SC3.cmd` on Windows). Each step is skipped when its inputs did not change; `--check` only checks a
@@ -156,20 +159,20 @@ card layout, as the PS2Recomp build's.
 
 ```bash
 git submodule update --init BozoEngine
-cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16 or SCES_533.12> -DSC3_ISO=<disc image>
+cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16, SCES_533.12 or SCKA_200.59> -DSC3_ISO=<disc image>
 cmake --build build/bozo                      # sc3, sc3-headless, sc3-check, sc3-irx-check
 cmake --build build/bozo --target sc3_packs   # build/bozo/packs: textures, meshes, 2D
 ```
 
-`scripts/bozo_build.sh` runs the same into `build/bozo` from `game/SLUS_212.16` or `game/SCES_533.12`
+`scripts/bozo_build.sh` runs the same into `build/bozo` from `game/SLUS_212.16`, `SCES_533.12` or `SCKA_200.59`
 (`scripts/extract_iso.sh <image>` makes `game/`), and `scripts/bozo_headless.sh <name> [args]` runs `sc3-headless` with a fresh user folder. The sound modules
 are read from `IRX/` beside the ELF (`SC3_IRX_DIR`), the packs' inputs from the ELF's folder (`SC3_DISC_DIR`).
 
 | CMake option | |
 |---|---|
 | `BOZO_ENGINE_DIR` | Another BozoEngine tree (default: the submodule) |
-| `SC3_REGION` | `NTSC` or `PAL`: the release `SC3_ELF` is (default: from its SHA-1) |
-| `SC3_SYMBOL_MAP` | The library names of the stripped ELF (default `recomp/sc3_symbols.txt`, `recomp/pal/sc3_symbols.txt` for PAL) |
+| `SC3_REGION` | `NTSC`, `PAL` or `KOR`: the release `SC3_ELF` is (default: from its SHA-1) |
+| `SC3_SYMBOL_MAP` | The library names of the stripped ELF (default `recomp/sc3_symbols.txt`, `recomp/pal/sc3_symbols.txt` for PAL, `recomp/kor/sc3_symbols.txt` for KOR) |
 | `SC3_EXTERNALS` | An externals list to generate with (`bozo-calllog-tool externals`: what `sc3-check --pinned` needs) |
 | `SC3_WINDOW=OFF` | No `sc3` and no SDL3 |
 | `SC3_NATIVE_SOUND=OFF` | No sound modules |
@@ -191,7 +194,7 @@ Windows).
 ### Running
 
 ```
-sc3 [--iso image] [--elf SLUS_212.16|SCES_533.12] [--card-dir dir] [--width w --height h] [--fullscreen] [--no-vsync]
+sc3 [--iso image] [--elf SLUS_212.16|SCES_533.12|SCKA_200.59] [--card-dir dir] [--width w --height h] [--fullscreen] [--no-vsync]
     [--render-scale s] [--capture-dir dir] [--capture-frames n,n,...] [--quit-after n] [--pad-script [n=]file]...
     [--print] [--no-sound] [--audio-latency ms] [--wav file]
     [--save-state file --save-state-at n] [--load-state file [--load-state-at n]]
@@ -252,9 +255,10 @@ your disc ──► sc3_build.py / CMake
 
 - The ELF has no symbols. `recomp/sc3_symbols.txt` names its library functions from our own matcher and a hand review
   (`sc3_symbols_reviewed.txt`); BozoEngine answers those natively.
-- The port names the game's addresses: `bozo/port/sc3_addresses.txt` has each one's value on both discs (the PAL
-  column made with `recomp/pal/address_map.txt`, `scripts/sc3_region_map.py`). A PAL build takes that column and
-  `recomp/pal/`'s symbol map and patches.
+- The port names the game's addresses: `bozo/port/sc3_addresses.txt` has each one's value on the three discs (the PAL
+  and Korean columns made with `recomp/pal/address_map.txt` and `recomp/kor/address_map.txt`,
+  `scripts/sc3_region_map.py`). A PAL or Korean build takes its column and `recomp/pal/`'s or `recomp/kor/`'s symbol
+  map and patches.
 - `bozo/port/` holds SC3's own code: the frame kick and ordering table (`sc3_frame.cpp`, `sc3_ot.cpp`,
   `sc3_packet.cpp`), the clock (`sc3_clock.cpp`), the 2D builders (`sc3_2d.cpp`), meshes, textures and materials
   (`sc3_meshes.cpp`, `sc3_textures.cpp`, `sc3_texture_pack.cpp`, `sc3_material.cpp`), passes (`sc3_offscreen.cpp`),
@@ -268,8 +272,8 @@ your disc ──► sc3_build.py / CMake
 
 | | |
 |---|---|
-| Boot ELF | `SLUS_212.16` (USA), `SCES_533.12` (Europe); entry `0x100008`, stripped |
-| Video mode | NTSC (`SYSTEM.CNF` `VER = 1.01`); PAL (`VER = 2.00`), PAL50 or PAL60 chosen at boot |
+| Boot ELF | `SLUS_212.16` (USA), `SCES_533.12` (Europe), `SCKA_200.59` (Korea); entry `0x100008`, stripped |
+| Video mode | NTSC (`SYSTEM.CNF` `VER = 1.01`); PAL (`VER = 2.00`), PAL50 or PAL60 chosen at boot; Korea NTSC (`VER = 1.00`) |
 | IOP modules | `IRX/*.IRX`: CRI_ADXI, LIBSD, MCMAN, MCSERV, NUSOUND, PADMAN, SDRDRV, SIO2MAN |
 | Data | `ROOT.OLK`, `BGM.AFS`, `SE.AFS`, `VOICE.AFS`, `MOVIE.AFS` (Sofdec) |
 
@@ -280,7 +284,7 @@ your disc ──► sc3_build.py / CMake
 | `BozoEngine/` | The engine (git submodule, at a merged engine commit) |
 | `CMakeLists.txt`, `cmake/` | The build (`bozo.cmake`), the sound modules (`sc3_audio.cmake`), the Windows cross build |
 | `bozo/` | The programs (`sc3_window.cpp`, `sc3_headless.cpp`, `sc3_check.cpp`), the port (`port/`), sound (`sound/`) |
-| `recomp/` | The recompiler's inputs: symbol map, stubs, entries, patches; `pal/`: the European disc's, and its address map |
+| `recomp/` | The recompiler's inputs: symbol map, stubs, entries, patches; `pal/`, `kor/`: the European and Korean discs', and their address maps |
 | `scripts/` | The build driver, packs, kit and release tools; disassembly and IRX helpers |
 | `launcher/` | SC3 Launcher.exe (Windows) |
 | `reference/` | The PS2Recomp build's reference records, route and A/B tools |
