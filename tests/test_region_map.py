@@ -194,18 +194,27 @@ class RegionMapTest(unittest.TestCase):
                          [(0x100028, None, 0x10002C), (0x100000, None, None)])
         self.assertEqual(rows[1]['reviewed'], {'pal'})
 
+    def test_a_row_the_columns_cannot_hold_is_refused(self):
+        for text, expected in (('A 0x00100000 0x00000001 - 0x00000002\n', 'A has 4 addresses, the table has 3 columns'),
+                               ('A 0x00100000 0x00000001 reviewed=pal,kr\n', 'reviewed=kr,pal names no column'),
+                               ('A 0x00100000 0x00000001 reviewed\n', "'reviewed' is not an address")):
+            with self.assertRaises(SystemExit) as raised:
+                region.Addresses(self.write_table(text))
+            self.assertIn(expected, str(raised.exception))
+            self.assertIn('sc3_addresses.txt:2', str(raised.exception))
+
     def test_header_names_the_columns_addresses_and_the_calls(self):
-        table = self.write_table('F2 0x00100028 0x0010002C 0x0010002C\nData[] 0x00110000 0x00110010 0x00110010\n'
-                                 'Data[] 0x00110008 0x00110018 0x00110018\n')
+        table = self.write_table('F2 0x00100028 0x0010002C 0x00100030\nData[] 0x00110000 0x00110010 0x00110020\n'
+                                 'Data[] 0x00110008 0x00110018 0x00110028\n')
         port = self.folder / 'port'
         port.mkdir()
         (port / 'a.cpp').write_text('fn::F2(r, c, t);\n')
         symbols = self.folder / 'symbols.txt'
-        symbols.write_text('f2 0x10002c\n')
+        symbols.write_text('f2 0x10002c\nf3 0x100030\n')
         out = self.folder / 'sc3_region.h'
         for column, expected in (('ntsc', ('F2 = 0x00100028u;', 'Data[] = {0x00110000u, 0x00110008u};', '&::func_0x100028;')),
                                  ('pal', ('F2 = 0x0010002Cu;', 'Data[] = {0x00110010u, 0x00110018u};', '&::f2_0x10002c;')),
-                                 ('kor', ('F2 = 0x0010002Cu;', 'Data[] = {0x00110010u, 0x00110018u};', '&::f2_0x10002c;'))):
+                                 ('kor', ('F2 = 0x00100030u;', 'Data[] = {0x00110020u, 0x00110028u};', '&::f3_0x100030;'))):
             elf = 'SCKA_200.59' if column == 'kor' else 'SCES_533.12'
             code, _ = self.call(region.header, out, '--title', 'T', '--elf', elf, '--table', table, '--column',
                                column, '--symbols', symbols, '--sources', port)

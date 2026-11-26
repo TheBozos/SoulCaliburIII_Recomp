@@ -71,7 +71,7 @@ class BuildTests(unittest.TestCase):
     def test_extract_takes_only_what_the_build_reads(self):
         build = sc3_build.Build.__new__(sc3_build.Build)
         build.state, build.disc_dir = {'boot': 'SLUS_212.16'}, ''
-        wanted = [n for n in ('SLUS_212.16', 'SCES_533.12', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX',
+        wanted = [n for n in ('SLUS_212.16', 'SCES_533.12', 'SCKA_200.59', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX',
                               'IRX/SDRDRV.IRX', 'IRX\\SDRDRV.IRX', 'MOVIE.AFS', 'BGM.AFS', 'IRX/LIBSD.IRX', 'SYSTEM.CNF')
                   if build.wanted(n)]
         self.assertEqual(wanted, ['SLUS_212.16', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX', 'IRX/SDRDRV.IRX',
@@ -172,6 +172,14 @@ class BuildTests(unittest.TestCase):
             self.assertIn('boots SLES_533.70', str(raised.exception))
             self.assertIn('SLUS-21216', str(raised.exception))
             self.assertIn('SCES-53312', str(raised.exception))
+            self.assertIn('SCKA-20059', str(raised.exception))
+
+    def test_verify_names_another_korean_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.disc_folder(folder, 'SCKA_200.99')
+            with self.assertRaises(sc3_build.BuildError) as raised:
+                build.step_verify()
+            self.assertIn('boots SCKA_200.99', str(raised.exception))
             self.assertIn('SCKA-20059', str(raised.exception))
 
     def test_a_work_folder_without_a_verify_record_builds_the_extracted_disc(self):
