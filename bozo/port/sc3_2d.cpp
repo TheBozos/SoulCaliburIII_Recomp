@@ -2979,6 +2979,27 @@ namespace sc3
             ctx->pc = getRegU32(ctx, 31);
         }
 
+        // 0x13AB70 (page, a1, link, flag): 0x13AA98's ZBUF write for the page (flag >= 0 ZBUF_2, ZMSK when flag is 0; else
+        // ZBUF_1), linked by link: 0 the GIF list (0x10F860), 1 the VIF1 list (0x10F910), 2 the current layer's first bucket
+        // (0x10D9A0 at depth 0). The views (0x12A400) mask ZBUF_2 for their layer and unmask it after, so that the menus' 2D
+        // hides what lies under it through depth. ZBUF_2's mask goes to the same place as a state entry.
+        void depthBuffer(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t page = getRegU32(ctx, 4), link = getRegU32(ctx, 6);
+            const int32_t flag = getRegS32(ctx, 7);
+            fn::DepthBuffer(rdram, ctx, runtime);
+            if (page == 0u || flag < 0)
+                return;
+            const bool masked = flag == 0;
+            ot::Draw state = [masked](bozo::render::Renderer &) { draw::setSecondDepthMasked(masked); };
+            if (link == 0u)
+                ot::appendGif(rdram, std::move(state));
+            else if (link == 1u)
+                ot::appendVif(rdram, std::move(state));
+            else if (link == 2u)
+                ot::linkLayerBucket(rdram, 0, std::move(state));
+        }
+
         // ---- 0x110E50 (a0 -> item): object sprites, VU0 macro code. The item as 0x1134A0's (+0 ALPHA_2, +8 the count, +0xA
         // the insertion, +0xC the entries, +0x14 / +0x18 / +0x1A / +0x1C the texture head) and +0x10 an ST table (0: the
         // page's), +0x1D & 2 TEXA 0x80 / 0x80, & 1 an A+D first, +0x1F & 0x40 TEST_2 0x30000, & 0xF Z from the projection;
@@ -4186,6 +4207,7 @@ namespace sc3
         runtime.registerFunction(addr::Icon, &hooked<icon>);
         runtime.registerFunction(addr::EffectLayer, &hooked<screenEffectLayer>);
         runtime.registerFunction(addr::EffectInline, &hooked<screenEffectInline>);
+        runtime.registerFunction(addr::DepthBuffer, &hooked<depthBuffer>);
         runtime.registerFunction(addr::Strips, &hooked<strips>);
         runtime.registerFunction(addr::ScreenStrips, &hooked<screenStrips>);
         runtime.registerFunction(addr::PageCopy, &hooked<pageCopy>);

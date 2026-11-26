@@ -118,6 +118,7 @@ Light                  0x00135C68 0x00135B88
 Roll                   0x00135F78 0x00135E98
 LabelsUpload           0x00138860 0x00138780
 Labels                 0x001388E8 0x00138808
+DepthBuffer            0x0013AB70 0x0013AAA8  # (page, a1, link, flag): 0x13AA98's ZBUF_2 (flag >= 0, ZMSK when 0) or ZBUF_1 packet, linked by link
 StoreImage             0x0013BDF0 0x0013BD28
 DisplayCopy            0x00141C80 0x00141D68
 EnvSlot                0x00144198 0x00144280
