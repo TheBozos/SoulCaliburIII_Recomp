@@ -2,7 +2,7 @@
 (runtime.registerFunction(addr::Name, ...), or each element of an addr:: array a loop registers), whatever environment
 toggle guards it, and every store the store patch tells apart (a "// bozo:store addr::Name" line next to it).
 
-    python scripts/sc3_overrides_list.py <port folder> <out.txt> [--column ntsc|pal]
+    python scripts/sc3_overrides_list.py <port folder> <out.txt> [--column ntsc|pal|kor]
 
 The names are bozo/port/sc3_addresses.txt's, in the column of the disc the build is for.
 

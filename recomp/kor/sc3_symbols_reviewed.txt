@@ -1,0 +1,36 @@
+# recomp/sc3_symbols_reviewed.txt carried to SCKA_200.59 by `sc3_region_map.py symbols recomp/kor/address_map.txt`:
+# the names and their evidence are the NTSC list's, the evidence's addresses SLUS_212.16's. Regenerate
+# recomp/kor/sc3_symbols.txt with BozoEngine's tools/symbolmap/bozo_symbolmap.py:
+#   match SCKA_200.59 --ref <CoN>/SLUS_205.65 --ref <CoN>/NTGUI2.ELF --reviewed recomp/kor/sc3_symbols_reviewed.txt --out recomp/kor/sc3_symbols.txt
+# then carry three lines by hand, which the match refuses here as a --reviewed line:
+# - sceReadlink 0x444438, not the match's 0x444444, three words into its prologue (the map's place for 0x43ee38).
+# - vfprintf 0x435368 and _vfprintf_r 0x4353e0, which the match does not name: SCES_533.12's 0x435238 and 0x4352b0
+#   relocated by 0x130 word for word, __sbprintf's call and tail jump at 0x4352b0 reaching them.
+scePadEnd 0x427238             # libpad between scePadInit and scePadPortOpen; sceSifCallRpc function 1 with command 0xf, clears libpad's init flag on success; the game's shutdown at 0x14ca10 and 0x14ce00
+scePadGetDmaStr 0x427680       # libpad order after scePadPortClose; all 10 libpad readers call it, as they call scePadGetDmaStr; constants 112, 28
+scePadRead 0x427830            # libpad order after scePadGetFrameCount; 0x422060 then memcpy to the third argument, the one game call at 0x130a4c
+scePadGetState 0x4278a8        # libpad order before scePadStateIntToStr; same 112, 28, 99, 6, 2, 5 loads as the reference
+scePadSetReqState 0x427958     # libpad order after scePadStateIntToStr; all 4 pad requests call it; 112, 28, then stores the state in the DMA block
+scePadInfoAct 0x427aa0         # libpad order after scePadReqIntToStr; same 112, 28, 1, -1, 2, 3, 4 loads, shape 0.87
+scePadInfoComb 0x427bb8        # libpad order after scePadInfoAct; same 112, 28, 1, -1, 2 loads, shape 0.89
+scePadInfoMode 0x427cd0        # libpad order before scePadSetMainMode; shape 0.95, called by the game's pad set-up just before scePadSetMainMode
+scePadSetActDirect 0x427ec0    # libpad order between scePadSetMainMode and scePadSetActAlign; shape 0.98, calls send_to_iop
+sceMpegCreate 0x3e6298         # calls memset, _Error, _alalcInit, _alalcAlloc, _alalcSetDynamic as the reference; "The size of work area is too small"
+sceMpegDelete 0x3e6ef0         # the two-word return between sceMpegInit and sceMpegAddBs, as in the reference's order
+sceMpegGetPicture 0x3e6f38     # libmpeg order after sceMpegAddBs; shape 1.00, called by the movie player
+sceMpegGetPictureRAW8 0x3e6f80 # libmpeg order after sceMpegGetPicture; shape 1.00
+sceMpegReset 0x3e6fd8          # sceMpegCreate's call in the reference's sceMpegReset place; same -1, 1 loads
+sceCdSeek 0x42a628             # libcdvd between sceCdRead and sceCdGetDiskType; sceCdNcmdDiskReady busy check, ncmd prechk 9, stores the sector, sceSifCallRpc ncmd function 5 with 4 bytes; called at 0x400394
+sceCdBreak 0x42a850            # libcdvd between sceCdGetError and sceCdMmode; scmd prechk 0x1e, sceSifCallRpc scmd function 0x16 with no argument, returns the 4-byte result; called at 0x3ffa08
+sceCdReadClock 0x42aa58        # libcdvd; same a0 15, a1 1, t2 16 and scmd call shape as the reference, without its debug prints; called once by libscf
+sceGsSyncVCallback 0x426020    # libgraph after sceGsExecStoreImage; 0x41fe08 for its params, func 0: DisableIntc(2), RemoveIntcHandler(2, id); else AddIntcHandler(2, func, -1), EnableIntc(2); returns the old func
+sceMcChdir 0x42c148            # libmc after mceStorePwd; the -100 and -200 guards of its neighbours, -210 on an empty path, RPC function 12 with port, slot, path up to 1023 bytes and an out buffer, reply handler mceStorePwd
+sceMcEnd 0x42b430              # libmc between sceMcInit and sceMcChangeThreadPriority; sceMcSync, then DeleteSema twice, libmc's two semaphores
+sceMcChangeThreadPriority 0x42b498 # libmc before sceMcGetSlotMax; PollSema, the -100 and -200 guards, sceSifCallRpc function 0x14, SignalSema
+sceMcFormat 0x42c288           # libmc after sceMcChdir; the -100 and -200 guards, sceSifCallRpc function 0x10 with port and slot; the game's card format at 0x2052dc
+sceMcDelete 0x42c358           # libmc after sceMcFormat; the -100, -200 and -210 guards, strncpy of the path, sceSifCallRpc function 0xf
+sceMcFlush 0x42c478            # libmc after sceMcDelete; the -100 and -200 guards, sceSifCallRpc function 0xa with the fd; the game's save after a write at 0x205428
+sceMcSetFileInfo 0x42c538      # libmc after sceMcFlush; the -100, -200 and -210 guards, strncpy of the path, FlushCache of the info, sceSifCallRpc function 0xe
+sceMcRename 0x42c708           # libmc after sceMcSetFileInfo; same guards, strncpy of the old and the new name, sceSifCallRpc function 0xe as sceMcSetFileInfo
+sceMcUnformat 0x42c860         # libmc after sceMcRename; the -100 and -200 guards, sceSifCallRpc function 0x11 with port and slot
+sceMcGetEntSpace 0x42c930      # libmc after sceMcUnformat; the -100, -200 and -210 guards, strncpy of the path, sceSifCallRpc function 0x12

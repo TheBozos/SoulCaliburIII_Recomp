@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""sc3_build: from the player's own Soulcalibur III disc (USA, SLUS-21216, or Europe, SCES-53312) to a game folder that
-runs, in one command. Nothing derived from the game is distributed: the disc's files, the generated code, the packs and the
-executable are all made here, on the player's PC. The game is built on BozoEngine (the BozoEngine submodule, at the
+"""sc3_build: from the player's own Soulcalibur III disc (USA, SLUS-21216, Europe, SCES-53312, or Korea, SCKA-20059)
+to a game folder that runs, in one command. Nothing derived from the game is distributed: the disc's files, the generated
+code, the packs and the executable are all made here, on the player's PC. The game is built on BozoEngine (the BozoEngine submodule, at the
 commit this code pins; --engine <dir> for another tree).
 
   python scripts/sc3_build.py --disc "Soulcalibur III (USA).iso" --out D:/SC3
@@ -9,7 +9,7 @@ commit this code pins; --engine <dir> for another tree).
 
 Steps (each skipped when an earlier run finished it with the same inputs; --redo <step> runs it and the ones after
 again; within a step CMake and Ninja rebuild only what changed):
-  verify     the disc image or folder: ISO9660 (.iso, .bin/.cue), SYSTEM.CNF's boot file (SLUS_212.16 or SCES_533.12), its SHA-1
+  verify     the disc image or folder: ISO9660 (.iso, .bin/.cue), SYSTEM.CNF's boot file (SLUS_212.16, SCES_533.12 or SCKA_200.59), its SHA-1
   extract    the files the build reads into <out>/disc: the boot ELF, ROOT.OLK (the packs' input) and the three sound
              modules IRX/CRI_ADXI.IRX, NUSOUND.IRX, SDRDRV.IRX (translated at build time), no outside tool (BozoEngine's tools/native_pack/ps2_disc.py); and the image itself as <game>/disc.iso (the
              game reads the disc from it): a hard link to the .iso on the same drive, else a copy (a .bin / .cue
@@ -17,7 +17,7 @@ again; within a step CMake and Ninja rebuild only what changed):
   configure  cmake (Ninja) of SC3 on BozoEngine (cmake/bozo.cmake): SDL3 and Dear ImGui from the kit's
              deps/, FFmpeg (the movies) from the kit's ffmpeg/
   tools      BozoEngine's recompiler and externals writer (bozo-recomp, bozo-externals), built from its sources
-  recompile  the externals list (the ELF's library symbols named by recomp/sc3_symbols.txt or recomp/pal/'s, SC3's overrides,
+  recompile  the externals list (the ELF's library symbols named by recomp/sc3_symbols.txt, recomp/pal/'s or recomp/kor/'s, SC3's overrides,
              recomp/sc3_stubs.txt) and bozo-recomp -> <out>/build/sc3_gen
   packs      the texture, mesh and 2D packs (scripts/sc3_texture_pack.py, sc3_mesh_pack.py, sc3_2d_pack.py on
              BozoEngine's tools/native_pack) -> <out>/build/packs
@@ -89,8 +89,9 @@ ps2_disc = None  # BozoEngine's tools/native_pack/ps2_disc.py, imported by load_
 RELEASES = {
     'SLUS_212.16': ('9bbb67a70137052931bc245855eedeee6bbe5b49', 'USA disc (SLUS-21216)', 'recomp'),
     'SCES_533.12': ('8c79c1db3395e72ada118860433de6638ccf9401', 'European disc (SCES-53312)', os.path.join('recomp', 'pal')),
+    'SCKA_200.59': ('b9f3958b154d468105d3351e62057634645cec2a', 'Korean disc (SCKA-20059)', os.path.join('recomp', 'kor')),
 }
-SUPPORTED = 'the USA disc (SLUS-21216) or the European disc (SCES-53312)'
+SUPPORTED = 'the USA disc (SLUS-21216), the European disc (SCES-53312) or the Korean disc (SCKA-20059)'
 # The disc's files the build reads besides the ELF: the packs' input and the sound modules (cmake/sc3_audio.cmake).
 DISC_FILES = ('ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX', 'IRX/SDRDRV.IRX')
 STEPS = ['verify', 'extract', 'configure', 'tools', 'recompile', 'packs', 'compile', 'stage']
@@ -428,7 +429,7 @@ class Build:
         if os.path.isdir(src):
             boot = next((n for n in RELEASES if os.path.isfile(os.path.join(src, n))), None)
             if not boot:
-                others = [n for n in os.listdir(src) if re.match(r'S[CL][A-Z]S_\d{3}\.\d{2}$', n, re.I)]
+                others = [n for n in os.listdir(src) if re.match(r'S[CL][A-Z]{2}_\d{3}\.\d{2}$', n, re.I)]
                 raise BuildError(self.wrong_disc(others[0] if others else None, src))
             digest = sha1_file(os.path.join(src, boot))
         else:
@@ -931,7 +932,7 @@ def check_disc(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Builds Soulcalibur III (USA or Europe) as a native PC game from your own disc.')
+    ap = argparse.ArgumentParser(description='Builds Soulcalibur III (USA, Europe or Korea) as a native PC game from your own disc.')
     ap.add_argument('--disc', required=True, help='the disc image (.iso, .bin, .cue) or an extracted disc folder')
     ap.add_argument('--out', default='sc3_build', help='the work folder; the game ends up in <out>/SC3')
     ap.add_argument('--game', help='the game folder to stage (default: <out>/SC3)')

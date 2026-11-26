@@ -1,7 +1,7 @@
 # SC3 on BozoEngine:
 #
-#   cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16 or SCES_533.12> [-DSC3_ISO=<the disc image>]
-#         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>] [-DSC3_WINDOW=OFF] [-DSC3_REGION=NTSC|PAL]
+#   cmake -S . -B build/bozo -G Ninja -DSC3_ELF=<SLUS_212.16, SCES_533.12 or SCKA_200.59> [-DSC3_ISO=<the disc image>]
+#         [-DBOZO_ENGINE_DIR=<BozoEngine>] [-DSC3_SYMBOL_MAP=<sc3_symbols.txt>] [-DSC3_WINDOW=OFF] [-DSC3_REGION=NTSC|PAL|KOR]
 #
 # Targets:
 # - sc3-irx-check: SC3's sound modules started natively with no game (SC3_NATIVE_SOUND, cmake/sc3_audio.cmake).
@@ -17,20 +17,21 @@
 # recomp/sc3_stubs.txt, SC3's override list (scripts/sc3_overrides_list.py, from bozo/port/*.cpp) and the symbol map
 # SC3_SYMBOL_MAP (default recomp/sc3_symbols.txt, once BOZO_ENGINE_DIR's engine reads symbol maps).
 #
-# SC3_REGION, from SC3_ELF's SHA-1 by default: NTSC (SLUS_212.16) or PAL (SCES_533.12). The port names the game's
-# addresses (bozo/port/sc3_addresses.txt, one column a disc; sc3_region.h); a PAL build takes recomp/pal/'s inputs.
+# SC3_REGION, from SC3_ELF's SHA-1 by default: NTSC (SLUS_212.16), PAL (SCES_533.12) or KOR (SCKA_200.59). The port
+# names the game's addresses (bozo/port/sc3_addresses.txt, one column a disc; sc3_region.h); a PAL or KOR build takes
+# recomp/pal/'s or recomp/kor/'s inputs.
 
 set(BOZO_ENGINE_DIR "" CACHE PATH "BozoEngine's source tree (default: the BozoEngine submodule)")
 if(NOT BOZO_ENGINE_DIR AND EXISTS "${CMAKE_SOURCE_DIR}/BozoEngine/CMakeLists.txt")
     set(BOZO_ENGINE_DIR "${CMAKE_SOURCE_DIR}/BozoEngine" CACHE PATH "BozoEngine's source tree (default: the BozoEngine submodule)" FORCE)
 endif()
-set(SC3_ELF "" CACHE FILEPATH "SC3's executable (SLUS_212.16 or SCES_533.12), from the disc")
-foreach(boot SLUS_212.16 SCES_533.12)
+set(SC3_ELF "" CACHE FILEPATH "SC3's executable (SLUS_212.16, SCES_533.12 or SCKA_200.59), from the disc")
+foreach(boot SLUS_212.16 SCES_533.12 SCKA_200.59)
     if(NOT SC3_ELF AND EXISTS "${CMAKE_SOURCE_DIR}/game/${boot}")
-        set(SC3_ELF "${CMAKE_SOURCE_DIR}/game/${boot}" CACHE FILEPATH "SC3's executable (SLUS_212.16 or SCES_533.12), from the disc" FORCE)
+        set(SC3_ELF "${CMAKE_SOURCE_DIR}/game/${boot}" CACHE FILEPATH "SC3's executable (SLUS_212.16, SCES_533.12 or SCKA_200.59), from the disc" FORCE)
     endif()
 endforeach()
-set(SC3_REGION "" CACHE STRING "The release SC3_ELF is: NTSC or PAL (empty: from its SHA-1)")
+set(SC3_REGION "" CACHE STRING "The release SC3_ELF is: NTSC, PAL or KOR (empty: from its SHA-1)")
 set(SC3_ISO "" CACHE FILEPATH "SC3's disc image, the default of the programs' --iso")
 set(SC3_SYMBOL_MAP "" CACHE FILEPATH "Names of the stripped ELF's library functions (name 0xADDR lines), given to bozo-externals and bozo-recomp --symbols and to the free host")
 set(SC3_EXTERNALS "" CACHE FILEPATH "An externals list to generate with instead of bozo-externals' (bozo-calllog-tool externals: a pinned check needs the reference's stubs)")
@@ -42,13 +43,15 @@ if(NOT BOZO_ENGINE_DIR OR NOT EXISTS "${BOZO_ENGINE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "SC3: set BOZO_ENGINE_DIR to BozoEngine's source tree (or git submodule update --init BozoEngine)")
 endif()
 if(NOT SC3_ELF OR NOT EXISTS "${SC3_ELF}")
-    message(FATAL_ERROR "SC3: set SC3_ELF to the game's executable (SLUS_212.16 or SCES_533.12)")
+    message(FATAL_ERROR "SC3: set SC3_ELF to the game's executable (SLUS_212.16, SCES_533.12 or SCKA_200.59)")
 endif()
 set(sc3_region "${SC3_REGION}")
 if(NOT sc3_region)
     file(SHA1 "${SC3_ELF}" sc3_elf_sha1)
     if(sc3_elf_sha1 STREQUAL "8c79c1db3395e72ada118860433de6638ccf9401")
         set(sc3_region PAL)
+    elseif(sc3_elf_sha1 STREQUAL "b9f3958b154d468105d3351e62057634645cec2a")
+        set(sc3_region KOR)
     else()
         set(sc3_region NTSC)
     endif()
@@ -58,16 +61,22 @@ if(sc3_region STREQUAL "PAL")
     set(sc3_title "Soulcalibur III (Europe, Australia)")
     set(sc3_boot SCES_533.12)
     set(sc3_column pal)
+elseif(sc3_region STREQUAL "KOR")
+    set(sc3_recomp_dir "${CMAKE_SOURCE_DIR}/recomp/kor")
+    set(sc3_title "Soulcalibur III (Korea)")
+    set(sc3_boot SCKA_200.59)
+    set(sc3_column kor)
 elseif(sc3_region STREQUAL "NTSC")
     set(sc3_recomp_dir "${CMAKE_SOURCE_DIR}/recomp")
     set(sc3_title "Soulcalibur III (USA)")
     set(sc3_boot SLUS_212.16)
     set(sc3_column ntsc)
 else()
-    message(FATAL_ERROR "SC3: SC3_REGION is NTSC or PAL, not ${sc3_region}")
+    message(FATAL_ERROR "SC3: SC3_REGION is NTSC, PAL or KOR, not ${sc3_region}")
 endif()
 message(STATUS "SC3: ${sc3_title}, ${sc3_boot}")
-if(SC3_SYMBOL_MAP STREQUAL "${CMAKE_SOURCE_DIR}/recomp/sc3_symbols.txt" OR SC3_SYMBOL_MAP STREQUAL "${CMAKE_SOURCE_DIR}/recomp/pal/sc3_symbols.txt")
+if(SC3_SYMBOL_MAP STREQUAL "${CMAKE_SOURCE_DIR}/recomp/sc3_symbols.txt" OR SC3_SYMBOL_MAP STREQUAL "${CMAKE_SOURCE_DIR}/recomp/pal/sc3_symbols.txt"
+   OR SC3_SYMBOL_MAP STREQUAL "${CMAKE_SOURCE_DIR}/recomp/kor/sc3_symbols.txt")
     set(SC3_SYMBOL_MAP "" CACHE FILEPATH "" FORCE)
 endif()
 if(NOT SC3_SYMBOL_MAP)

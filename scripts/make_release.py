@@ -78,7 +78,7 @@ EXO2_SHA256 = '205a448676a2586f9c57c25f3d5c58ca8db7e6cf5edf7506783a010c6fe2bfb5'
 # Nothing derived from the game may be in a release: file names and contents that would be.
 GAME_EXTENSIONS = ('.elf', '.irx', '.iso', '.bin', '.cue', '.img', '.mdf', '.nrg', '.chd', '.pack', '.pss', '.vag',
                    '.str', '.vb', '.dat', '.cnf', '.mc2', '.ps2')
-DISC_NAME_RE = re.compile(r'(^|/)(SCUS|SLUS|SCES|SLES)[_-][0-9]{3}\.?[0-9]{2}(\.[0-9]+)?$', re.I)
+DISC_NAME_RE = re.compile(r'(^|/)(SCUS|SLUS|SCES|SLES|SCKA)[_-][0-9]{3}\.?[0-9]{2}(\.[0-9]+)?$', re.I)
 # The folders the build makes (generated code, the disc's files, the game): never in the code or at the top. The
 # kit's third-party sources have folders of their own called "generated" (rabbitizer's tables): kit\ is not checked.
 GAME_DIR_RE = re.compile(r'(^|/)(generated|generated_[a-z]+|game_us|game_eu|game|disc|build)/', re.I)
@@ -822,7 +822,7 @@ class Release:
         sources = os.path.isfile(self.sources_zip + '.sha256')
         lines = [
             '# SoulCaliburIII_Recomp %s' % self.version, '',
-            'Soulcalibur III (USA or Europe) as a native PC game, built on your PC from **your own disc**: nothing of the '
+            'Soulcalibur III (USA, Europe or Korea) as a native PC game, built on your PC from **your own disc**: nothing of the '
             'game is in this download.', '',
             "## What's new", '', self.changelog_section.strip(), '',
             '## Download', '',
@@ -833,8 +833,8 @@ class Release:
             '2. Unzip it anywhere you like except Program Files, with about 15 GB free, and double-click '
             '**SC3 Launcher.exe**. It is not signed: on *Windows protected your PC*, click **More info**, then '
             '**Run anyway**.',
-            '3. Select your disc image (USA, SLUS-21216, or Europe, SCES-53312), **Prepare the game** (once; the texture and model '
-            'conversion and the compile take a while), **Play**.', '',
+            '3. Select your disc image (USA, SLUS-21216, Europe, SCES-53312, or Korea, SCKA-20059), **Prepare the game** '
+            '(once; the texture and model conversion and the compile take a while), **Play**.', '',
             'Saves and settings are in `%APPDATA%\\SoulCaliburIII_Recomp`; they stay across updates.',
             '',
         ]
@@ -1321,7 +1321,8 @@ What this is
   A native PC version of Soulcalibur III (PS2), built on your own PC from YOUR OWN disc.
   Nothing of the game is in this download: no game files, no code taken from the game.
   Requires Windows 10 version 1903 or newer (or Windows 11), a 64-bit CPU and OpenGL 3.3.
-  You need a disc image of the USA release (SLUS-21216) or the European one (SCES-53312): a .iso, or a .bin with its .cue.
+  You need a disc image of the USA release (SLUS-21216), the European one (SCES-53312) or the Korean one (SCKA-20059):
+  a .iso, or a .bin with its .cue.
   Discs of the other regions are not supported.
 
 Before you start: check the download
@@ -1370,7 +1371,8 @@ De quoi s'agit-il
   Une version PC native de Soulcalibur III (PS2), construite sur votre PC à partir de VOTRE PROPRE disque.
   Rien du jeu n'est dans ce téléchargement : aucun fichier du jeu, aucun code issu du jeu.
   Nécessite Windows 10 version 1903 ou ultérieure (ou Windows 11), un processeur 64 bits et OpenGL 3.3.
-  Il vous faut une image disque de la version américaine (SLUS-21216) ou européenne (SCES-53312) : un .iso, ou un .bin avec son .cue.
+  Il vous faut une image disque de la version américaine (SLUS-21216), européenne (SCES-53312) ou coréenne (SCKA-20059) :
+  un .iso, ou un .bin avec son .cue.
   Les disques des autres régions ne sont pas pris en charge.
 
 Avant de commencer : vérifiez le téléchargement
@@ -1435,7 +1437,8 @@ What this is
   A native PC version of Soulcalibur III (PS2), built on your own PC from YOUR OWN disc.
   Nothing of the game is in this download: no game files, no code taken from the game.
   Requires a 64-bit Linux with X11 or Wayland and OpenGL 3.3.
-  You need a disc image of the USA release (SLUS-21216) or the European one (SCES-53312): a .iso, or a .bin with its .cue.
+  You need a disc image of the USA release (SLUS-21216), the European one (SCES-53312) or the Korean one (SCKA-20059):
+  a .iso, or a .bin with its .cue.
   Discs of the other regions are not supported.
 
 Before you start: check the download

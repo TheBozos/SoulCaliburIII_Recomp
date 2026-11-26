@@ -21,7 +21,7 @@ An indexed page's other colours: the game may draw it with another CLUT the file
 text renderer's colours are the font's 16 CLUTs); each CLUT block the file's lists write besides the page's own gets
 a CT32 palette record of the page's size, named in the block as register 0x103 = CBP << 32 | record.
 
-Texture files inside the game's ELF (SLUS_212.16 or SCES_533.12 in the disc dir: the font, the menu icons and nine more,
+Texture files inside the game's ELF (SLUS_212.16, SCES_533.12 or SCKA_200.59 in the disc dir: the font, the menu icons and nine more,
 bozo/port/sc3_addresses.txt's ElfTextures in that disc's column) are converted as well, named elf/<address>, as the game has them before 0x118E18 relocates their pointers,
 each up to the end of its tables and of the data its upload lists reach (at most the next one's start).
 
@@ -52,7 +52,7 @@ TEXELS_REG = 0x101
 PALETTE_REG = 0x102
 CLUT_REG = 0x103
 NO_RECORD = 0xFFFFFFFF
-ELF_COLUMNS = {'SLUS_212.16': 'ntsc', 'SCES_533.12': 'pal'}
+ELF_COLUMNS = {'SLUS_212.16': 'ntsc', 'SCES_533.12': 'pal', 'SCKA_200.59': 'kor'}
 ADDRESSES = os.path.join(HERE, '..', 'bozo', 'port', 'sc3_addresses.txt')
 
 

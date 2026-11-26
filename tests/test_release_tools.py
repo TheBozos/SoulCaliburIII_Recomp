@@ -71,7 +71,7 @@ class BuildTests(unittest.TestCase):
     def test_extract_takes_only_what_the_build_reads(self):
         build = sc3_build.Build.__new__(sc3_build.Build)
         build.state, build.disc_dir = {'boot': 'SLUS_212.16'}, ''
-        wanted = [n for n in ('SLUS_212.16', 'SCES_533.12', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX',
+        wanted = [n for n in ('SLUS_212.16', 'SCES_533.12', 'SCKA_200.59', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX',
                               'IRX/SDRDRV.IRX', 'IRX\\SDRDRV.IRX', 'MOVIE.AFS', 'BGM.AFS', 'IRX/LIBSD.IRX', 'SYSTEM.CNF')
                   if build.wanted(n)]
         self.assertEqual(wanted, ['SLUS_212.16', 'ROOT.OLK', 'IRX/CRI_ADXI.IRX', 'IRX/NUSOUND.IRX', 'IRX/SDRDRV.IRX',
@@ -142,6 +142,20 @@ class BuildTests(unittest.TestCase):
                 self.assertTrue(build.wanted('SCES_533.12'))
                 self.assertFalse(build.wanted('SLUS_212.16'))
 
+    def test_verify_takes_the_korean_disc_and_its_recomp_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.disc_folder(folder, 'SCKA_200.59')
+            digest = sc3_build.hashlib.sha1(b'elf').hexdigest()
+            releases = dict(sc3_build.RELEASES, **{'SCKA_200.59': (digest,) + sc3_build.RELEASES['SCKA_200.59'][1:]})
+            with patch.object(sc3_build, 'RELEASES', releases), redirect_stdout(io.StringIO()):
+                self.assertEqual(build.step_verify(), 'SCKA_200.59')
+                self.assertEqual(build.boot(), 'SCKA_200.59')
+                self.assertEqual(build.elf(), str(Path(folder) / 'work' / 'SCKA_200.59'))
+                self.assertEqual(build.symbol_map(), str(ROOT / 'recomp' / 'kor' / 'sc3_symbols.txt'))
+                self.assertTrue(build.wanted('SCKA_200.59'))
+                self.assertFalse(build.wanted('SLUS_212.16'))
+                self.assertFalse(build.wanted('SCES_533.12'))
+
     def test_verify_names_the_disc_a_damaged_copy_should_be(self):
         with tempfile.TemporaryDirectory() as folder:
             build = self.disc_folder(folder, 'SCES_533.12')
@@ -158,6 +172,15 @@ class BuildTests(unittest.TestCase):
             self.assertIn('boots SLES_533.70', str(raised.exception))
             self.assertIn('SLUS-21216', str(raised.exception))
             self.assertIn('SCES-53312', str(raised.exception))
+            self.assertIn('SCKA-20059', str(raised.exception))
+
+    def test_verify_names_another_korean_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.disc_folder(folder, 'SCKA_200.99')
+            with self.assertRaises(sc3_build.BuildError) as raised:
+                build.step_verify()
+            self.assertIn('boots SCKA_200.99', str(raised.exception))
+            self.assertIn('SCKA-20059', str(raised.exception))
 
     def test_a_work_folder_without_a_verify_record_builds_the_extracted_disc(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -213,6 +236,7 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             cases = [('SoulCaliburIII_Recomp/source/hidden.dat', b'\x7fELF' + b'\0' * 100, 'an ELF file'),
                      ('SoulCaliburIII_Recomp/game/SLUS_212.16', b'x', 'named like a file of the game'),
+                     ('SoulCaliburIII_Recomp/source/SCKA_200.59', b'x', 'named like a file of the game'),
                      ('SoulCaliburIII_Recomp/source/packs/sc3_meshes.pack', b'x', 'named like a file of the game'),
                      ('SoulCaliburIII_Recomp/source/PS2Recomp/runtime.cpp', b'x', 'PS2Recomp')]
             for name, data, problem in cases:

@@ -660,7 +660,11 @@ struct App
     bool codeChanged() const { return built() && !sourceCommit.empty() && builtCommit != sourceCommit; }
 
     bool europe() const { return cfg.discRelease == "europe"; }
-    std::string elf() const { return plat::str(plat::path(p.game) / (europe() ? L"SCES_533.12" : L"SLUS_212.16")); }
+    bool korea() const { return cfg.discRelease == "korea"; }
+    std::string elf() const
+    {
+        return plat::str(plat::path(p.game) / (europe() ? L"SCES_533.12" : korea() ? L"SCKA_200.59" : L"SLUS_212.16"));
+    }
     bool built() const { return exists(p.gameExe) && exists(elf()); }
     void saveConfig() { cfg.save(p.launcherIni); }
 
@@ -715,7 +719,9 @@ struct App
         if (!ok.empty() && checker.exitCode() == 0)
         {
             cfg.disc = checkingPath; // a new disc: sc3_build's verify key changes, the rest follows
-            cfg.discRelease = ok.find("SCES") != std::string::npos ? "europe" : "usa";
+            cfg.discRelease = ok.find("SCES") != std::string::npos   ? "europe"
+                              : ok.find("SCKA") != std::string::npos ? "korea"
+                                                                     : "usa";
             saveConfig();
             phase = Phase::Ready;
             tab = Tab::Play;
@@ -725,10 +731,10 @@ struct App
         // In plain words, with sc3_build's own message under it.
         discErrorDetail = err;
         if (err.find("boots") != std::string::npos)
-            discError = L("This disc image is another game, or another release. The USA disc (SLUS-21216) and the "
-                          "European disc (SCES-53312) are supported.",
-                          "Cette image disque est un autre jeu, ou une autre version. Le disque américain (SLUS-21216) et le "
-                          "disque européen (SCES-53312) sont pris en charge.");
+            discError = L("This disc image is another game, or another release. The USA disc (SLUS-21216), the "
+                          "European disc (SCES-53312) and the Korean disc (SCKA-20059) are supported.",
+                          "Cette image disque est un autre jeu, ou une autre version. Le disque américain (SLUS-21216), le "
+                          "disque européen (SCES-53312) et le disque coréen (SCKA-20059) sont pris en charge.");
         else if (err.find("SHA-1") != std::string::npos)
             discError = L("This copy differs from the original disc: modified or damaged. Make a fresh copy of your disc.",
                           "Cette copie diffère du disque d'origine : modifiée ou abîmée. Refaites une copie de votre disque.");
@@ -992,10 +998,12 @@ static void drawWelcome(App &app, float inner)
                       "fourni : le jeu est construit ici, sur votre PC, à partir de votre disque."),
                     19, ui::color::ink, 0.92f);
     gap(2);
-    ui::textWrapped(L("You need a disc image of the USA release (SLUS-21216) or the European release (SCES-53312): a .iso, "
-                      "or a .bin with its .cue. Discs of the other regions are not supported.",
-                      "Il vous faut une image disque de la version américaine (SLUS-21216) ou européenne (SCES-53312) : "
-                      "un .iso, ou un .bin avec son .cue. Les disques des autres régions ne sont pas pris en charge."),
+    ui::textWrapped(L("You need a disc image of the USA release (SLUS-21216), the European release (SCES-53312) or the "
+                      "Korean release (SCKA-20059): a .iso, or a .bin with its .cue. Discs of the other regions are not "
+                      "supported.",
+                      "Il vous faut une image disque de la version américaine (SLUS-21216), européenne (SCES-53312) ou "
+                      "coréenne (SCKA-20059) : un .iso, ou un .bin avec son .cue. Les disques des autres régions ne sont "
+                      "pas pris en charge."),
                     19, ui::color::inkDim);
     gap(10);
     if (app.checking)
@@ -1161,8 +1169,9 @@ static void drawReady(App &app, float inner)
     {
         heading(app.cfg.buildPending ? L("Preparing was stopped", "La préparation a été interrompue")
                                      : L("Your disc is ready", "Votre disque est prêt"));
-        std::string line = std::string(app.europe() ? L("European disc (SCES-53312)", "Disque européen (SCES-53312)")
-                                                    : L("USA disc (SLUS-21216)", "Disque américain (SLUS-21216)")) +
+        std::string line = std::string(app.europe()  ? L("European disc (SCES-53312)", "Disque européen (SCES-53312)")
+                                       : app.korea() ? L("Korean disc (SCKA-20059)", "Disque coréen (SCKA-20059)")
+                                                     : L("USA disc (SLUS-21216)", "Disque américain (SLUS-21216)")) +
                            "  \xC2\xB7  " + fileName(app.cfg.disc);
         ui::text(line.c_str(), 17, ui::color::good);
         gap(4);

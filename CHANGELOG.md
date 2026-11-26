@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+### Added
+- The Korean disc, SCKA-20059 (v1.00): built from it as from the USA and European discs, by `sc3_build.py`, the
+  launcher and CMake (`SC3_REGION=KOR` from the ELF's SHA-1). It runs at 60 frames a second with its Korean menus and
+  text; its saves are its own (`BKSCKA-20059SC3`).
+- `recomp/kor/`: the Korean executable's address map, symbol map and patches; `bozo/port/sc3_addresses.txt` has a column
+  for it, and a row's `reviewed=<column>` names the releases read by hand.
+
 ### Fixed
 - Kunpaetku Shrine Ruin: no more dark vertical lines every 64 pixels over the water when the game is drawn larger
   than the PS2's picture (#28).
