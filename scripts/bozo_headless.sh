@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs sc3-headless (build/bozo) on game/SLUS_212.16 or game/SCES_533.12 (SC3_ELF overrides it) with a fresh user folder under
+# Runs sc3-headless (build/bozo) on game/SLUS_212.16, SCES_533.12 or SCKA_200.59 (SC3_ELF overrides it) with a fresh user folder under
 # build/bozo-runs/<name>. Extra args go to sc3-headless (--frames n, --iso image, --out run.ref ...).
 # Usage: scripts/bozo_headless.sh <name> [args...]
 source "$(dirname "$0")/common.sh"

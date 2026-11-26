@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds SC3 on BozoEngine into build/bozo: sc3, sc3-headless, sc3-check, from game/SLUS_212.16 or game/SCES_533.12 (SC3_ELF overrides it)
+# Builds SC3 on BozoEngine into build/bozo: sc3, sc3-headless, sc3-check, from game/SLUS_212.16, SCES_533.12 or SCKA_200.59 (SC3_ELF overrides it)
 # and the disc image SC3_ISO when set. Options: --no-window (no sc3, no SDL3), --target <target> (repeatable),
 # --engine <BozoEngine tree>, --build-type <type>. A player's build from the disc: scripts/sc3_build.py.
 source "$(dirname "$0")/common.sh"
