@@ -1552,6 +1552,26 @@ namespace sc3
             }
         }
 
+        // XYOFFSET_1 where 0x12CB40 puts it in the VIF1 list (mode > 0 with bit 0), as a move of the screen origin's
+        // (0x6C00, 0x7200), for the draws played after it.
+        float g_offset[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+        void setOffset(float x, float y)
+        {
+            g_offset[12] = x;
+            g_offset[13] = y;
+        }
+
+        void screenOffset(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const int32_t mode = getRegS32(ctx, 6);
+            const float x = static_cast<float>(0x6C00 - static_cast<int32_t>(getRegU32(ctx, 4) & 0xFFFFu)) / 16.0f;
+            const float y = static_cast<float>(0x7200 - static_cast<int32_t>(getRegU32(ctx, 5) & 0xFFFFu)) / 16.0f;
+            fn::ScreenOffset(rdram, ctx, runtime);
+            if (mode > 0 && (mode & 1) != 0)
+                ot::appendVif(rdram, [x, y](bozo::render::Renderer &) { setOffset(x, y); });
+        }
+
         ot::Draw asDraw(Sc3Draw &&part)
         {
             auto held = std::make_shared<Sc3Draw>(std::move(part));
@@ -1560,10 +1580,11 @@ namespace sc3
                 if (held->vertices.empty())
                     return;
                 held->material.depthWrite = !held->secondContext && !g_depthMasked;
+                const float *matrix = held->secondContext ? kIdentity : g_offset;
                 if (held->texture)
-                    renderer.draw(held->material, kIdentity, held->vertices.data(), static_cast<uint32_t>(held->vertices.size()), held->texture);
+                    renderer.draw(held->material, matrix, held->vertices.data(), static_cast<uint32_t>(held->vertices.size()), held->texture);
                 else
-                    renderer.draw(held->material, kIdentity, held->vertices.data(), static_cast<uint32_t>(held->vertices.size()));
+                    renderer.draw(held->material, matrix, held->vertices.data(), static_cast<uint32_t>(held->vertices.size()));
             };
         }
 
@@ -1781,7 +1802,11 @@ namespace sc3
     }
     }
 
-    void meshes::frameStart() { g_depthMasked = false; }
+    void meshes::frameStart()
+    {
+        g_depthMasked = false;
+        setOffset(0.0f, 0.0f);
+    }
 
     void meshes::frameDone()
     {
@@ -1894,6 +1919,7 @@ namespace sc3
         runtime.registerFunction(addr::ClipEmit, &hooked<clipEmit>);
         runtime.registerFunction(addr::PacketFlush, &hooked<packetFlush>);
         runtime.registerFunction(addr::RegisterPacket, &hooked<registerPacket>);
+        runtime.registerFunction(addr::ScreenOffset, &hooked<screenOffset>);
         runtime.registerFunction(addr::OtInsertDepth, &hooked<otInsertDepth>);
         runtime.registerFunction(addr::OtInsertFixed, &hooked<otInsertFixed>);
         runtime.registerFunction(addr::StrandPart, &hooked<strandPart>);
