@@ -1,4 +1,5 @@
 """The release tools (scripts/sc3_build.py, make_release.py, apply_update.py) without game data."""
+import calendar
 import io
 import os
 import subprocess
@@ -123,6 +124,33 @@ class BuildTests(unittest.TestCase):
             self.assertEqual((external / 'keep.txt').read_bytes(), b'outside source')
             self.assertTrue((root / 'scripts/linked').exists())
 
+    def test_build_dates_future_files_back_to_now_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'source'
+            external = Path(folder) / 'external'
+            (root / 'bozo/port').mkdir(parents=True)
+            external.mkdir()
+            now = sc3_build.time.time() + 60
+            future, past = now + 12 * 3600, now - 3600
+            for path, when in ((root / 'CMakeLists.txt', future), (root / 'bozo/port/a.cpp', future),
+                               (root / 'bozo/port/b.cpp', past), (external / 'keep.txt', future)):
+                path.write_bytes(b'x')
+                os.utime(path, (when, when))
+            os.utime(root / 'bozo', (future, future))
+            if sys.platform == 'win32':
+                import _winapi
+                _winapi.CreateJunction(str(external), str(root / 'linked'))
+            else:
+                (root / 'linked').symlink_to(external, target_is_directory=True)
+            self.assertEqual(sc3_build.clamp_future_mtimes([str(root), str(root / 'bozo')], now), 3)
+            for name in ('CMakeLists.txt', 'bozo/port/a.cpp', 'bozo'):
+                self.assertEqual(os.stat(root / name).st_mtime, now)
+            self.assertEqual(os.stat(root / 'bozo/port/b.cpp').st_mtime, past)
+            self.assertEqual(os.stat(external / 'keep.txt').st_mtime, future)
+            stamp = sc3_build.tree_stamp(str(root), sc3_build.SOURCE_EXTS)
+            self.assertEqual(sc3_build.clamp_future_mtimes([str(root)], now), 0)
+            self.assertEqual(sc3_build.tree_stamp(str(root), sc3_build.SOURCE_EXTS), stamp)
+
     def disc_folder(self, folder, name, data=b'elf'):
         (Path(folder) / name).write_bytes(data)
         build = sc3_build.Build.__new__(sc3_build.Build)
@@ -203,6 +231,12 @@ class BuildTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_zip_dates_are_past_in_every_time_zone(self):
+        commit = calendar.timegm((2026, 11, 20, 18, 30, 0))
+        wall = calendar.timegm(make_release.zip_time(commit) + (0, 0, 0))
+        self.assertLessEqual(wall + 14 * 3600, commit)
+        self.assertEqual(make_release.zip_time(0)[:3], (1980, 1, 2))
+
     def test_source_export_drains_archive_padding_before_waiting(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
