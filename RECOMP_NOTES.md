@@ -90,6 +90,14 @@ disc, never read from packets at run time.
   from the renderer's `depthAt`), the frame reads at TBP 0 and 0x2C40, and the display copy: the game's last pass
   copies the frame through TFX Highlight2 with a colour 0x13D130 computes each frame (R x1.00, G x1.09, B x1.12, +6),
   which is the "teal lift" PCSX2 and the PS2Recomp build both show.
+- **View state** (the views' own packets, which no builder makes). 0x12CB40 writes a view's XYOFFSET (its +0x3F0 /
+  +0x3F4, (2048 - centre) * 16): XYOFFSET_2 to the GIF list, XYOFFSET_1 to the VIF1 list for mode > 0 with bit 0; the
+  models after it are drawn with that move of the origin (Custom Character Creation's model in the arch at (0x7840,
+  0x71D0), the character select's weapon). 0x13AB70 writes ZBUF (0x13AA98: flag >= 0 ZBUF_2, ZMSK when it is 0) to
+  the GIF list, the VIF1 list or the layer's first bucket: the views mask ZBUF_2 for their layer and unmask it after,
+  so the menus' 2D writes depth and, testing GEQUAL, a dialog hides the text under it (seen in a PCSX2 GS dump of the
+  SAVE dialog). Both become state entries of the ordering table where the game linked the packet; a frame starts at
+  (0x6C00, 0x7200), ZBUF_2 unmasked.
 - **Materials** (`sc3_material.cpp`). The register values the builders compute become `Material` fields: blend from
   ALPHA, depth from TEST and ZBUF, alpha test, fog, colour mask, Q. No SC3 draw has a depth write without a test
   (counted: 0 of 2.1 M mesh draws in World Competition).
@@ -176,6 +184,10 @@ moved by varying amounts. The port names the game's addresses, and each disc has
   Mode Select) are checked for: no `FAULT`, `LOST 0` mesh parts, 0 dropped 2D pages, `[sc3:acknowledged]` 0, a clean
   exit. Exit loops (3 boots and a route) have 0 aborts since the shutdown order fix (players stopped before the
   renderer goes).
+- **Custom Character Creation.** The nine modes only enter Character Creation. `reference/scripts/ccc_check.sh` runs
+  `ccc_frames.txt` through its sub-screens headless (the route's checks) and compares six held stills (the SAVE
+  dialog, its prompt, the slot list, the edit screen, the "All" list and its confirmation) with a local baseline; the
+  fixed build was checked against PCSX2 on those screens.
 - **Windows.** A Windows 11 VM (4 cores, Mesa llvmpipe) ran the cross-built and the kit-built game: game state equal
   to Linux on every frame of the route and the boot, WAVs byte-identical headless, window sound against Linux max
   0.02 to 2.14 dB per 10 s window, stills within Linux's own floor, 12 of 12 exits clean.
