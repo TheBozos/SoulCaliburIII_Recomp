@@ -403,13 +403,23 @@ class Addresses:
             parts = code.split()
             if not parts:
                 continue
-            cells = [v for v in parts[1:] if not v.startswith('reviewed=')][:len(self.COLUMNS)]
+            where = '%s:%d' % (self.path.name, n + 1)
+            cells = [v for v in parts[1:] if not v.startswith('reviewed=')]
+            flags = [v[len('reviewed='):] for v in parts[1:] if v.startswith('reviewed=')]
+            reviewed = set(','.join(flags).split(',')) - {''}
+            if len(cells) > len(self.COLUMNS):
+                raise SystemExit('%s: %s has %d addresses, the table has %d columns (%s)'
+                                 % (where, parts[0], len(cells), len(self.COLUMNS), ', '.join(self.COLUMNS)))
+            if reviewed - set(self.COLUMNS[1:]):
+                raise SystemExit('%s: reviewed=%s names no column of %s' % (where, ','.join(sorted(reviewed)),
+                                                                             ', '.join(self.COLUMNS[1:])))
             cells += ['-'] * (len(self.COLUMNS) - len(cells))
-            row = {'line': n, 'name': parts[0], 'reviewed': set(), 'note': note.strip()}
-            row.update((c, int(v, 16) if v != '-' else None) for c, v in zip(self.COLUMNS, cells))
-            for flag in parts[1:]:
-                if flag.startswith('reviewed='):
-                    row['reviewed'] |= set(flag[len('reviewed='):].split(','))
+            row = {'line': n, 'name': parts[0], 'reviewed': reviewed, 'note': note.strip()}
+            for c, v in zip(self.COLUMNS, cells):
+                try:
+                    row[c] = int(v, 16) if v != '-' else None
+                except ValueError:
+                    raise SystemExit('%s: %s: %r is not an address, `-` or reviewed=<column>,...' % (where, parts[0], v))
             self.rows.append(row)
 
     def values(self, column):
