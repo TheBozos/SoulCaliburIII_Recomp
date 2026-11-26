@@ -2593,7 +2593,7 @@ namespace sc3
         // only, 2 0x32001 Z only, 3 0x30000 both; 0 or other: nothing); RGBA from 0x11AAF8(colour, 255) with alpha 0.
         // Full screen (0x6C00, 0x7200, 0x9400, 0x8E00): the prebuilt list 0x5BEE80 (XYOFFSET_1 0, ten columns 0..640 x 0..448,
         // XYOFFSET_1 back, and its NLOOP 2 A+D tag's second write the TEST after). Else the rectangle moved into the current
-        // XYOFFSET_1 (shadow 0x470FA8 / 0x470FAC), clamped to 0..0xFFFF.
+        // XYOFFSET_2 (shadow 0x470FA8 / 0x470FAC), clamped to 0..0xFFFF.
         void effectRect(EffectBuild &b, uint32_t mode, int32_t x0, int32_t y0, int32_t x1, int32_t y1, const float colour[4])
         {
             uint64_t test;
@@ -2977,6 +2977,28 @@ namespace sc3
             ++stats.native;
             setReturnU32(ctx, cursor + 16u);
             ctx->pc = getRegU32(ctx, 31);
+        }
+
+        // 0x13AB70 (page, a1, link, flag): 0x13AA98's ZBUF write for the page (flag >= 0 ZBUF_2, ZMSK when flag is 0; else
+        // ZBUF_1, ZMSK when flag is even, not followed here), linked by link: 0 the GIF list (0x10F860), 1 the VIF1 list
+        // (0x10F910), 2 the current layer's first bucket (0x10D9A0 at depth 0). The views (0x12A400) mask ZBUF_2 for their
+        // layer and unmask it after, so the menus' 2D hides what lies under it through depth. Not followed: the ZBUF_2 the
+        // off-screen passes' set-ups write (0x13AC88, 0x13B3F0).
+        void depthBuffer(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t page = getRegU32(ctx, 4), link = getRegU32(ctx, 6);
+            const int32_t flag = getRegS32(ctx, 7);
+            fn::DepthBuffer(rdram, ctx, runtime);
+            if (page == 0u || flag < 0)
+                return;
+            const bool masked = flag == 0;
+            ot::Draw state = [masked](bozo::render::Renderer &) { draw::setSecondDepthMasked(masked); };
+            if (link == 0u)
+                ot::appendGif(rdram, std::move(state));
+            else if (link == 1u)
+                ot::appendVif(rdram, std::move(state));
+            else if (link == 2u)
+                ot::linkLayerBucket(rdram, 0, std::move(state));
         }
 
         // ---- 0x110E50 (a0 -> item): object sprites, VU0 macro code. The item as 0x1134A0's (+0 ALPHA_2, +8 the count, +0xA
@@ -4186,6 +4208,7 @@ namespace sc3
         runtime.registerFunction(addr::Icon, &hooked<icon>);
         runtime.registerFunction(addr::EffectLayer, &hooked<screenEffectLayer>);
         runtime.registerFunction(addr::EffectInline, &hooked<screenEffectInline>);
+        runtime.registerFunction(addr::DepthBuffer, &hooked<depthBuffer>);
         runtime.registerFunction(addr::Strips, &hooked<strips>);
         runtime.registerFunction(addr::ScreenStrips, &hooked<screenStrips>);
         runtime.registerFunction(addr::PageCopy, &hooked<pageCopy>);

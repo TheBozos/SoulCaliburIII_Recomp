@@ -76,3 +76,16 @@ A fight compared with main needs one game state on both builds. `route_frames.tx
 - Main's picture is older than the port's at one frame number: compare main's still at n with the port's at n - 2 (the best match is n - 1 or n - 2 by the still). Hold the port at n - 2 and capture that frame. Runs go to the hidden workspace 9: fix the window with a floating 952x1046 so both sizes match.
 - `ab/gsdump.py x.gs`: a PCSX2 GS dump as text, one line per run of equal state, with the display registers, each run's bounding box and vertex alphas. Reference analysis only (the port reads no packet): this is how the display copy and the two contexts' TEST and ZBUF were found. PCSX2 runs on a private `-datapath` holding `PCSX2/inis`, `PCSX2/bios`.
 - Floors: two reference runs against each other. `SC3_HIDE_EE=0x172e90,0x163650` hides the object glow and the sun flare on both builds (0x1f6c48, the shadows' darkening, on the port).
+
+## Custom Character Creation (`scripts/ccc_check.sh`)
+
+The nine modes only enter Character Creation; `ccc_frames.txt` goes from boot through Custom Character Creation's
+sub-screens (no movies, a memory card with no save): the SAVE dialog over the CHARACTERS list, the "continue anyway"
+prompt, the slot list, the edit screen with the model in the arch, the "All" preset list and its confirmation.
+
+- `ccc_check.sh headless BUILD_DIR`: `sc3-headless` over the route to frame 6800, failing on a `FAULT`, a lost mesh part,
+  a dropped 2D page or a device register reached.
+- `ccc_check.sh stills BUILD_DIR OUT` holds and captures the six stills (3400, 3600, 4200, 5400, 5850, 6600);
+  `ccc_check.sh compare OUT BASELINE` gives each one's PSNR against a baseline run and fails below 29 dB. Two runs of
+  one build give 31 to 38 dB (one still is equal); the build before the ZBUF_2 and XYOFFSET_1 fixes gives 14.6 to
+  27.6 dB on five of the six. The baseline stays local: make it with a build checked against PCSX2.

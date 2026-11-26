@@ -371,9 +371,22 @@ namespace sc3::draw
             Material material;
             std::vector<Vertex> vertices;
             std::shared_ptr<const bozo::render::Texture> texture;
+            bool secondDepth = false;
         };
         std::map<uint64_t, std::vector<KeyedBatch>> g_keyed;
+        bool g_secondDepthMasked = false;
+
+        bool writesDepth(uint64_t test)
+        {
+            const uint32_t ate = static_cast<uint32_t>(test & 1u), atst = static_cast<uint32_t>((test >> 1) & 7u);
+            const uint32_t afail = static_cast<uint32_t>((test >> 12) & 3u), ztst = static_cast<uint32_t>((test >> 17) & 3u);
+            return ((test >> 16) & 1u) != 0u && ztst != 0u && !(ate != 0u && atst == 0u && (afail & 1u) != 0u);
+        }
     }
+
+    void setSecondDepthMasked(bool masked) { g_secondDepthMasked = masked; }
+
+    void frameStart() { g_secondDepthMasked = false; }
 
     void drawKeyed(uint64_t key, const GsMaterial &material, const GsVertex *vertices, uint32_t count)
     {
@@ -386,6 +399,7 @@ namespace sc3::draw
         GsMaterial gs = material;
         toRenderer(gs, vertices, count, batch.material, batch.vertices);
         batch.texture = gs.texture;
+        batch.secondDepth = gs.prim.ctxt && writesDepth(gs.testFromTarget ? kTest2 : gs.test);
         g_keyed[key].push_back(std::move(batch));
     }
 
@@ -402,9 +416,11 @@ namespace sc3::draw
         g_keyed.erase(it);
         return [batches](bozo::render::Renderer &renderer)
         {
-            for (const KeyedBatch &b : *batches)
+            for (KeyedBatch &b : *batches)
                 if (!b.vertices.empty())
                 {
+                    if (b.secondDepth)
+                        b.material.depthWrite = !g_secondDepthMasked;
                     if (b.texture)
                         renderer.draw(b.material, kIdentity, b.vertices.data(), static_cast<uint32_t>(b.vertices.size()), b.texture);
                     else

@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ### Fixed
 - Kunpaetku Shrine Ruin: no more dark vertical lines every 64 pixels over the water when the game is drawn larger
   than the PS2's picture (#28).
+- Custom Character Creation: dialogs and lists no longer show the menus under them through (the memory card dialog
+  over the CHARACTERS list, the "All" list over the edit list), and the character stands in the arch instead of the
+  middle of the screen (#26). The character select's weapon preview sits above its panel again (#27).
 
 ## [0.1.1] - 2026-11-25
 
