@@ -1,7 +1,7 @@
-# The game's addresses the port names (sc3::addr::Name, sc3::fn::Name for a call): its address in SLUS_212.16,
-# in SCES_533.12, `reviewed` when that one was read by hand, then a note. A `name[]` row per element of an array.
+# The game's addresses the port names (sc3::addr::Name, sc3::fn::Name for a call): its address in SLUS_212.16, then
+# in SCES_533.12, `reviewed=<column>,...` for the ones read by hand, then a note. A `name[]` row per element of an array.
 # scripts/sc3_region_map.py addresses fills and checks the SCES_533.12 column from recomp/pal/address_map.txt; an
-# address inside a function PAL changed has to be read by hand and marked reviewed. cmake/bozo.cmake makes
+# address inside a function PAL changed has to be read by hand and marked reviewed=pal. cmake/bozo.cmake makes
 # sc3_region.h from the build's column.
 GameStart              0x00100008 0x00100008
 MatrixMul              0x00101058 0x00101058
@@ -111,8 +111,8 @@ ScreenOffset           0x0012CB40 0x0012CB48  # (x, y, mode): XYOFFSET_2 (mode >
 VblankHandler          0x0012CF38 0x0012CF40
 Lines                  0x0012D0D8 0x0012D0E0
 FrameClock             0x0012D0E8 0x0012D0F0
-MovieFrameWaitReturn   0x0012E654 0x0012E514 reviewed  # PAL: main loop: the return from 0x3AE238 (PAL 0x3B37D0), the same sb 0xABD before it
-FrameEndReturn         0x0012EA90 0x0012E950 reviewed  # PAL: main loop: the return from 0x148098 (PAL 0x148180), the same sb 0xABD before it
+MovieFrameWaitReturn   0x0012E654 0x0012E514 reviewed=pal  # PAL: main loop: the return from 0x3AE238 (PAL 0x3B37D0), the same sb 0xABD before it
+FrameEndReturn         0x0012EA90 0x0012E950 reviewed=pal  # PAL: main loop: the return from 0x148098 (PAL 0x148180), the same sb 0xABD before it
 Copy                   0x0012FE98 0x0012FD78
 Light                  0x00135C68 0x00135B88
 Roll                   0x00135F78 0x00135E98
@@ -133,9 +133,9 @@ GlowBufferDraw         0x00172E90 0x00172F58
 ShadowDarken           0x001F6C48 0x001F73E0
 ShadowSetup            0x001F70E0 0x001F7878
 ShadowResolve          0x001F7530 0x001F7CC8
-ShadowVolumes          0x001F8598 0x001F8D70 reviewed  # PAL: its own body only relocated; the function before it in the same block changed
-MovieCopy              0x00217E28 0x002190E0 reviewed  # the movie task's copy of a picture into a texture file's pixels (handle, frame, pixels, flags); PAL: the same prologue; PAL adds a block on its early return
-MovieTaskEnd           0x00218600 0x00219918 reviewed  # PAL: the same prologue and body
+ShadowVolumes          0x001F8598 0x001F8D70 reviewed=pal  # PAL: its own body only relocated; the function before it in the same block changed
+MovieCopy              0x00217E28 0x002190E0 reviewed=pal  # the movie task's copy of a picture into a texture file's pixels (handle, frame, pixels, flags); PAL: the same prologue; PAL adds a block on its early return
+MovieTaskEnd           0x00218600 0x00219918 reviewed=pal  # PAL: the same prologue and body
 MwPlyDecoderSettings[] 0x003A8A98 0x003AE030
 MwPlyCreate            0x003AA698 0x003AFC30
 MwPlyDestroy           0x003AAC38 0x003B01D0

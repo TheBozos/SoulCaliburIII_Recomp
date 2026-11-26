@@ -170,8 +170,9 @@ class RegionMapTest(unittest.TestCase):
         table = self.write_table('Inside 0x0010001C -\n')
         code, printed = self.call(region.addresses, table, self.map, '--write')
         self.assertEqual(code, 1)
-        self.assertIn('Inside 0x10001c: inside 0x100018-0x100028, which changed', printed)
-        table = self.write_table('Inside 0x0010001C 0x00100020 reviewed  # read\n')
+        self.assertIn('Inside 0x10001c: inside 0x100018-0x100028, which changed: read it and mark the row reviewed=pal',
+                      printed)
+        table = self.write_table('Inside 0x0010001C 0x00100020 reviewed=pal  # read\n')
         self.assertEqual(self.call(region.addresses, table, self.map)[0], 0)
 
     def test_header_names_the_columns_addresses_and_the_calls(self):
