@@ -429,7 +429,7 @@ class Build:
         if os.path.isdir(src):
             boot = next((n for n in RELEASES if os.path.isfile(os.path.join(src, n))), None)
             if not boot:
-                others = [n for n in os.listdir(src) if re.match(r'S[CL][A-Z]S_\d{3}\.\d{2}$', n, re.I)]
+                others = [n for n in os.listdir(src) if re.match(r'S[CL][A-Z]{2}_\d{3}\.\d{2}$', n, re.I)]
                 raise BuildError(self.wrong_disc(others[0] if others else None, src))
             digest = sha1_file(os.path.join(src, boot))
         else:
@@ -932,7 +932,7 @@ def check_disc(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Builds Soulcalibur III (USA or Europe) as a native PC game from your own disc.')
+    ap = argparse.ArgumentParser(description='Builds Soulcalibur III (USA, Europe or Korea) as a native PC game from your own disc.')
     ap.add_argument('--disc', required=True, help='the disc image (.iso, .bin, .cue) or an extracted disc folder')
     ap.add_argument('--out', default='sc3_build', help='the work folder; the game ends up in <out>/SC3')
     ap.add_argument('--game', help='the game folder to stage (default: <out>/SC3)')
