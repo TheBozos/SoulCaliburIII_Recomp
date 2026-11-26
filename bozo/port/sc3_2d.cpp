@@ -2980,9 +2980,10 @@ namespace sc3
         }
 
         // 0x13AB70 (page, a1, link, flag): 0x13AA98's ZBUF write for the page (flag >= 0 ZBUF_2, ZMSK when flag is 0; else
-        // ZBUF_1), linked by link: 0 the GIF list (0x10F860), 1 the VIF1 list (0x10F910), 2 the current layer's first bucket
-        // (0x10D9A0 at depth 0). The views (0x12A400) mask ZBUF_2 for their layer and unmask it after, so that the menus' 2D
-        // hides what lies under it through depth. ZBUF_2's mask goes to the same place as a state entry.
+        // ZBUF_1, ZMSK when flag is even, not followed here), linked by link: 0 the GIF list (0x10F860), 1 the VIF1 list
+        // (0x10F910), 2 the current layer's first bucket (0x10D9A0 at depth 0). The views (0x12A400) mask ZBUF_2 for their
+        // layer and unmask it after, so the menus' 2D hides what lies under it through depth. Not followed: the ZBUF_2 the
+        // off-screen passes' set-ups write (0x13AC88, 0x13B3F0).
         void depthBuffer(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t page = getRegU32(ctx, 4), link = getRegU32(ctx, 6);

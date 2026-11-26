@@ -35,12 +35,12 @@ headless)
     if grep -qE "LOST [1-9]" "$log"; then echo "ccc: mesh parts lost"; fail=1; fi
     if grep -qE " [1-9][0-9]* pages dropped" "$log"; then echo "ccc: 2D pages dropped"; fail=1; fi
     grep -q "\[sc3:acknowledged\] 0 hits" "$log" || { echo "ccc: device registers reached"; fail=1; }
-    [ "$fail" = 0 ] && echo "ccc headless: ok" || echo "ccc headless: failed, log $log"
+    if [ "$fail" = 0 ]; then echo "ccc headless: ok"; rm -rf "$user"; else echo "ccc headless: failed, log $log"; fi
     exit "$fail"
     ;;
 stills)
     build=${2:?usage: ccc_check.sh stills BUILD_DIR OUT}; out=${3:?usage: ccc_check.sh stills BUILD_DIR OUT}
-    mkdir -p "$out/user"
+    rm -rf "$out/user" && mkdir -p "$out/user"
     SC3_NO_MOVIES=1 SC3_HOLD_FRAMES="$STILLS" PS2X_USER_DIR="$out/user" PS2X_NO_DIALOGS=1 PS2X_WINDOW_NO_FOCUS=1 \
         "$build/sc3" --elf "$ELF" "${iso[@]}" --no-sound --width 640 --height 480 --pad-script "$SCRIPT" \
         --capture-dir "$out" --capture-frames "$STILLS" --quit-after $((${STILLS##*,} + 50))
@@ -56,7 +56,7 @@ compare)
         if [ $((w * 3)) -gt $((h * 4)) ]; then cw=$((h * 4 / 3)) ch=$h; else cw=$w ch=$((w * 3 / 4)); fi
         magick "$1" -gravity center -crop "${cw}x${ch}+0+0" +repage -filter Triangle -resize '640x448!' -alpha off "$2"
     }
-    still() { ls "$1"/frame_*.png 2>/dev/null | awk -v n="$2" '{ m = $0; sub(/.*frame_0*/, "", m); sub(/\.png$/, "", m);
+    still() { { ls "$1"/frame_*.png 2>/dev/null || true; } | awk -v n="$2" '{ m = $0; sub(/.*frame_0*/, "", m); sub(/\.png$/, "", m);
         d = m - n; if (d < 0) d = -d; if (d <= 2 && (best == "" || d < bd)) { best = $0; bd = d } } END { print best }'; }
     fail=0
     for n in ${STILLS//,/ }; do

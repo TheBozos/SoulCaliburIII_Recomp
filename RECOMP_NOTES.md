@@ -91,13 +91,16 @@ disc, never read from packets at run time.
   copies the frame through TFX Highlight2 with a colour 0x13D130 computes each frame (R x1.00, G x1.09, B x1.12, +6),
   which is the "teal lift" PCSX2 and the PS2Recomp build both show.
 - **View state** (the views' own packets, which no builder makes). 0x12CB40 writes a view's XYOFFSET (its +0x3F0 /
-  +0x3F4, (2048 - centre) * 16): XYOFFSET_2 to the GIF list, XYOFFSET_1 to the VIF1 list for mode > 0 with bit 0; the
-  models after it are drawn with that move of the origin (Custom Character Creation's model in the arch at (0x7840,
-  0x71D0), the character select's weapon). 0x13AB70 writes ZBUF (0x13AA98: flag >= 0 ZBUF_2, ZMSK when it is 0) to
-  the GIF list, the VIF1 list or the layer's first bucket: the views mask ZBUF_2 for their layer and unmask it after,
-  so the menus' 2D writes depth and, testing GEQUAL, a dialog hides the text under it (seen in a PCSX2 GS dump of the
-  SAVE dialog). Both become state entries of the ordering table where the game linked the packet; a frame starts at
-  (0x6C00, 0x7200), ZBUF_2 unmasked.
+  +0x3F4, (2048 - centre) * 16); for mode > 0 with bit 0, XYOFFSET_1 goes to the VIF1 list (and to the GIF list with
+  bit 0x4000), and the context 1 parts after it are drawn with that move of the origin (Custom Character Creation's
+  model in the arch at (0x7840, 0x71D0), the character select's weapon). 0x13AB70 writes ZBUF (0x13AA98: flag >= 0
+  ZBUF_2, ZMSK when it is 0) to the GIF list, the VIF1 list or the layer's first bucket: the views mask ZBUF_2 for
+  their layer and unmask it after, so the menus' 2D writes depth and, testing GEQUAL, a dialog hides the text under it
+  (seen in a PCSX2 GS dump of the SAVE dialog). Both become state entries of the ordering table where the game linked
+  the packet; a frame starts at (0x6C00, 0x7200) with ZBUF_2 unmasked (0x12DB20's set-up packet). Not followed:
+  XYOFFSET_2 (context 2 parts and 2D keep the default origin; 0x13CDC0 reads its shadow itself), the XYOFFSET_1 and
+  ZBUF_2 the off-screen passes' set-ups write (0x13AC88, 0x13B3F0), ZBUF_1 from 0x13AB70. The route's stills with and
+  without the ZBUF_2 depth writes differ only by animation phase.
 - **Materials** (`sc3_material.cpp`). The register values the builders compute become `Material` fields: blend from
   ALPHA, depth from TEST and ZBUF, alpha test, fog, colour mask, Q. No SC3 draw has a depth write without a test
   (counted: 0 of 2.1 M mesh draws in World Competition).

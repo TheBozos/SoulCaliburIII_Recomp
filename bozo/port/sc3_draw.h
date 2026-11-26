@@ -95,7 +95,7 @@ namespace sc3
         // The key's batches as one draw of the ordering table (taken: the key is free again).
         ot::Draw takeKeyed(uint64_t key);
         // ZBUF_2's ZMSK where the game's lists set it (0x13AB70), for the context 2 draws played after it; unmasked at a
-        // frame's start, as the frame's set-up packet leaves it.
+        // frame's start, as 0x12DB20's set-up packet leaves it.
         void setSecondDepthMasked(bool masked);
         void frameStart();
         // The Renderer's material and triangles of a GS draw: the sprites and lines as two triangles.

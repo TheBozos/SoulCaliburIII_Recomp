@@ -107,7 +107,7 @@ IconsUpload            0x00128080 0x00128088
 Icon                   0x001280F8 0x00128100
 EffectInline           0x0012C690 0x0012C698
 EffectLayer            0x0012C7E0 0x0012C7E8
-ScreenOffset           0x0012CB40 0x0012CB48  # (x, y, mode): XYOFFSET_2 in the GIF list, mode > 0 with bit 0 also XYOFFSET_1 in the VIF1 list
+ScreenOffset           0x0012CB40 0x0012CB48  # (x, y, mode): XYOFFSET_2 (mode > 0 with bit 1 the GIF list, 0 the layer, < 0 the table); mode > 0 with bit 0 XYOFFSET_1 (the VIF1 list, bit 0x4000 the GIF list too)
 VblankHandler          0x0012CF38 0x0012CF40
 Lines                  0x0012D0D8 0x0012D0E0
 FrameClock             0x0012D0E8 0x0012D0F0
@@ -118,7 +118,7 @@ Light                  0x00135C68 0x00135B88
 Roll                   0x00135F78 0x00135E98
 LabelsUpload           0x00138860 0x00138780
 Labels                 0x001388E8 0x00138808
-DepthBuffer            0x0013AB70 0x0013AAA8  # (page, a1, link, flag): 0x13AA98's ZBUF_2 (flag >= 0, ZMSK when 0) or ZBUF_1 packet, linked by link
+DepthBuffer            0x0013AB70 0x0013AAA8  # (page, a1, link, flag): 0x13AA98's ZBUF_2 (flag >= 0, ZMSK when 0) or ZBUF_1 (ZMSK when flag is even) packet, linked by link
 StoreImage             0x0013BDF0 0x0013BD28
 DisplayCopy            0x00141C80 0x00141D68
 EnvSlot                0x00144198 0x00144280

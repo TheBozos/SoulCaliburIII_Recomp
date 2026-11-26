@@ -1552,8 +1552,8 @@ namespace sc3
             }
         }
 
-        // XYOFFSET_1 where 0x12CB40 puts it in the VIF1 list (mode > 0 with bit 0), as a move of the screen origin's
-        // (0x6C00, 0x7200), for the draws played after it.
+        // XYOFFSET_1 where 0x12CB40 links it (mode > 0 with bit 0: the VIF1 list, with bit 0x4000 the GIF list too), as a
+        // move of the screen origin's (0x6C00, 0x7200) for the context 1 parts played after it.
         float g_offset[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
         void setOffset(float x, float y)
@@ -1568,8 +1568,11 @@ namespace sc3
             const float x = static_cast<float>(0x6C00 - static_cast<int32_t>(getRegU32(ctx, 4) & 0xFFFFu)) / 16.0f;
             const float y = static_cast<float>(0x7200 - static_cast<int32_t>(getRegU32(ctx, 5) & 0xFFFFu)) / 16.0f;
             fn::ScreenOffset(rdram, ctx, runtime);
-            if (mode > 0 && (mode & 1) != 0)
-                ot::appendVif(rdram, [x, y](bozo::render::Renderer &) { setOffset(x, y); });
+            if (mode <= 0 || (mode & 1) == 0)
+                return;
+            ot::appendVif(rdram, [x, y](bozo::render::Renderer &) { setOffset(x, y); });
+            if ((mode & 0x4000) != 0)
+                ot::appendGif(rdram, [x, y](bozo::render::Renderer &) { setOffset(x, y); });
         }
 
         ot::Draw asDraw(Sc3Draw &&part)

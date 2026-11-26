@@ -371,17 +371,16 @@ namespace sc3::draw
             Material material;
             std::vector<Vertex> vertices;
             std::shared_ptr<const bozo::render::Texture> texture;
-            bool secondDepth = false; // ZBUF_2 decides its depth write
+            bool secondDepth = false;
         };
         std::map<uint64_t, std::vector<KeyedBatch>> g_keyed;
         bool g_secondDepthMasked = false;
 
-        // ZTE set, and no alpha test that keeps Z from being written (ATST NEVER with AFAIL FB_ONLY or RGB_ONLY).
         bool writesDepth(uint64_t test)
         {
             const uint32_t ate = static_cast<uint32_t>(test & 1u), atst = static_cast<uint32_t>((test >> 1) & 7u);
-            const uint32_t afail = static_cast<uint32_t>((test >> 12) & 3u);
-            return ((test >> 16) & 1u) != 0u && !(ate != 0u && atst == 0u && (afail & 1u) != 0u);
+            const uint32_t afail = static_cast<uint32_t>((test >> 12) & 3u), ztst = static_cast<uint32_t>((test >> 17) & 3u);
+            return ((test >> 16) & 1u) != 0u && ztst != 0u && !(ate != 0u && atst == 0u && (afail & 1u) != 0u);
         }
     }
 
