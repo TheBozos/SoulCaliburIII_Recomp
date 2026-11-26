@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+### Fixed
+- Kunpaetku Shrine Ruin: no more dark vertical lines every 64 pixels over the water when the game is drawn larger
+  than the PS2's picture (#28).
+
 ## [0.1.1] - 2026-11-25
 
 ### Added
