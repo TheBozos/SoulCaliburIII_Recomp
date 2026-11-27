@@ -164,6 +164,33 @@ def tree_stamp(folder, exts=None):
     return fingerprint(out)
 
 
+def clamp_future_mtimes(roots, now=None):
+    """Sets what is dated after now under roots to now; returns how many. A zip's dates are local time: an older
+    release's, read behind UTC, land in the future, and Ninja then regenerates build.ninja forever."""
+    now = time.time() if now is None else now
+    linked = lambda e: e.is_symlink() or (hasattr(e, 'is_junction') and e.is_junction())  # noqa: E731
+    roots = sorted(set(os.path.normcase(os.path.abspath(r)) for r in roots if r and os.path.isdir(r)))
+    pending = [r for r in roots if not any(r.startswith(o + os.sep) for o in roots)]
+    changed = 0
+    while pending:
+        try:
+            entries = list(os.scandir(pending.pop()))
+        except OSError:
+            continue
+        for e in entries:
+            if linked(e) or e.name == '.git':
+                continue
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    pending.append(e.path)
+                if e.stat(follow_symlinks=False).st_mtime > now:
+                    os.utime(e.path, (now, now))
+                    changed += 1
+            except OSError:
+                continue
+    return changed
+
+
 SOURCE_EXTS = ('.cpp', '.h', '.hpp', '.inl', '.c', '.txt', '.cmake', '.rc', '.ico', '.manifest', '.py')
 
 
@@ -764,6 +791,9 @@ class Build:
             if missing:
                 emit('ERROR', 'verify', linux_missing_message(missing))
                 return 1
+        clamped = clamp_future_mtimes([ROOT, ENGINE, self.kit, self.out])
+        if clamped:
+            emit('INFO', 'clock', '%d files dated in the future set to now' % clamped)
         redo_from = STEPS.index(self.args.redo) if self.args.redo else len(STEPS)
         n = len(STEPS)
         dirty = False
